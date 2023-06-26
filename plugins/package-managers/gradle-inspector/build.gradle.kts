@@ -21,23 +21,11 @@ import org.jetbrains.gradle.ext.settings
 import org.jetbrains.gradle.ext.taskTriggers
 
 plugins {
-    // Apply core plugins.
-    `java-library`
+    // Apply precompiled plugins.
+    id("ort-library-conventions")
 
     // Apply third-party plugins.
     alias(libs.plugins.ideaExt)
-}
-
-repositories {
-    exclusiveContent {
-        forRepository {
-            maven("https://repo.gradle.org/gradle/libs-releases/")
-        }
-
-        filter {
-            includeGroup("org.gradle")
-        }
-    }
 }
 
 dependencies {
@@ -88,4 +76,12 @@ tasks.named<JacocoReport>("jacocoFunTestReport") {
             }
         )
     )
+}
+
+tasks.named<Test>("funTest") {
+    val gradlePackageManagerProject = project(":plugins:package-managers:gradle-package-manager")
+    val gradlePackageManagerFunTestTask = gradlePackageManagerProject.tasks.named<Test>("funTest")
+
+    // Enforce ordering to avoid conflicts e.g. during Android SDK component installation.
+    mustRunAfter(gradlePackageManagerFunTestTask)
 }

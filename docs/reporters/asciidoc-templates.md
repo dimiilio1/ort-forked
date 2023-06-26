@@ -2,7 +2,7 @@
 
 The AsciiDoc template reporters create reports using a combination of [Apache Freemarker][1] templates and [AsciiDoc][2]
 with [AsciidoctorJ][3] as Java interface and [AsciidoctorJ PDF][4] as PDF file generator for the
-[PDF Template Reporter](#PDF). For each Freemarker template provided using the options described below a separate
+[PDF Template Reporter](#pdf). For each Freemarker template provided using the options described below a separate
 intermediate file is created that can be processed by AsciidoctorJ. If no options are provided, the
 "disclosure_document" template is used, and if security vulnerability information is available also the
 "vulnerability_report" template.
@@ -26,7 +26,7 @@ The path to this theme can be set in the options as described below.
 Note that only one theme can be set that is used for all given templates. If no theme is given, or the given path to
 the theme file does not exist, an in-built theme of AsciidoctorJ PDF is used.
 
-```bash
+```shell
 cli/build/install/ort/bin/ort report
   -i [scanner-output-dir]/scanner-result.yml
   -o [reporter-output-dir]
@@ -38,7 +38,9 @@ cli/build/install/ort/bin/ort report
 If you want to add your own custom fonts in the AsciiDoc PDF theme file using a [relative path][6],
 you need to add the directory in which the fonts are located as a report-specific option like
 
-    --report-option PdfTemplate=pdf.fonts.dir=path/to/fonts/
+```
+--report-option PdfTemplate=pdf.fonts.dir=path/to/fonts/
+```
 
 where `path/to/fonts` is the relative path to the font directory from the base execution directory.
 
@@ -51,7 +53,7 @@ where `path/to/fonts` is the relative path to the font directory from the base e
 
 Create an HTML report from the Freemarker template using [Asciidoctor's HTML converter][7].
 
-```bash
+```shell
 cli/build/install/ort/bin/ort report
   -i [scanner-output-dir]/scanner-result.yml
   -o [reporter-output-dir]
@@ -63,7 +65,7 @@ cli/build/install/ort/bin/ort report
 
 Create a [DocBook][8] report from the Freemarker template using [Asciidoctor's DocBook converter][9].
 
-```bash
+```shell
 cli/build/install/ort/bin/ort report
   -i [scanner-output-dir]/scanner-result.yml
   -o [reporter-output-dir]
@@ -75,7 +77,7 @@ cli/build/install/ort/bin/ort report
 
 Create a ManPage report from the Freemarker template using [Asciidoctor's ManPage converter][10].
 
-```bash
+```shell
 cli/build/install/ort/bin/ort report
   -i [scanner-output-dir]/scanner-result.yml
   -o [reporter-output-dir]

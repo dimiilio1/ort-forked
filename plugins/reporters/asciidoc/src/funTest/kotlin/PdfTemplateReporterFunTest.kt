@@ -21,6 +21,7 @@ package org.ossreviewtoolkit.plugins.reporters.asciidoc
 
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.StringSpec
+import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.collections.contain
 import io.kotest.matchers.longs.beInRange
 import io.kotest.matchers.should
@@ -29,11 +30,10 @@ import io.kotest.matchers.shouldBe
 import org.ossreviewtoolkit.reporter.ORT_RESULT
 import org.ossreviewtoolkit.reporter.ORT_RESULT_WITH_VULNERABILITIES
 import org.ossreviewtoolkit.reporter.ReporterInput
-import org.ossreviewtoolkit.utils.test.createTestTempDir
 
 class PdfTemplateReporterFunTest : StringSpec({
     "The report is created successfully from an existing result and default template" {
-        val report = PdfTemplateReporter().generateReport(ReporterInput(ORT_RESULT), createTestTempDir()).single()
+        val report = PdfTemplateReporter().generateReport(ReporterInput(ORT_RESULT), tempdir()).single()
 
         report.reader().use {
             val header = CharArray(4)
@@ -47,7 +47,7 @@ class PdfTemplateReporterFunTest : StringSpec({
         shouldThrow<IllegalArgumentException> {
             PdfTemplateReporter().generateReport(
                 ReporterInput(ORT_RESULT),
-                createTestTempDir(),
+                tempdir(),
                 mapOf("pdf.theme.file" to "dummy.file")
             )
         }
@@ -57,7 +57,7 @@ class PdfTemplateReporterFunTest : StringSpec({
         shouldThrow<IllegalArgumentException> {
             PdfTemplateReporter().generateReport(
                 ReporterInput(ORT_RESULT),
-                createTestTempDir(),
+                tempdir(),
                 mapOf("pdf.fonts.dir" to "fake.path")
             )
         }
@@ -65,7 +65,10 @@ class PdfTemplateReporterFunTest : StringSpec({
 
     "Advisor reports are generated if the result contains an advisor section" {
         val reports =
-            PdfTemplateReporter().generateReport(ReporterInput(ORT_RESULT_WITH_VULNERABILITIES), createTestTempDir())
+            PdfTemplateReporter().generateReport(
+                ReporterInput(ORT_RESULT_WITH_VULNERABILITIES),
+                tempdir()
+            )
 
         val reportFileNames = reports.map { it.name }
         reportFileNames should contain("AsciiDoc_vulnerability_report.pdf")

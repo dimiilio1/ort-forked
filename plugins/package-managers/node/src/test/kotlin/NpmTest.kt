@@ -20,6 +20,7 @@
 package org.ossreviewtoolkit.plugins.packagemanagers.node
 
 import io.kotest.core.spec.style.StringSpec
+import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.collections.beEmpty
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.should
@@ -38,11 +39,10 @@ import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
 import org.ossreviewtoolkit.model.config.PackageManagerConfiguration
 import org.ossreviewtoolkit.model.config.RepositoryConfiguration
 import org.ossreviewtoolkit.utils.common.ProcessCapture
-import org.ossreviewtoolkit.utils.test.createTestTempDir
 
 class NpmTest : StringSpec({
     "The output of the npm command should be parsed correctly" {
-        val workingDir = createTestTempDir()
+        val workingDir = tempdir()
         val definitionFileSrc = File("src/test/assets/test-package-no-deps.json")
         val definitionFile = workingDir.resolve("package.json")
         definitionFileSrc.copyTo(definitionFile)
@@ -52,6 +52,18 @@ class NpmTest : StringSpec({
 
         mockkConstructor(ProcessCapture::class)
         try {
+            val analyzerName = "test-npm"
+
+            val npmOptions = mapOf("legacyPeerDeps" to "true")
+            val npmConfig = PackageManagerConfiguration(options = npmOptions)
+
+            val analyzerConfig = AnalyzerConfiguration(
+                allowDynamicVersions = true,
+                packageManagers = mapOf(analyzerName to npmConfig)
+            )
+
+            val npm = Npm(analyzerName, workingDir, analyzerConfig, RepositoryConfiguration())
+
             every {
                 constructedWith<ProcessCapture>(
                     EqMatcher(workingDir),
@@ -59,7 +71,7 @@ class NpmTest : StringSpec({
                         all = true,
                         matcher = { true },
                         prefix = listOf(
-                            EqMatcher("npm"),
+                            EqMatcher(npm.command()),
                             EqMatcher("install"),
                             EqMatcher("--ignore-scripts"),
                             EqMatcher("--no-audit"),
@@ -68,13 +80,6 @@ class NpmTest : StringSpec({
                     )
                 ).stderr
             } returns errorText
-
-            val analyzerName = "test-npm"
-            val npmOptions = mapOf("legacyPeerDeps" to "true")
-            val npmConfig = PackageManagerConfiguration(options = npmOptions)
-            val analyzerConfig =
-                AnalyzerConfiguration(allowDynamicVersions = true, packageManagers = mapOf(analyzerName to npmConfig))
-            val npm = Npm(analyzerName, workingDir, analyzerConfig, RepositoryConfiguration())
 
             val results = npm.resolveDependencies(definitionFile, emptyMap())
 

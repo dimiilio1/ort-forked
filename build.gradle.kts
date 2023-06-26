@@ -19,12 +19,8 @@
 
 import com.github.benmanes.gradle.versions.updates.DependencyUpdatesTask
 
-import io.gitlab.arturbosch.detekt.Detekt
-import io.gitlab.arturbosch.detekt.report.ReportMergeTask
-
-import java.net.URI
-
 import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.ignore.FastIgnoreRule
 import org.eclipse.jgit.lib.Config
 import org.eclipse.jgit.lib.Constants
 import org.eclipse.jgit.revwalk.RevWalk
@@ -33,36 +29,24 @@ import org.eclipse.jgit.treewalk.TreeWalk
 import org.eclipse.jgit.util.FS
 import org.eclipse.jgit.util.SystemReader
 
-import org.gradle.api.tasks.testing.logging.TestExceptionFormat
-import org.gradle.api.tasks.testing.logging.TestLogEvent
-
 import org.jetbrains.gradle.ext.Gradle
 import org.jetbrains.gradle.ext.runConfigurations
 import org.jetbrains.gradle.ext.settings
-import org.jetbrains.kotlin.gradle.plugin.KotlinCompilation
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
+    // Apply third-party plugins.
     alias(libs.plugins.dependencyAnalysis)
-    alias(libs.plugins.detekt)
-    alias(libs.plugins.dokka)
     alias(libs.plugins.ideaExt)
-    alias(libs.plugins.kotlin)
-    alias(libs.plugins.versionCatalogUpdate)
     alias(libs.plugins.versions)
 }
 
 buildscript {
-    dependencies {
-        classpath(libs.jgit)
+    repositories {
+        mavenCentral()
     }
 
-    configurations.all {
-        resolutionStrategy {
-            // Work around the Kotlin plugin to depend on an outdated version of the Download plugin, see
-            // https://youtrack.jetbrains.com/issue/KT-53822.
-            force("de.undercouch:gradle-download-task:${libs.versions.downloadPlugin.get()}")
-        }
+    dependencies {
+        classpath(libs.jgit)
     }
 }
 
@@ -102,17 +86,6 @@ if (version == Project.DEFAULT_VERSION) {
 
 logger.lifecycle("Building ORT version $version.")
 
-// Note that Gradle's Java toolchain mechanism cannot be used here as that only applies to the Java version used in
-// compile tasks. But already ORT's build scripts, like the compilation of this file itself, depend on Java 11 due to
-// the Java target used by some plugins, see e.g. https://github.com/martoe/gradle-svntools-plugin#version-compatibility.
-val javaVersion = JavaVersion.current()
-if (!javaVersion.isCompatibleWith(JavaVersion.VERSION_11)) {
-    throw GradleException("At least Java 11 is required, but Java $javaVersion is being used.")
-}
-
-// See https://kotlinlang.org/docs/compiler-reference.html#jvm-target-version.
-val maxKotlinJvmTarget = javaVersion.majorVersion.toInt().coerceAtMost(19)
-
 idea {
     project {
         settings {
@@ -144,341 +117,6 @@ tasks.named<DependencyUpdatesTask>("dependencyUpdates") {
 
     rejectVersionIf {
         candidate.version.matches(nonFinalQualifiersRegex)
-    }
-}
-
-versionCatalogUpdate {
-    // Keep the custom sorting / grouping.
-    sortByKey.set(false)
-}
-
-val mergeDetektReports by tasks.registering(ReportMergeTask::class) {
-    output.set(rootProject.buildDir.resolve("reports/detekt/merged.sarif"))
-}
-
-allprojects {
-    repositories {
-        mavenCentral()
-    }
-
-    apply(plugin = "io.gitlab.arturbosch.detekt")
-
-    // Note: Kotlin DSL cannot directly access configurations that are created by applying a plugin in the very same
-    // project, thus put configuration names in quotes to leverage lazy lookup.
-    dependencies {
-        "detektPlugins"(project(":detekt-rules"))
-
-        "detektPlugins"("io.gitlab.arturbosch.detekt:detekt-formatting:${rootProject.libs.versions.detektPlugin.get()}")
-    }
-
-    detekt {
-        // Only configure differences to the default.
-        buildUponDefaultConfig = true
-        config = files("$rootDir/.detekt.yml")
-
-        source.from(fileTree(".") { include("*.gradle.kts") }, "src/funTest/kotlin")
-
-        basePath = rootProject.projectDir.path
-    }
-
-    tasks.withType<Detekt> detekt@{
-        // Detekt is not up to Kotlin yet in terms of JVM target support.
-        jvmTarget = maxKotlinJvmTarget.coerceAtMost(18).toString()
-
-        dependsOn(":detekt-rules:assemble")
-
-        reports {
-            html.required.set(false)
-
-            // TODO: Enable this once https://github.com/detekt/detekt/issues/5034 is resolved and use the merged
-            //       Markdown file as a GitHub Action job summary, see
-            //       https://github.blog/2022-05-09-supercharging-github-actions-with-job-summaries/.
-            md.required.set(false)
-
-            sarif.required.set(true)
-            txt.required.set(false)
-            xml.required.set(false)
-        }
-
-        finalizedBy(mergeDetektReports)
-
-        mergeDetektReports.configure {
-            input.from(this@detekt.sarifReportFile)
-        }
-    }
-}
-
-subprojects {
-    version = rootProject.version
-
-    val nonJavaProjects = listOf(
-        "commands",
-        "package-curation-providers",
-        "package-managers",
-        "reporters",
-        "web-app-template"
-    )
-
-    if (name in nonJavaProjects) return@subprojects
-
-    // Apply core plugins.
-    apply(plugin = "jacoco")
-    apply(plugin = "maven-publish")
-
-    // Apply third-party plugins.
-    apply(plugin = "org.jetbrains.kotlin.jvm")
-    apply(plugin = "org.jetbrains.dokka")
-
-    testing {
-        suites {
-            withType<JvmTestSuite>().configureEach {
-                useJUnitJupiter()
-
-                dependencies {
-                    implementation(project(":utils:test-utils"))
-
-                    implementation(rootProject.libs.kotestAssertionsCore)
-                    implementation(rootProject.libs.kotestRunnerJunit5)
-                }
-            }
-
-            register<JvmTestSuite>("funTest") {
-                sources {
-                    kotlin {
-                        testType.set(TestSuiteType.FUNCTIONAL_TEST)
-                    }
-                }
-            }
-        }
-    }
-
-    // Associate the "funTest" compilation with the "main" compilation to be able to access "internal" objects from
-    // functional tests.
-    kotlin.target.compilations.apply {
-        getByName("funTest").associateWith(getByName(KotlinCompilation.MAIN_COMPILATION_NAME))
-    }
-
-    dependencies {
-        implementation("org.jetbrains.kotlin:kotlin-stdlib:${rootProject.libs.versions.kotlinPlugin.get()}")
-    }
-
-    configurations.all {
-        // Do not tamper with configurations related to the detekt plugin, for some background information
-        // https://github.com/detekt/detekt/issues/2501.
-        if (!name.startsWith("detekt")) {
-            resolutionStrategy {
-                // Ensure all OkHttp versions match our version >= 4 to avoid Kotlin vs. Java issues with OkHttp 3.
-                force(rootProject.libs.okhttp)
-
-                // Ensure all JRuby versions match our version to avoid Psych YAML library issues.
-                force(rootProject.libs.jruby)
-
-                // Ensure all Log4j API versions match our version.
-                force(rootProject.libs.log4jApi)
-
-                // Ensure that all transitive versions of Kotlin libraries match our version of Kotlin.
-                force("org.jetbrains.kotlin:kotlin-reflect:${rootProject.libs.versions.kotlinPlugin.get()}")
-            }
-        }
-    }
-
-    tasks.withType<JavaCompile>().configureEach {
-        // Align this with Kotlin to avoid errors, see https://youtrack.jetbrains.com/issue/KT-48745.
-        sourceCompatibility = maxKotlinJvmTarget.toString()
-        targetCompatibility = maxKotlinJvmTarget.toString()
-    }
-
-    tasks.withType<KotlinCompile>().configureEach {
-        val customCompilerArgs = listOf(
-            "-opt-in=kotlin.contracts.ExperimentalContracts",
-            "-opt-in=kotlin.io.path.ExperimentalPathApi",
-            "-opt-in=kotlin.time.ExperimentalTime"
-        )
-
-        kotlinOptions {
-            allWarningsAsErrors = true
-            apiVersion = "1.8"
-            freeCompilerArgs = freeCompilerArgs + customCompilerArgs
-            jvmTarget = maxKotlinJvmTarget.toString()
-        }
-    }
-
-    tasks.dokkaHtml {
-        dokkaSourceSets {
-            configureEach {
-                jdkVersion.set(17)
-
-                val jacksonVersion = libs.versions.jackson.get()
-                val log4jApiVersion = libs.versions.log4jApi.get()
-
-                externalDocumentationLink {
-                    val baseUrl = "https://codehaus-plexus.github.io/plexus-containers/plexus-container-default/apidocs"
-                    url.set(URI.create(baseUrl).toURL())
-                    packageListUrl.set(URI.create("$baseUrl/package-list").toURL())
-                }
-
-                externalDocumentationLink {
-                    val majorMinorVersion = jacksonVersion.split('.').let { "${it[0]}.${it[1]}" }
-                    val baseUrl = "https://fasterxml.github.io/jackson-databind/javadoc/$majorMinorVersion"
-                    url.set(URI.create(baseUrl).toURL())
-                    packageListUrl.set(URI.create("$baseUrl/package-list").toURL())
-                }
-
-                externalDocumentationLink {
-                    val baseUrl = "https://jakewharton.github.io/DiskLruCache"
-                    url.set(URI.create(baseUrl).toURL())
-                    packageListUrl.set(URI.create("$baseUrl/package-list").toURL())
-                }
-
-                externalDocumentationLink {
-                    val majorVersion = log4jApiVersion.substringBefore('.')
-                    val baseUrl = "https://logging.apache.org/log4j/$majorVersion.x/log4j-api/apidocs"
-                    url.set(URI.create(baseUrl).toURL())
-                    packageListUrl.set(URI.create("$baseUrl/package-list").toURL())
-                }
-            }
-        }
-    }
-
-    tasks.withType<Test>().configureEach {
-        // Work-around for "--tests" only being able to include tests, see https://github.com/gradle/gradle/issues/6505.
-        properties["tests.exclude"]?.also { excludes ->
-            filter {
-                excludes.toString().split(',').map { excludeTestsMatching(it) }
-                isFailOnNoMatchingTests = false
-            }
-        }
-
-        // Convenience alternative to "--tests" that can take multiple patterns at once as Gradle is not planning to
-        // implement this, see https://github.com/gradle/gradle/issues/5719.
-        properties["tests.include"]?.also { includes ->
-            filter {
-                includes.toString().split(',').map { includeTestsMatching(it) }
-                isFailOnNoMatchingTests = false
-            }
-        }
-
-        if (javaVersion.isCompatibleWith(JavaVersion.VERSION_17)) {
-            // See https://kotest.io/docs/next/extensions/system_extensions.html#system-environment.
-            jvmArgs("--add-opens=java.base/java.util=ALL-UNNAMED")
-        }
-
-        val testSystemProperties = mutableListOf("gradle.build.dir" to project.buildDir.path)
-
-        listOf(
-            "java.io.tmpdir",
-            "kotest.assertions.multi-line-diff",
-            "kotest.tags"
-        ).mapNotNullTo(testSystemProperties) { key ->
-            System.getProperty(key)?.let { key to it }
-        }
-
-        systemProperties = testSystemProperties.toMap()
-
-        testLogging {
-            events = setOf(TestLogEvent.STARTED, TestLogEvent.PASSED, TestLogEvent.SKIPPED, TestLogEvent.FAILED)
-            exceptionFormat = TestExceptionFormat.FULL
-            showCauses = false
-            showStackTraces = false
-            showStandardStreams = false
-        }
-    }
-
-    tasks.named<JacocoReport>("jacocoTestReport") {
-        reports {
-            // Enable XML in addition to HTML for CI integration.
-            xml.required.set(true)
-        }
-    }
-
-    tasks.register<JacocoReport>("jacocoFunTestReport") {
-        description = "Generates code coverage report for the funTest task."
-        group = "Reporting"
-
-        executionData(tasks["funTest"])
-        sourceSets(sourceSets["main"])
-
-        reports {
-            // Enable XML in addition to HTML for CI integration.
-            xml.required.set(true)
-        }
-    }
-
-    tasks.register("jacocoReport") {
-        description = "Generates code coverage reports for all test tasks."
-        group = "Reporting"
-
-        dependsOn(tasks.withType<JacocoReport>())
-    }
-
-    tasks.named("check") {
-        dependsOn(tasks["funTest"])
-    }
-
-    tasks.withType<Jar>().configureEach {
-        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-        isPreserveFileTimestamps = false
-        isReproducibleFileOrder = true
-
-        manifest {
-            attributes["Implementation-Version"] = project.version
-        }
-    }
-
-    tasks.register<Jar>("sourcesJar") {
-        archiveClassifier.set("sources")
-        from(sourceSets["main"].allSource)
-    }
-
-    tasks.register<Jar>("dokkaHtmlJar") {
-        dependsOn(tasks.dokkaHtml)
-
-        description = "Assembles a jar archive containing the minimalistic HTML documentation."
-        group = "Documentation"
-
-        archiveClassifier.set("dokka")
-        from(tasks.dokkaHtml)
-    }
-
-    tasks.register<Jar>("dokkaJavadocJar") {
-        dependsOn(tasks.dokkaJavadoc)
-
-        description = "Assembles a jar archive containing the Javadoc documentation."
-        group = "Documentation"
-
-        archiveClassifier.set("javadoc")
-        from(tasks.dokkaJavadoc)
-    }
-
-    configure<PublishingExtension> {
-        publications {
-            create<MavenPublication>(name) {
-                fun getGroupId(parent: Project?): String =
-                    if (parent == null) "" else "${getGroupId(parent.parent)}.${parent.name.replace("-", "")}"
-
-                groupId = "org${getGroupId(parent)}"
-
-                from(components["java"])
-                artifact(tasks["sourcesJar"])
-                artifact(tasks["dokkaJavadocJar"])
-
-                pom {
-                    licenses {
-                        license {
-                            name.set("Apache-2.0")
-                            url.set("https://www.apache.org/licenses/LICENSE-2.0")
-                        }
-                    }
-
-                    scm {
-                        connection.set("scm:git:https://github.com/oss-review-toolkit/ort.git")
-                        developerConnection.set("scm:git:git@github.com:oss-review-toolkit/ort.git")
-                        tag.set(version.toString())
-                        url.set("https://github.com/oss-review-toolkit/ort")
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -531,6 +169,7 @@ val copyrightExcludedPaths = listOf(
     "integrations/completions/",
     "plugins/reporters/asciidoc/src/main/resources/pdf-theme/pdf-theme.yml",
     "plugins/reporters/asciidoc/src/main/resources/templates/freemarker_implicit.ftl",
+    "plugins/reporters/fossid/src/main/resources/templates/freemarker_implicit.ftl",
     "plugins/reporters/freemarker/src/main/resources/templates/freemarker_implicit.ftl",
     "plugins/reporters/static-html/src/main/resources/prismjs/",
     "plugins/reporters/web-app-template/yarn.lock",
@@ -679,22 +318,74 @@ val checkLicenseHeaders by tasks.registering {
     mustRunAfter(checkCopyrightsInNoticeFile)
 
     doLast {
-        var hasViolations = false
+        var hasErrors = false
 
         files.forEach { file ->
             val headerLines = extractLicenseHeader(file)
 
             val holders = extractCopyrightHolders(headerLines)
             if (holders.singleOrNull() != expectedCopyrightHolder) {
+                hasErrors = true
                 logger.error("Unexpected copyright holder(s) in file '$file': $holders")
             }
 
             if (!headerLines.joinToString("\n").endsWith(expectedLicenseHeader)) {
-                hasViolations = true
+                hasErrors = true
                 logger.error("Unexpected license header in file '$file'.")
             }
         }
 
-        if (hasViolations) throw GradleException("There were errors in license headers.")
+        if (hasErrors) throw GradleException("There were errors in license headers.")
+    }
+}
+
+val checkGitAttributes by tasks.registering {
+    val files = getCommittedFilePaths(rootDir)
+
+    inputs.files(files)
+
+    doLast {
+        var hasErrors = false
+
+        val gitAttributesFiles = files.filter { it.endsWith(".gitattributes") }
+        val commentChars = setOf('#', '/')
+
+        gitAttributesFiles.forEach { gitAttributes ->
+            logger.lifecycle("Checking file '$gitAttributes'...")
+
+            val gitAttributesFile = file(gitAttributes)
+            val ignoreRules = gitAttributesFile.readLines()
+                // Skip empty and comment lines.
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && it.first() !in commentChars }
+                // The patterns is the part before the first whitespace.
+                .mapTo(mutableSetOf()) { line -> line.takeWhile { !it.isWhitespace() } }
+                // Create ignore rules from valid patterns.
+                .mapIndexedNotNull { index, pattern ->
+                    runCatching {
+                        FastIgnoreRule(pattern)
+                    }.onFailure {
+                        logger.warn("File '$gitAttributes' contains an invalid pattern in line ${index + 1}: $it")
+                    }.getOrNull()
+                }
+
+            // Check only those files that are in scope of this ".gitattributes" file.
+            val gitAttributesDir = gitAttributesFile.parentFile
+            val filesInScope = files.filter { rootDir.resolve(it).startsWith(gitAttributesDir) }
+
+            ignoreRules.forEach { rule ->
+                val matchesAnything = filesInScope.any { file ->
+                    val relativeFile = file(file).relativeTo(gitAttributesDir)
+                    rule.isMatch(relativeFile.invariantSeparatorsPath, /* directory = */ false)
+                }
+
+                if (!matchesAnything) {
+                    hasErrors = true
+                    logger.error("Rule '$rule' does not match anything.")
+                }
+            }
+        }
+
+        if (hasErrors) throw GradleException("There were stale '.gitattribute' entries.")
     }
 }

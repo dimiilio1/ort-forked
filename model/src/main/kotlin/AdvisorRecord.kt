@@ -20,9 +20,7 @@
 package org.ossreviewtoolkit.model
 
 import com.fasterxml.jackson.annotation.JsonIgnore
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties
-
-import java.util.SortedMap
+import com.fasterxml.jackson.annotation.JsonPropertyOrder
 
 /**
  * Type alias for a function that allows filtering of [AdvisorResult]s.
@@ -32,12 +30,12 @@ typealias AdvisorResultFilter = (AdvisorResult) -> Boolean
 /**
  * A record of a single run of the advisor tool, containing the input and the [Vulnerability] for every checked package.
  */
-@JsonIgnoreProperties(value = ["has_issues"], allowGetters = true)
 data class AdvisorRecord(
     /**
      * The [AdvisorResult]s for all [Package]s.
      */
-    val advisorResults: SortedMap<Identifier, List<AdvisorResult>>
+    @JsonPropertyOrder(alphabetic = true)
+    val advisorResults: Map<Identifier, List<AdvisorResult>>
 ) {
     companion object {
         /**
@@ -78,11 +76,6 @@ data class AdvisorRecord(
                 }
             }
         }
-
-    /**
-     * True if any of the [advisorResults] contain [Issue]s.
-     */
-    val hasIssues by lazy { getIssues().isNotEmpty() }
 
     /**
      * Return a map of all [Package]s and the associated [Vulnerabilities][Vulnerability].

@@ -20,7 +20,6 @@
 package org.ossreviewtoolkit.model
 
 import com.fasterxml.jackson.annotation.JsonIgnore
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonPropertyOrder
 import com.fasterxml.jackson.databind.annotation.JsonSerialize
@@ -31,7 +30,6 @@ import org.ossreviewtoolkit.model.utils.ProjectSortedSetConverter
 /**
  * A class that merges all information from individual [ProjectAnalyzerResult]s created for each found definition file.
  */
-@JsonIgnoreProperties(value = ["has_issues"], allowGetters = true)
 data class AnalyzerResult(
     /**
      * Sorted set of the projects, as they appear in the individual analyzer results.
@@ -100,11 +98,6 @@ data class AnalyzerResult(
                 }
             }
         }
-
-    /**
-     * True if there were any issues during the analysis, false otherwise.
-     */
-    val hasIssues by lazy { getAllIssues().isNotEmpty() }
 
     /**
      * Return a result, in which all contained [Project]s have their scope information resolved. If this result

@@ -22,8 +22,8 @@ import org.gradle.internal.logging.text.StyledTextOutputFactory
 import org.gradle.kotlin.dsl.support.serviceOf
 
 plugins {
-    // Apply core plugins.
-    `java-library`
+    // Apply precompiled plugins.
+    id("ort-library-conventions")
 }
 
 dependencies {
@@ -31,6 +31,14 @@ dependencies {
 
     testImplementation(libs.detektApi)
     testImplementation(libs.detektTest)
+}
+
+configurations.all {
+    resolutionStrategy.dependencySubstitution {
+        substitute(project(":utils:test-utils"))
+            .using(project(":utils:common-utils"))
+            .because("detekt 1.23.0 triggers an issue with logging in org.apache.sshd on Linux")
+    }
 }
 
 tasks.named<Jar>("jar") {

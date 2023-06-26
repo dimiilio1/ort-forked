@@ -103,11 +103,11 @@ abstract class AbstractStorageFunTest(vararg listeners: TestListener) : WordSpec
         startTime = Instant.EPOCH + Duration.ofMinutes(1),
         endTime = Instant.EPOCH + Duration.ofMinutes(2),
         packageVerificationCode = "packageVerificationCode",
-        licenseFindings = sortedSetOf(
+        licenseFindings = setOf(
             LicenseFinding("license-1.1", DUMMY_TEXT_LOCATION),
             LicenseFinding("license-1.2", DUMMY_TEXT_LOCATION)
         ),
-        issues = mutableListOf(
+        issues = listOf(
             Issue(source = "source-1", message = "error-1"),
             Issue(source = "source-2", message = "error-2")
         )

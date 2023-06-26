@@ -56,6 +56,7 @@ import org.ossreviewtoolkit.utils.ort.normalizeVcsUrl
 import org.ossreviewtoolkit.utils.ort.showStackTrace
 
 typealias ManagedProjectFiles = Map<PackageManagerFactory, List<File>>
+typealias ProjectResults = Map<File, List<ProjectAnalyzerResult>>
 
 /**
  * A class representing a package manager that handles software dependencies. The package manager is referred to by its
@@ -79,7 +80,7 @@ abstract class PackageManager(
          */
         val ENABLED_BY_DEFAULT by lazy { ALL.values.filter { it.isEnabledByDefault } }
 
-        private val PACKAGE_MANAGER_DIRECTORIES = listOf(
+        private val PACKAGE_MANAGER_DIRECTORIES = setOf(
             // Ignore intermediate build system directories.
             ".gradle",
             ".yarn",
@@ -288,8 +289,7 @@ abstract class PackageManager(
      * definition files that have been processed. It can be overridden by subclasses to add additional data to the
      * result. This base implementation produces a result that contains only the passed in map with project results.
      */
-    protected open fun createPackageManagerResult(projectResults: Map<File, List<ProjectAnalyzerResult>>):
-            PackageManagerResult = PackageManagerResult(projectResults)
+    protected open fun createPackageManagerResult(projectResults: ProjectResults) = PackageManagerResult(projectResults)
 
     /**
      * Return a tree of resolved dependencies (not necessarily declared dependencies, in case conflicts were resolved)
@@ -332,7 +332,7 @@ abstract class PackageManager(
                         definitionFilePath = VersionControlSystem.getPathInfo(definitionFile).path,
                         vcsProcessed = processProjectVcs(definitionFile.parentFile),
                         scopeDependencies = null,
-                        scopeNames = sortedSetOf()
+                        scopeNames = emptySet()
                     )
 
                     val issues = listOf(
@@ -376,8 +376,7 @@ abstract class PackageManager(
     /**
      * Remove all packages from the contained [ProjectAnalyzerResult]s which are also projects.
      */
-    protected fun Map<File, List<ProjectAnalyzerResult>>.filterProjectPackages():
-            Map<File, List<ProjectAnalyzerResult>> {
+    protected fun ProjectResults.filterProjectPackages(): ProjectResults {
         val projectIds = flatMapTo(mutableSetOf()) { (_, projectResult) -> projectResult.map { it.project.id } }
 
         return mapValues { entry ->

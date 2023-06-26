@@ -5,17 +5,17 @@ The `license-classifications.yml` file holds a user-defined categorization of li
 You can use the [license-classifications.yml example] as the base configuration
 file for your scans.
 
-The file consists of two sections: The first one, _categories_, allows defining arbitrary categories for grouping
+The file consists of two sections: The first one, *categories*, allows defining arbitrary categories for grouping
 licenses. Categories have a name and an optional description; the names must be unique.
 
-The second section, _categorizations_, assigns licenses to the categories defined before. Licenses are identified
+The second section, *categorizations*, assigns licenses to the categories defined before. Licenses are identified
 using SPDX identifiers. Each license can be assigned an arbitrary number of categories by listing the names of these
 categories. Note that only names can be used that reference one of the categories from the first section.
 
 For a more sophisticated example of a license classification for ORT, see the [generated license-classifications.yml]
 from the [LDBcollector] project.
 
-### When to Use
+## When to Use
 
 The mechanism of assigning categories to licenses is rather generic and can be customized for specific use cases.
 The information from the `license-classifications.yml` is evaluated by the following components:
@@ -41,9 +41,9 @@ multiple orthogonal, partly overlapping sets of categories with different meanin
 ## Command Line
 
 To use the `license-classifications.yml` file put it to `$ORT_CONFIG_DIR/license-classifications.yml` or pass it to the
-`--license-classifications-file` option of the _evaluator_:
+`--license-classifications-file` option of the *evaluator*:
 
-```bash
+```shell
 cli/build/install/ort/bin/ort evaluate
   -i [scanner-output-dir]/scan-result.yml
   -o [evaluator-output-dir]
@@ -55,7 +55,6 @@ cli/build/install/ort/bin/ort evaluate
 [license-classifications.yml example]: ../examples/license-classifications.yml
 [generated license-classifications.yml]: https://github.com/maxhbr/LDBcollector/blob/generated/ort/license-classifications.yml
 [LDBcollector]: https://github.com/maxhbr/LDBcollector
-[Rules]: file-rules-kts.md
+[Rules]: scripts/rules-kts.md
 [Plain text templates]: reporters/plain-text-templates.md
-[license-classifications.yml example]: ../examples/license-classifications.yml
 [example.rules.kts]: ../examples/example.rules.kts

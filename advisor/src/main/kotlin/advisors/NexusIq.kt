@@ -19,7 +19,6 @@
 
 package org.ossreviewtoolkit.advisor.advisors
 
-import java.io.IOException
 import java.net.URI
 import java.time.Duration
 import java.time.Instant
@@ -29,10 +28,16 @@ import org.apache.logging.log4j.kotlin.Logging
 import org.ossreviewtoolkit.advisor.AbstractAdviceProviderFactory
 import org.ossreviewtoolkit.advisor.AdviceProvider
 import org.ossreviewtoolkit.clients.nexusiq.NexusIqService
+import org.ossreviewtoolkit.clients.nexusiq.NexusIqService.Component
+import org.ossreviewtoolkit.clients.nexusiq.NexusIqService.ComponentDetails
+import org.ossreviewtoolkit.clients.nexusiq.NexusIqService.ComponentsWrapper
+import org.ossreviewtoolkit.clients.nexusiq.NexusIqService.SecurityData
+import org.ossreviewtoolkit.clients.nexusiq.NexusIqService.SecurityIssue
 import org.ossreviewtoolkit.model.AdvisorCapability
 import org.ossreviewtoolkit.model.AdvisorDetails
 import org.ossreviewtoolkit.model.AdvisorResult
 import org.ossreviewtoolkit.model.AdvisorSummary
+import org.ossreviewtoolkit.model.Issue
 import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.Vulnerability
 import org.ossreviewtoolkit.model.VulnerabilityReference
@@ -41,10 +46,9 @@ import org.ossreviewtoolkit.model.config.NexusIqConfiguration
 import org.ossreviewtoolkit.model.utils.PurlType
 import org.ossreviewtoolkit.model.utils.getPurlType
 import org.ossreviewtoolkit.model.utils.toPurl
+import org.ossreviewtoolkit.utils.common.collectMessages
 import org.ossreviewtoolkit.utils.common.enumSetOf
 import org.ossreviewtoolkit.utils.ort.OkHttpClientHelper
-
-import retrofit2.HttpException
 
 /**
  * The number of packages to request from Nexus IQ in one request.
@@ -80,7 +84,7 @@ class NexusIq(name: String, private val config: NexusIqConfiguration) : AdvicePr
         )
     }
 
-    override suspend fun retrievePackageFindings(packages: Set<Package>): Map<Package, List<AdvisorResult>> {
+    override suspend fun retrievePackageFindings(packages: Set<Package>): Map<Package, AdvisorResult> {
         val startTime = Instant.now()
 
         val components = packages.filter { it.purl.isNotEmpty() }.map { pkg ->
@@ -93,42 +97,49 @@ class NexusIq(name: String, private val config: NexusIqConfiguration) : AdvicePr
                 }
             }
 
-            NexusIqService.Component(packageUrl)
+            Component(packageUrl)
         }
 
-        return try {
-            val componentDetails = mutableMapOf<String, NexusIqService.ComponentDetails>()
+        logger.debug { "Querying component details from ${config.serverUrl}." }
 
-            components.chunked(BULK_REQUEST_SIZE).forEach { chunk ->
-                val requestResults = getComponentDetails(service, chunk).componentDetails.associateBy {
+        val componentDetails = mutableMapOf<String, ComponentDetails>()
+        val issues = mutableListOf<Issue>()
+
+        components.chunked(BULK_REQUEST_SIZE).forEach { chunk ->
+            runCatching {
+                val results = service.getComponentDetails(ComponentsWrapper(chunk)).componentDetails.associateBy {
                     it.component.packageUrl.substringBefore("?")
                 }
 
-                componentDetails += requestResults.filterValues { it.securityData.securityIssues.isNotEmpty() }
-            }
-
-            val endTime = Instant.now()
-
-            packages.mapNotNullTo(mutableListOf()) { pkg ->
-                componentDetails[pkg.id.toPurl()]?.let { pkgDetails ->
-                    pkg to listOf(
-                        AdvisorResult(
-                            details,
-                            AdvisorSummary(startTime, endTime),
-                            vulnerabilities = pkgDetails.securityData.securityIssues.map { it.toVulnerability() }
-                        )
-                    )
+                componentDetails += results.filterValues { it.securityData.securityIssues.isNotEmpty() }
+            }.onFailure {
+                // Create dummy details for all components in the chunk as the current data model does not allow to
+                // return issues that are not associated to any package.
+                componentDetails += chunk.associate { component ->
+                    component.packageUrl to ComponentDetails(component, SecurityData(emptyList()))
                 }
-            }.toMap()
-        } catch (e: IOException) {
-            createFailedResults(startTime, packages, e)
+
+                issues += Issue(source = providerName, message = it.collectMessages())
+            }
         }
+
+        val endTime = Instant.now()
+
+        return packages.mapNotNullTo(mutableListOf()) { pkg ->
+            componentDetails[pkg.id.toPurl()]?.let { pkgDetails ->
+                pkg to AdvisorResult(
+                    details,
+                    AdvisorSummary(startTime, endTime, issues),
+                    vulnerabilities = pkgDetails.securityData.securityIssues.map { it.toVulnerability() }
+                )
+            }
+        }.toMap()
     }
 
     /**
      * Construct a [Vulnerability] from the data stored in this issue.
      */
-    private fun NexusIqService.SecurityIssue.toVulnerability(): Vulnerability {
+    private fun SecurityIssue.toVulnerability(): Vulnerability {
         val references = mutableListOf<VulnerabilityReference>()
 
         val browseUrl = URI("${config.browseUrl}/assets/index.html#/vulnerabilities/$reference")
@@ -139,19 +150,4 @@ class NexusIq(name: String, private val config: NexusIqConfiguration) : AdvicePr
 
         return Vulnerability(id = reference, references = references)
     }
-
-    /**
-     * Invoke the [NexusIQ service][service] to request detail information for the given [components]. Catch HTTP
-     * exceptions thrown by the service and re-throw them as [IOException].
-     */
-    private suspend fun getComponentDetails(
-        service: NexusIqService,
-        components: List<NexusIqService.Component>
-    ): NexusIqService.ComponentDetailsWrapper =
-        try {
-            logger.debug { "Querying component details from ${config.serverUrl}." }
-            service.getComponentDetails(NexusIqService.ComponentsWrapper(components))
-        } catch (e: HttpException) {
-            throw IOException(e)
-        }
 }

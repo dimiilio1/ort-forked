@@ -32,6 +32,10 @@
     "versionInfo" : "0.0.1"
   }, {
     "SPDXID" : "SPDXRef-Package-Maven-first-package-group-first-package-0.0.1",
+    "checksums" : [ {
+      "algorithm" : "SHA1",
+      "checksumValue" : "0000000000000000000000000000000000000000"
+    } ],
     "copyrightText" : "Copyright 2020 Some copyright holder in VCS\nCopyright 2020 Some copyright holder in source artifact\nCopyright 2020 Some other copyright holder in source artifact",
     "downloadLocation" : "https://some-host/first-package.jar",
     "externalRefs" : [ {
@@ -45,7 +49,7 @@
     "licenseDeclared" : "BSD-3-Clause AND (MIT OR GPL-2.0-only)",
     "licenseInfoFromFiles" : [ "Apache-2.0", "BSD-2-Clause" ],
     "name" : "first-package",
-    "summary" : "A package with all supported attributes set, with a VCS URL containing a user name, and with a scan result containing two copyright finding matched to a license finding.",
+    "summary" : "A package with all supported attributes set, with a VCS URL containing a user name, and with two scan results for the VCS containing copyright findings matched to a license finding.",
     "versionInfo" : "0.0.1"
   }, {
     "SPDXID" : "SPDXRef-Package-Maven-first-package-group-first-package-0.0.1-vcs",
@@ -56,19 +60,20 @@
       "referenceType" : "purl",
       "referenceLocator" : "pkg:maven/first-package-group/first-package@0.0.1"
     } ],
-    "filesAnalyzed" : true,
+    "filesAnalyzed" : false,
     "homepage" : "first package's homepage URL",
     "licenseConcluded" : "NOASSERTION",
     "licenseDeclared" : "BSD-3-Clause AND (MIT OR GPL-2.0-only)",
     "licenseInfoFromFiles" : [ "Apache-2.0", "BSD-2-Clause" ],
     "name" : "first-package",
-    "packageVerificationCode" : {
-      "packageVerificationCodeValue" : "0000000000000000000000000000000000000000"
-    },
-    "summary" : "A package with all supported attributes set, with a VCS URL containing a user name, and with a scan result containing two copyright finding matched to a license finding.",
+    "summary" : "A package with all supported attributes set, with a VCS URL containing a user name, and with two scan results for the VCS containing copyright findings matched to a license finding.",
     "versionInfo" : "0.0.1"
   }, {
     "SPDXID" : "SPDXRef-Package-Maven-first-package-group-first-package-0.0.1-source-artifact",
+    "checksums" : [ {
+      "algorithm" : "SHA1",
+      "checksumValue" : "0000000000000000000000000000000000000000"
+    } ],
     "copyrightText" : "Copyright 2020 Some copyright holder in VCS\nCopyright 2020 Some copyright holder in source artifact\nCopyright 2020 Some other copyright holder in source artifact",
     "downloadLocation" : "https://some-host/first-package-sources.jar",
     "externalRefs" : [ {
@@ -76,16 +81,13 @@
       "referenceType" : "purl",
       "referenceLocator" : "pkg:maven/first-package-group/first-package@0.0.1"
     } ],
-    "filesAnalyzed" : true,
+    "filesAnalyzed" : false,
     "homepage" : "first package's homepage URL",
     "licenseConcluded" : "NOASSERTION",
     "licenseDeclared" : "BSD-3-Clause AND (MIT OR GPL-2.0-only)",
     "licenseInfoFromFiles" : [ "Apache-2.0", "BSD-2-Clause" ],
     "name" : "first-package",
-    "packageVerificationCode" : {
-      "packageVerificationCodeValue" : "0000000000000000000000000000000000000000"
-    },
-    "summary" : "A package with all supported attributes set, with a VCS URL containing a user name, and with a scan result containing two copyright finding matched to a license finding.",
+    "summary" : "A package with all supported attributes set, with a VCS URL containing a user name, and with two scan results for the VCS containing copyright findings matched to a license finding.",
     "versionInfo" : "0.0.1"
   }, {
     "SPDXID" : "SPDXRef-Package-Maven-fourth-package-group-fourth-package-0.0.1",
@@ -118,6 +120,44 @@
     "licenseDeclared" : "NOASSERTION",
     "name" : "second-package",
     "summary" : "A package with minimal attributes set.",
+    "versionInfo" : "0.0.1"
+  }, {
+    "SPDXID" : "SPDXRef-Package-Maven-seventh-package-group-seventh-package-0.0.1",
+    "copyrightText" : "Copyright 2020 Some copyright holder in source artifact",
+    "downloadLocation" : "NONE",
+    "externalRefs" : [ {
+      "referenceCategory" : "PACKAGE_MANAGER",
+      "referenceType" : "purl",
+      "referenceLocator" : "pkg:maven/seventh-package-group/seventh-package@0.0.1"
+    } ],
+    "filesAnalyzed" : false,
+    "homepage" : "NONE",
+    "licenseConcluded" : "NOASSERTION",
+    "licenseDeclared" : "NOASSERTION",
+    "licenseInfoFromFiles" : [ "GPL-3.0-only" ],
+    "name" : "seventh-package",
+    "summary" : "A package with a source artifact scan result.",
+    "versionInfo" : "0.0.1"
+  }, {
+    "SPDXID" : "SPDXRef-Package-Maven-seventh-package-group-seventh-package-0.0.1-source-artifact",
+    "checksums" : [ {
+      "algorithm" : "SHA1",
+      "checksumValue" : "0000000000000000000000000000000000000000"
+    } ],
+    "copyrightText" : "Copyright 2020 Some copyright holder in source artifact",
+    "downloadLocation" : "https://some-host/seventh-package-sources.jar",
+    "externalRefs" : [ {
+      "referenceCategory" : "PACKAGE_MANAGER",
+      "referenceType" : "purl",
+      "referenceLocator" : "pkg:maven/seventh-package-group/seventh-package@0.0.1"
+    } ],
+    "filesAnalyzed" : false,
+    "homepage" : "NONE",
+    "licenseConcluded" : "NOASSERTION",
+    "licenseDeclared" : "NOASSERTION",
+    "licenseInfoFromFiles" : [ "GPL-3.0-only" ],
+    "name" : "seventh-package",
+    "summary" : "A package with a source artifact scan result.",
     "versionInfo" : "0.0.1"
   }, {
     "SPDXID" : "SPDXRef-Package-Maven-sixth-package-group-sixth-package-0.0.1",
@@ -155,11 +195,19 @@
   "relationships" : [ {
     "spdxElementId" : "SPDXRef-Package-Maven-first-package-group-first-package-0.0.1",
     "relationshipType" : "GENERATED_FROM",
-    "relatedSpdxElement" : "SPDXRef-Package-Maven-first-package-group-first-package-0.0.1-vcs"
+    "relatedSpdxElement" : "SPDXRef-Package-Maven-first-package-group-first-package-0.0.1-source-artifact"
   }, {
     "spdxElementId" : "SPDXRef-Package-Maven-first-package-group-first-package-0.0.1",
     "relationshipType" : "GENERATED_FROM",
-    "relatedSpdxElement" : "SPDXRef-Package-Maven-first-package-group-first-package-0.0.1-source-artifact"
+    "relatedSpdxElement" : "SPDXRef-Package-Maven-first-package-group-first-package-0.0.1-vcs"
+  }, {
+    "spdxElementId" : "SPDXRef-Package-Maven-seventh-package-group-seventh-package-0.0.1",
+    "relationshipType" : "GENERATED_FROM",
+    "relatedSpdxElement" : "SPDXRef-Package-Maven-seventh-package-group-seventh-package-0.0.1-source-artifact"
+  }, {
+    "spdxElementId" : "SPDXRef-Project-Maven-first-project-group-first-project-name-0.0.1",
+    "relationshipType" : "DEPENDS_ON",
+    "relatedSpdxElement" : "SPDXRef-Package-Maven-fifth-package-group-fifth-package-0.0.1"
   }, {
     "spdxElementId" : "SPDXRef-Project-Maven-first-project-group-first-project-name-0.0.1",
     "relationshipType" : "DEPENDS_ON",
@@ -175,14 +223,14 @@
   }, {
     "spdxElementId" : "SPDXRef-Project-Maven-first-project-group-first-project-name-0.0.1",
     "relationshipType" : "DEPENDS_ON",
+    "relatedSpdxElement" : "SPDXRef-Package-Maven-seventh-package-group-seventh-package-0.0.1"
+  }, {
+    "spdxElementId" : "SPDXRef-Project-Maven-first-project-group-first-project-name-0.0.1",
+    "relationshipType" : "DEPENDS_ON",
     "relatedSpdxElement" : "SPDXRef-Package-Maven-sixth-package-group-sixth-package-0.0.1"
   }, {
     "spdxElementId" : "SPDXRef-Project-Maven-first-project-group-first-project-name-0.0.1",
     "relationshipType" : "DEPENDS_ON",
     "relatedSpdxElement" : "SPDXRef-Package-Maven-third-package-group-third-package-0.0.1"
-  }, {
-    "spdxElementId" : "SPDXRef-Project-Maven-first-project-group-first-project-name-0.0.1",
-    "relationshipType" : "DEPENDS_ON",
-    "relatedSpdxElement" : "SPDXRef-Package-Maven-fifth-package-group-fifth-package-0.0.1"
   } ]
 }

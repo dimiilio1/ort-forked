@@ -5,15 +5,15 @@ acceptable and can be ignored.
 
 You can use the [resolutions.yml example](../examples/resolutions.yml) as the base configuration file for your scans.
 
-### When to Use Resolutions
+## When to Use Resolutions
 
 Resolutions should be used when it is impossible to solve an issue or a fix is planned for a later time.
 
 The sections below explain how to create resolutions in the `resolutions.yml` file which, if passed as an argument to
-the _reporter_, applies to each scan made. If a resolution is project-specific, then add it in the
+the *reporter*, applies to each scan made. If a resolution is project-specific, then add it in the
 [.ort.yml](config-file-ort-yml.md) file for the project.
 
-Resolutions are only taken into account by the _reporter_, while the _analyzer_ and _scanner_ ignore them.
+Resolutions are only taken into account by the *reporter*, while the *analyzer* and *scanner* ignore them.
 
 ## Resolution Basics
 
@@ -23,7 +23,7 @@ resolution.
 To be able to show why a resolution is acceptable, each resolution must include an explanation. The explanation consists
 of:
 
-* `reason` -- an identifier selected from a predefined list of options. 
+* `reason` -- an identifier selected from a predefined list of options.
 * `comment` -- free text, providing an explanation and optionally a link to further information.
 
 ## Resolving Issues
@@ -43,6 +43,7 @@ issues:
   reason: "One of IssueResolutionReason e.g. BUILD_TOOL_ISSUE,CANT_FIX_ISSUE,SCANNER_ISSUE."
   comment: "A comment further explaining why the reason above is acceptable."
 ```
+
 Where the list of available options for `reason` is defined in
 [IssueResolutionReason.kt](../model/src/main/kotlin/config/IssueResolutionReason.kt).
 
@@ -84,7 +85,7 @@ rule_violations:
   comment: "Org-wide commercial Qt license was purchased, for details see https://jira.example.com/issues/SOURCING-1234"
 ```
 
-### Resolving Vulnerabilities
+## Resolving Vulnerabilities
 
 The code below shows the structure of a vulnerability resolution in the `resolutions.yml` file:
 
@@ -111,9 +112,9 @@ vulnerabilities:
 ## Command Line
 
 To use the `resolutions.yml` file put it to `$ORT_CONFIG_DIR/resolutions.yml` or pass it to the `--resolutions-file`
-option of the _reporter_:
+option of the *reporter*:
 
-```bash
+```shell
 cli/build/install/ort/bin/ort report
   -i [evaluator-output-dir]/evaluation-result.yml
   -o [reporter-output-dir]

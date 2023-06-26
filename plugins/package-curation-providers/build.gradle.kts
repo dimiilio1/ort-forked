@@ -18,44 +18,6 @@
  */
 
 plugins {
-    // Apply core plugins.
-    `java-platform`
-    `maven-publish`
-}
-
-javaPlatform {
-    allowDependencies()
-}
-
-dependencies {
-    api(project(":plugins:package-curation-providers:clearly-defined-package-curation-provider"))
-    api(project(":plugins:package-curation-providers:file-package-curation-provider"))
-    api(project(":plugins:package-curation-providers:ort-config-package-curation-provider"))
-    api(project(":plugins:package-curation-providers:sw360-package-curation-provider"))
-}
-
-configure<PublishingExtension> {
-    publications {
-        create<MavenPublication>(name) {
-            groupId = "org.ossreviewtoolkit.plugins"
-
-            from(components["javaPlatform"])
-
-            pom {
-                licenses {
-                    license {
-                        name.set("Apache-2.0")
-                        url.set("https://www.apache.org/licenses/LICENSE-2.0")
-                    }
-                }
-
-                scm {
-                    connection.set("scm:git:https://github.com/oss-review-toolkit/ort.git")
-                    developerConnection.set("scm:git:git@github.com:oss-review-toolkit/ort.git")
-                    tag.set(version.toString())
-                    url.set("https://github.com/oss-review-toolkit/ort")
-                }
-            }
-        }
-    }
+    // Apply precompiled plugins.
+    id("ort-plugins-conventions")
 }

@@ -24,7 +24,7 @@ import OrtDependencyTreeModel
 
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.util.SortedSet
+import java.util.Properties
 import java.util.concurrent.TimeUnit
 
 import org.apache.logging.log4j.kotlin.Logging
@@ -56,11 +56,13 @@ import org.ossreviewtoolkit.model.config.RepositoryConfiguration
 import org.ossreviewtoolkit.model.createAndLogIssue
 import org.ossreviewtoolkit.model.orEmpty
 import org.ossreviewtoolkit.model.utils.parseRepoManifestPath
+import org.ossreviewtoolkit.utils.common.Os
 import org.ossreviewtoolkit.utils.common.safeMkdirs
 import org.ossreviewtoolkit.utils.common.splitOnWhitespace
 import org.ossreviewtoolkit.utils.common.withoutPrefix
 import org.ossreviewtoolkit.utils.ort.DeclaredLicenseProcessor
-import org.ossreviewtoolkit.utils.ort.OkHttpClientHelper
+import org.ossreviewtoolkit.utils.ort.downloadText
+import org.ossreviewtoolkit.utils.ort.okHttpClient
 import org.ossreviewtoolkit.utils.ort.ortToolsDirectory
 import org.ossreviewtoolkit.utils.spdx.SpdxOperator
 
@@ -73,6 +75,11 @@ private val GRADLE_BUILD_FILES = listOf("build.gradle", "build.gradle.kts")
  * The names of Gradle (Groovy, Kotlin script) settings files for a Gradle build.
  */
 private val GRADLE_SETTINGS_FILES = listOf("settings.gradle", "settings.gradle.kts")
+
+/**
+ * The Gradle user home directory.
+ */
+private val GRADLE_USER_HOME = Os.env["GRADLE_USER_HOME"]?.let { File(it) } ?: Os.userHomeDirectory.resolve(".gradle")
 
 /**
  * The name of the option to specify the Gradle version.
@@ -142,11 +149,17 @@ class GradleInspector(
             val stdout = ByteArrayOutputStream()
             val stderr = ByteArrayOutputStream()
 
+            val gradleProperties = readGradleProperties(GRADLE_USER_HOME) + readGradleProperties(projectDir)
+            val jvmArgs = gradleProperties["org.gradle.jvmargs"].orEmpty()
+                .replace("MaxPermSize", "MaxMetaspaceSize") // Replace a deprecated JVM argument.
+                .splitOnWhitespace()
+
             // In order to debug the plugin, pass the "-Dorg.gradle.debug=true" option to the JVM running ORT. This will
             // then block execution of the plugin until a remote debug session is attached to port 5005 (by default),
             // also see https://docs.gradle.org/current/userguide/troubleshooting.html#sec:troubleshooting_build_logic.
             val model = connection.model(OrtDependencyTreeModel::class.java)
                 .addProgressListener(ProgressListener { logger.debug { it.displayName } })
+                .setJvmArguments(jvmArgs)
                 .setStandardOutput(stdout)
                 .setStandardError(stderr)
                 .withArguments("--init-script", initScriptFile.path)
@@ -208,7 +221,7 @@ class GradleInspector(
 
         val scopes = dependencyTreeModel.configurations.filterNot {
             excludes.isScopeExcluded(it.name)
-        }.mapTo(sortedSetOf()) {
+        }.mapTo(mutableSetOf()) {
             Scope(name = it.name, dependencies = it.dependencies.toPackageRefs(packageDependencies))
         }
 
@@ -286,13 +299,42 @@ class GradleInspector(
 }
 
 /**
+ * Read the `gradle.properties` file in [projectDir] or in any of its parent directories, and return the contained
+ * properties as a map.
+ */
+private fun readGradleProperties(projectDir: File): Map<String, String> {
+    val gradleProperties = mutableListOf<Pair<String, String>>()
+
+    var currentDir: File? = projectDir
+    do {
+        val propertiesFile = currentDir?.resolve("gradle.properties")
+
+        if (propertiesFile?.isFile == true) {
+            propertiesFile.inputStream().use {
+                val properties = Properties().apply { load(it) }
+
+                properties.mapNotNullTo(gradleProperties) { (key, value) ->
+                    ((key as String) to (value as String)).takeUnless { key.startsWith("systemProp.") }
+                }
+            }
+
+            break
+        }
+
+        currentDir = currentDir?.parentFile
+    } while (currentDir != null)
+
+    return gradleProperties.toMap()
+}
+
+/**
  * Recursively convert a collection of [OrtDependency] objects to a set of [PackageReference] objects for use in [Scope]
  * while flattening all dependencies into the [packageDependencies] collection.
  */
 private fun Collection<OrtDependency>.toPackageRefs(
     packageDependencies: MutableCollection<OrtDependency>
-): SortedSet<PackageReference> =
-    mapTo(sortedSetOf()) { dep ->
+): Set<PackageReference> =
+    mapTo(mutableSetOf()) { dep ->
         val (id, linkage) = if (dep.localPath != null) {
             val id = Identifier("Gradle", dep.groupId, dep.artifactId, dep.version)
             id to PackageLinkage.PROJECT_DYNAMIC
@@ -322,7 +364,7 @@ private fun createRemoteArtifact(
     }
 
     // TODO: How to handle authentication for private repositories here, or rely on Gradle for the download?
-    val checksum = OkHttpClientHelper.downloadText("$artifactUrl.$algorithm")
+    val checksum = okHttpClient.downloadText("$artifactUrl.$algorithm")
         .getOrElse { return RemoteArtifact.EMPTY }
 
     return RemoteArtifact(artifactUrl, parseChecksum(checksum, algorithm))

@@ -20,8 +20,8 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-    // Apply core plugins.
-    `java-library`
+    // Apply precompiled plugins.
+    id("ort-library-conventions")
 
     // Apply third-party plugins.
     alias(libs.plugins.kotlinSerialization)
@@ -39,10 +39,6 @@ dependencies {
     implementation(project(":utils:spdx-utils"))
 
     implementation(libs.bundles.kotlinxSerialization)
-    implementation(libs.jacksonCore)
-    implementation(libs.jacksonDatabind)
-    implementation(libs.jacksonDataformatYaml)
-    implementation(libs.jacksonModuleKotlin)
     implementation(libs.semver4j)
 
     funTestImplementation(testFixtures(project(":analyzer")))

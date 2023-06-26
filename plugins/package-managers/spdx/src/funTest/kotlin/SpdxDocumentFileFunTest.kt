@@ -95,7 +95,7 @@ class SpdxDocumentFileFunTest : WordSpec({
                         path = vcsDir.getPathToRoot(curlPackageFile.parentFile)
                     ),
                     homepageUrl = "https://curl.haxx.se/",
-                    scopeDependencies = sortedSetOf(
+                    scopeDependencies = setOf(
                         Scope("default")
                     )
                 ),
@@ -116,7 +116,7 @@ class SpdxDocumentFileFunTest : WordSpec({
                         path = vcsDir.getPathToRoot(opensslPackageFile.parentFile)
                     ),
                     homepageUrl = "https://www.openssl.org/",
-                    scopeDependencies = sortedSetOf(
+                    scopeDependencies = setOf(
                         Scope("default")
                     )
                 ),
@@ -137,7 +137,7 @@ class SpdxDocumentFileFunTest : WordSpec({
                         path = vcsDir.getPathToRoot(zlibPackageFile.parentFile)
                     ),
                     homepageUrl = "http://zlib.net",
-                    scopeDependencies = sortedSetOf(
+                    scopeDependencies = setOf(
                         Scope("default")
                     )
                 ),
@@ -226,6 +226,6 @@ class SpdxDocumentFileFunTest : WordSpec({
 })
 
 private val projectDir = getAssetFile("projects/synthetic")
-private val vcsDir = VersionControlSystem.forDirectory(projectDir)!!
+private val vcsDir = checkNotNull(VersionControlSystem.forDirectory(projectDir))
 private val vcsUrl = vcsDir.getRemoteUrl()
 private val vcsRevision = vcsDir.getRevision()

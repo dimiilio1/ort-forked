@@ -19,34 +19,18 @@
 
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
-val askalonoVersion: String by project
-val boyterLcVersion: String by project
-val licenseeVersion: String by project
-val scancodeVersion: String by project
-
 plugins {
     // Apply core plugins.
-    `java-library`
-}
+    `java-test-fixtures`
 
-repositories {
-    exclusiveContent {
-        forRepository {
-            maven("https://repo.eclipse.org/content/repositories/sw360-releases/")
-        }
-
-        filter {
-            includeGroup("org.eclipse.sw360")
-        }
-    }
+    // Apply precompiled plugins.
+    id("ort-library-conventions")
 }
 
 dependencies {
     api(project(":model"))
 
     implementation(project(":clients:clearly-defined-client"))
-    implementation(project(":clients:fossid-webapp-client"))
-    implementation(project(":clients:scanoss-client"))
     implementation(project(":downloader"))
     implementation(project(":utils:ort-utils"))
 
@@ -56,13 +40,17 @@ dependencies {
     implementation(libs.kotlinxCoroutines)
     implementation(libs.postgres)
     implementation(libs.retrofitConverterJackson)
-    implementation(libs.scanoss)
     implementation(libs.sw360Client)
+
+    funTestApi(testFixtures(project(":scanner")))
 
     testImplementation(libs.bundles.kotlinxSerialization)
     testImplementation(libs.mockk)
     testImplementation(libs.retrofitConverterKotlinxSerialization)
     testImplementation(libs.wiremock)
+
+    testFixturesImplementation(libs.kotestAssertionsCore)
+    testFixturesImplementation(libs.kotestRunnerJunit5)
 }
 
 tasks.named<KotlinCompile>("compileTestKotlin") {

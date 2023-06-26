@@ -54,7 +54,7 @@ import org.ossreviewtoolkit.utils.common.expandTilde
  * files can contain placeholders, which make them invalid (e.g. a placeholder for a numeric value causes serialization
  * to fail). Therefore, a special mode can be enabled, in which well-known placeholders are handled.
  */
-class SetDependencyRepresentationCommand : CliktCommand(
+internal class SetDependencyRepresentationCommand : CliktCommand(
     help = "Set the dependency representation of an ORT result to a specific target format."
 ) {
     /**
@@ -125,7 +125,7 @@ class SetDependencyRepresentationCommand : CliktCommand(
 
     private val targetFormat by option(
         "--format", "-f",
-        help = "The target format for the conversion."
+        help = "The target format for the conversion. Must be one of ${enumValues<TargetFormat>().map { it.name }}."
     ).enum<TargetFormat>().default(TargetFormat.GRAPH)
 
     private val handlePlaceholders by option(

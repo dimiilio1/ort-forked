@@ -20,22 +20,23 @@
 package org.ossreviewtoolkit.plugins.reporters.ctrlx
 
 import io.kotest.core.spec.style.StringSpec
+import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.collections.containExactly
 import io.kotest.matchers.collections.haveSize
 import io.kotest.matchers.should
 
-import org.ossreviewtoolkit.model.readValue
+import kotlinx.serialization.json.decodeFromStream
+
 import org.ossreviewtoolkit.plugins.reporters.ctrlx.CtrlXAutomationReporter.Companion.REPORT_FILENAME
 import org.ossreviewtoolkit.reporter.ORT_RESULT
 import org.ossreviewtoolkit.reporter.ReporterInput
-import org.ossreviewtoolkit.utils.test.createTestTempDir
 import org.ossreviewtoolkit.utils.test.getAssetFile
 import org.ossreviewtoolkit.utils.test.shouldNotBeNull
 
 class CtrlXAutomationReporterFunTest : StringSpec({
     "The official sample file can be deserialized" {
         val fossInfoFile = getAssetFile("sample.fossinfo.json")
-        val fossInfo = fossInfoFile.readValue<FossInfo>()
+        val fossInfo = fossInfoFile.inputStream().use { CtrlXAutomationReporter.JSON.decodeFromStream<FossInfo>(it) }
 
         fossInfo.components shouldNotBeNull {
             this should haveSize(8)
@@ -43,7 +44,7 @@ class CtrlXAutomationReporterFunTest : StringSpec({
     }
 
     "Generating a report works" {
-        val outputDir = createTestTempDir()
+        val outputDir = tempdir()
         val reportFiles = CtrlXAutomationReporter().generateReport(ReporterInput(ORT_RESULT), outputDir)
 
         reportFiles.map { it.name } should containExactly(REPORT_FILENAME)

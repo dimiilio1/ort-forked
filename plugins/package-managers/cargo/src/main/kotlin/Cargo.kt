@@ -150,7 +150,7 @@ class Cargo(
             // Filter dev and build dependencies, because they are not transitive.
             val kind = it["kind"].textValueOrEmpty()
             kind != "dev" && kind != "build"
-        }.mapNotNull {
+        }.mapNotNullTo(mutableSetOf()) {
             // TODO: Handle renamed dependencies here, see:
             //       https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#renaming-dependencies-in-cargotoml
             val dependencyName = it["name"].textValue()
@@ -158,7 +158,7 @@ class Cargo(
             getResolvedVersion(name, version, dependencyName, metadata)?.let { dependencyVersion ->
                 buildDependencyTree(dependencyName, dependencyVersion, packages, metadata)
             }
-        }.toSortedSet()
+        }
 
         val id = parseCargoId(node)
         val pkg = packages.getValue(id)
@@ -200,15 +200,14 @@ class Cargo(
                     val version = getResolvedVersion(projectName, projectVersion, dependencyName, metadata)
                     version?.let { Pair(dependencyName, it) }
                 }
-                .map {
+                .mapTo(mutableSetOf()) {
                     buildDependencyTree(name = it.first, version = it.second, packages = packages, metadata = metadata)
                 }
-                .toSortedSet()
 
             return Scope(scope, transitiveDependencies)
         }
 
-        val scopes = listOfNotNull(
+        val scopes = setOfNotNull(
             getTransitiveDependencies(groupedDependencies[""], "dependencies"),
             getTransitiveDependencies(groupedDependencies["dev"], "dev-dependencies"),
             getTransitiveDependencies(groupedDependencies["build"], "build-dependencies")
@@ -231,7 +230,7 @@ class Cargo(
             vcs = projectPkg.vcs,
             vcsProcessed = processProjectVcs(workingDir, projectPkg.vcs, homepageUrl),
             homepageUrl = homepageUrl,
-            scopeDependencies = scopes.toSortedSet()
+            scopeDependencies = scopes
         )
 
         val nonProjectPackages = packages

@@ -194,7 +194,7 @@ class OpossumReporter : Reporter {
 
     internal data class OpossumExternalAttributionSource(
         val name: String,
-        val priority: Int,
+        val priority: Int
     )
 
     internal data class OpossumInput(
@@ -243,7 +243,7 @@ class OpossumReporter : Reporter {
             filesWithChildren += resolvePath(fileWithChildren, isDirectory = true)
         }
 
-        fun addBaseURL(path: String, vcs: VcsInfo) {
+        fun addBaseUrl(path: String, vcs: VcsInfo) {
             val idFromPath = resolvePath(path, isDirectory = true)
 
             if (idFromPath in baseUrlsForSources) return
@@ -272,7 +272,7 @@ class OpossumReporter : Reporter {
             mapOfId[path] = min(level, oldLevel)
 
             resources.addResource(path)
-            addBaseURL(path, vcs)
+            addBaseUrl(path, vcs)
         }
 
         private fun addSignal(signal: OpossumSignal, paths: SortedSet<String>) {
@@ -511,7 +511,7 @@ class OpossumReporter : Reporter {
     ): OpossumInput {
         val opossumInput = OpossumInput()
 
-        opossumInput.addBaseURL("/", ortResult.repository.vcs)
+        opossumInput.addBaseUrl("/", ortResult.repository.vcs)
 
         SpdxLicense.values().forEach {
             val licenseText = getLicenseText(it.id)

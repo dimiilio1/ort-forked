@@ -24,7 +24,6 @@ import com.fasterxml.jackson.dataformat.yaml.JacksonYAMLParseException
 
 import java.io.File
 import java.io.IOException
-import java.util.SortedSet
 
 import org.apache.logging.log4j.kotlin.Logging
 
@@ -64,8 +63,9 @@ import org.ossreviewtoolkit.utils.common.safeMkdirs
 import org.ossreviewtoolkit.utils.common.splitOnWhitespace
 import org.ossreviewtoolkit.utils.common.textValueOrEmpty
 import org.ossreviewtoolkit.utils.common.unpack
-import org.ossreviewtoolkit.utils.ort.OkHttpClientHelper
+import org.ossreviewtoolkit.utils.ort.downloadFile
 import org.ossreviewtoolkit.utils.ort.normalizeVcsUrl
+import org.ossreviewtoolkit.utils.ort.okHttpClient
 import org.ossreviewtoolkit.utils.ort.ortToolsDirectory
 import org.ossreviewtoolkit.utils.ort.showStackTrace
 
@@ -79,7 +79,7 @@ private const val PUB_LOCK_FILE = "pubspec.lock"
 private val flutterCommand = if (Os.isWindows) "flutter.bat" else "flutter"
 private val dartCommand = if (Os.isWindows) "dart.bat" else "dart"
 
-private val flutterVersion = Os.env["FLUTTER_VERSION"] ?: "3.3.8-stable"
+private val flutterVersion = Os.env["FLUTTER_VERSION"] ?: "3.10.5-stable"
 private val flutterInstallDir = ortToolsDirectory.resolve("flutter-$flutterVersion")
 
 val flutterHome by lazy {
@@ -179,7 +179,7 @@ class Pub(
 
         logger.info { "Downloading flutter-$flutterVersion from $url... " }
         flutterInstallDir.safeMkdirs()
-        val flutterArchive = OkHttpClientHelper.downloadFile(url, flutterInstallDir).getOrThrow()
+        val flutterArchive = okHttpClient.downloadFile(url, flutterInstallDir).getOrThrow()
 
         logger.info { "Unpacking '$flutterArchive' to '$flutterInstallDir'... " }
         flutterArchive.unpack(flutterInstallDir)
@@ -245,7 +245,7 @@ class Pub(
         }
 
         val packages = mutableMapOf<Identifier, Package>()
-        val scopes = sortedSetOf<Scope>()
+        val scopes = mutableSetOf<Scope>()
         val issues = mutableListOf<Issue>()
         val projectAnalyzerResults = mutableListOf<ProjectAnalyzerResult>()
 
@@ -267,14 +267,14 @@ class Pub(
                         .toList()
 
                     if (gradleDefinitionFiles.isNotEmpty()) {
-                        val gradleDependencies = gradleDefinitionFiles.map {
+                        val gradleDependencies = gradleDefinitionFiles.mapTo(mutableSetOf()) {
                             PackageManagerDependencyHandler.createPackageManagerDependency(
                                 packageManager = gradleFactory.type,
                                 definitionFile = VersionControlSystem.getPathInfo(it).path,
                                 scope = "releaseCompileClasspath",
                                 linkage = PackageLinkage.PROJECT_STATIC
                             )
-                        }.toSortedSet()
+                        }
 
                         scopes += Scope("android", gradleDependencies)
                     }
@@ -331,7 +331,7 @@ class Pub(
         labels: Map<String, String>,
         workingDir: File,
         processedPackages: Set<String> = emptySet()
-    ): SortedSet<PackageReference> {
+    ): Set<PackageReference> {
         val packageReferences = mutableSetOf<PackageReference>()
         val nameOfCurrentPackage = manifest["name"].textValue()
         val containsFlutter = "flutter" in dependencies
@@ -403,7 +403,7 @@ class Pub(
             }
         }
 
-        return packageReferences.toSortedSet()
+        return packageReferences
     }
 
     private val analyzerResultCacheAndroid = mutableMapOf<String, List<ProjectAnalyzerResult>>()
@@ -472,7 +472,7 @@ class Pub(
         return ProjectAnalyzerResult(Project.EMPTY, emptySet(), listOf(issue))
     }
 
-    private fun parseProject(definitionFile: File, pubspec: JsonNode, scopes: SortedSet<Scope>): Project {
+    private fun parseProject(definitionFile: File, pubspec: JsonNode, scopes: Set<Scope>): Project {
         // See https://dart.dev/tools/pub/pubspec for supported fields.
         val rawName = pubspec["name"]?.textValue() ?: definitionFile.parentFile.name
         val homepageUrl = pubspec["homepage"].textValueOrEmpty()

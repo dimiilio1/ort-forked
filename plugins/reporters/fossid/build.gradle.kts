@@ -18,8 +18,8 @@
  */
 
 plugins {
-    // Apply core plugins.
-    `java-library`
+    // Apply precompiled plugins.
+    id("ort-library-conventions")
 }
 
 dependencies {
@@ -27,6 +27,8 @@ dependencies {
 
     implementation(project(":clients:fossid-webapp-client"))
     implementation(project(":model"))
+    implementation(project(":plugins:reporters:asciidoc-reporter"))
+    implementation(project(":plugins:reporters:freemarker-reporter"))
     implementation(project(":utils:common-utils"))
     implementation(project(":utils:ort-utils"))
 

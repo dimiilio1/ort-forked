@@ -36,6 +36,7 @@ import org.ossreviewtoolkit.model.ScannerDetails
 import org.ossreviewtoolkit.model.Severity
 import org.ossreviewtoolkit.model.TextLocation
 import org.ossreviewtoolkit.model.createAndLogIssue
+import org.ossreviewtoolkit.model.mapLicense
 import org.ossreviewtoolkit.model.utils.associateLicensesWithExceptions
 import org.ossreviewtoolkit.utils.common.textValueOrEmpty
 import org.ossreviewtoolkit.utils.spdx.SpdxConstants.LICENSE_REF_PREFIX
@@ -130,8 +131,8 @@ internal fun generateSummary(
         startTime = startTime,
         endTime = endTime,
         packageVerificationCode = verificationCode,
-        licenseFindings = getLicenseFindings(result, detectedLicenseMapping, parseExpressions).toSortedSet(),
-        copyrightFindings = getCopyrightFindings(result).toSortedSet(),
+        licenseFindings = getLicenseFindings(result, detectedLicenseMapping, parseExpressions),
+        copyrightFindings = getCopyrightFindings(result),
         issues = issues + getIssues(result)
     )
 }
@@ -190,7 +191,7 @@ private fun getLicenseFindings(
     result: JsonNode,
     detectedLicenseMapping: Map<String, String>,
     parseExpressions: Boolean
-): List<LicenseFinding> {
+): Set<LicenseFinding> {
     val licenseFindings = mutableListOf<LicenseFinding>()
 
     val input = getInputPath(result)
@@ -214,20 +215,19 @@ private fun getLicenseFindings(
         ).map { (licenseMatch, replacements) ->
             val spdxLicenseExpression = replaceLicenseKeys(licenseMatch.expression, replacements)
 
-            LicenseFinding.createAndMap(
-                license = spdxLicenseExpression,
+            LicenseFinding(
+                license = spdxLicenseExpression.mapLicense(detectedLicenseMapping),
                 location = TextLocation(
                     path = file["path"].textValue().removePrefix(input),
                     startLine = licenseMatch.startLine,
                     endLine = licenseMatch.endLine
                 ),
-                score = licenseMatch.score,
-                detectedLicenseMapping = detectedLicenseMapping
+                score = licenseMatch.score
             )
         }
     }
 
-    return associateLicensesWithExceptions(licenseFindings)
+    return associateLicensesWithExceptions(licenseFindings).toSet()
 }
 
 /**
@@ -265,8 +265,8 @@ internal fun replaceLicenseKeys(licenseExpression: String, replacements: Collect
 /**
  * Get the copyright findings from the given [result].
  */
-private fun getCopyrightFindings(result: JsonNode): List<CopyrightFinding> {
-    val copyrightFindings = mutableListOf<CopyrightFinding>()
+private fun getCopyrightFindings(result: JsonNode): Set<CopyrightFinding> {
+    val copyrightFindings = mutableSetOf<CopyrightFinding>()
 
     val input = getInputPath(result)
 

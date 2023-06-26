@@ -24,29 +24,48 @@ import groovy.json.JsonSlurper
 import java.net.URI
 import java.net.URL
 
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
-
 val spdxLicenseListVersion: String by project
 
 plugins {
+    // Apply core plugins.
     antlr
-    `java-library`
 
+    // Apply precompiled plugins.
+    id("ort-library-conventions")
+
+    // Apply third-party plugins.
     alias(libs.plugins.download)
 }
 
 tasks.withType<AntlrTask>().configureEach {
     arguments = arguments + listOf("-visitor")
+
+    doLast {
+        // Work around https://github.com/antlr/antlr4/issues/4128.
+        outputDirectory.walk()
+            .filter { it.isFile && it.extension == "java" }
+            .forEach { javaFile ->
+                val lines = javaFile.readLines()
+
+                val text = buildString {
+                    lines.mapIndexed { index, line ->
+                        val patchedLine = when {
+                            index == 0 && line.startsWith("// Generated from ") -> line.replace('\\', '/')
+                            else -> line
+                        }
+
+                        appendLine(patchedLine)
+                    }
+                }
+
+                javaFile.writeText(text)
+            }
+    }
 }
 
-tasks.withType<KotlinCompile>().configureEach {
-    // Ensure "generateGrammarSource" is called before "compileKotlin".
-    dependsOn(tasks.withType<AntlrTask>())
-}
-
-tasks.withType<Jar>().configureEach {
-    // Ensure "generateGrammarSource" is called before "sourcesJar".
-    dependsOn(tasks.withType<AntlrTask>())
+sourceSets.configureEach {
+    val generateGrammarSource = tasks.named(getTaskName("generate", "GrammarSource"))
+    java.srcDir(generateGrammarSource.map { files() })
 }
 
 dependencies {
@@ -59,6 +78,8 @@ dependencies {
     implementation(libs.jacksonDataformatYaml)
     implementation(libs.jacksonDatatypeJsr310)
     implementation(libs.jacksonModuleKotlin)
+
+    testImplementation(libs.kotestAssertionsJson)
 }
 
 data class LicenseInfo(

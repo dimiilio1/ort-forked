@@ -24,7 +24,6 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 
 import java.io.File
 import java.io.IOException
-import java.util.SortedSet
 
 import org.apache.logging.log4j.kotlin.Logging
 
@@ -124,7 +123,7 @@ class Composer(
         }
 
         if (!hasDependencies) {
-            val project = parseProject(definitionFile, scopes = sortedSetOf())
+            val project = parseProject(definitionFile, scopes = emptySet())
             val result = ProjectAnalyzerResult(project, packages = emptySet())
 
             return listOf(result)
@@ -145,7 +144,7 @@ class Composer(
         // the "replacing" package.
         val virtualPackages = parseVirtualPackageNames(packages, manifest, json)
 
-        val scopes = sortedSetOf(
+        val scopes = setOf(
             parseScope("require", manifest, json, packages, virtualPackages),
             parseScope("require-dev", manifest, json, packages, virtualPackages)
         )
@@ -171,7 +170,7 @@ class Composer(
         packages: Map<String, Package>,
         virtualPackages: Set<String>,
         dependencyBranch: List<String> = emptyList()
-    ): SortedSet<PackageReference> {
+    ): Set<PackageReference> {
         val packageReferences = mutableSetOf<PackageReference>()
 
         dependencies.filterNot { packageName ->
@@ -209,10 +208,10 @@ class Composer(
             }
         }
 
-        return packageReferences.toSortedSet()
+        return packageReferences
     }
 
-    private fun parseProject(definitionFile: File, scopes: SortedSet<Scope>): Project {
+    private fun parseProject(definitionFile: File, scopes: Set<Scope>): Project {
         logger.info { "Parsing project metadata from '$definitionFile'..." }
 
         val json = definitionFile.readTree()

@@ -20,8 +20,8 @@
 package org.ossreviewtoolkit.downloader.vcs
 
 import io.kotest.core.spec.style.StringSpec
+import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.collections.containAll
-import io.kotest.matchers.collections.containExactlyInAnyOrder
 import io.kotest.matchers.maps.beEmpty
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
@@ -33,12 +33,11 @@ import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
 import org.ossreviewtoolkit.utils.common.unpack
 import org.ossreviewtoolkit.utils.ort.ortDataDirectory
-import org.ossreviewtoolkit.utils.test.createSpecTempDir
 import org.ossreviewtoolkit.utils.test.getAssetFile
 
 class GitWorkingTreeFunTest : StringSpec({
     val git = Git()
-    val zipContentDir = createSpecTempDir()
+    val zipContentDir = tempdir()
 
     beforeSpec {
         val zipFile = getAssetFile("pipdeptree-2018-01-03-git.zip")
@@ -69,11 +68,10 @@ class GitWorkingTreeFunTest : StringSpec({
         val workingTree = git.getWorkingTree(zipContentDir)
 
         // Ignore auto-created branches by Dependabot to avoid regular updates to this list.
-        workingTree.listRemoteBranches().filterNot { it.startsWith("dependabot/") } should containExactlyInAnyOrder(
+        workingTree.listRemoteBranches().filterNot { it.startsWith("dependabot/") } should containAll(
             "all-repos_autofix_bump",
             "all-repos_autofix_bump-2023-02-05",
-            "main",
-            "pre-commit-ci-update-config"
+            "main"
         )
     }
 

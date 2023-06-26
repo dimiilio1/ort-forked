@@ -237,7 +237,7 @@ class Yarn2(
             logger.info { "Parsing packages..." }
 
             val allProjects = parseAllPackages(iterator, definitionFile, packagesHeaders, packagedDetails)
-            val scopeNames = YarnDependencyType.values().map { it.type }.toSortedSet()
+            val scopeNames = YarnDependencyType.values().mapTo(mutableSetOf()) { it.type }
             return allProjects.values.map { project ->
                 ProjectAnalyzerResult(project.copy(scopeNames = scopeNames), emptySet(), issues)
             }.toList()
@@ -488,7 +488,7 @@ class Yarn2(
                     hash = hash
                 ),
                 vcs = vcsFromPackage,
-                vcsProcessed = processPackageVcs(vcsFromPackage, homepageUrl),
+                vcsProcessed = processPackageVcs(vcsFromPackage, homepageUrl)
             )
 
             require(pkg.id.name.isNotEmpty()) {
@@ -527,7 +527,7 @@ class Yarn2(
      */
     private fun Package.collectDependencies(
         allDependencies: Map<Identifier, List<Identifier>>,
-        ancestorPackageIds: Set<Identifier> = emptySet(),
+        ancestorPackageIds: Set<Identifier> = emptySet()
     ): Set<YarnModuleInfo> {
         val dependenciesIds = allDependencies[id]
         return dependenciesIds?.mapNotNull { dependencyId ->

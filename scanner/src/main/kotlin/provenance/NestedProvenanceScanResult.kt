@@ -19,16 +19,12 @@
 
 package org.ossreviewtoolkit.scanner.provenance
 
-import java.time.Instant
-import java.util.SortedSet
-
-import org.ossreviewtoolkit.model.CopyrightFinding
 import org.ossreviewtoolkit.model.KnownProvenance
-import org.ossreviewtoolkit.model.LicenseFinding
 import org.ossreviewtoolkit.model.OrtResult
 import org.ossreviewtoolkit.model.RepositoryProvenance
 import org.ossreviewtoolkit.model.ScanResult
 import org.ossreviewtoolkit.model.ScanSummary
+import org.ossreviewtoolkit.model.utils.mergeScanResultsByScanner
 
 /**
  * A class that contains all [ScanResult]s for a [NestedProvenance].
@@ -42,7 +38,7 @@ data class NestedProvenanceScanResult(
     /**
      * A map of [KnownProvenance]s from [nestedProvenance] associated with lists of [ScanResult]s.
      */
-    val scanResults: Map<KnownProvenance, List<ScanResult>>,
+    val scanResults: Map<KnownProvenance, List<ScanResult>>
 ) {
     /**
      * Return a set of all [KnownProvenance]s contained in [nestedProvenance].
@@ -67,67 +63,14 @@ data class NestedProvenanceScanResult(
     /**
      * Merge the nested [ScanResult]s into one [ScanResult] per used scanner, using the root of the [nestedProvenance]
      * as provenance. This is used to transform this class into the format currently used by [OrtResult].
-     * When merging multiple [ScanSummary]s the earliest start time will be used as the new start time, and the latest
-     * end time will be used as the end time. Because the [ScanSummary] does not contain the checksums of the individual
-     * files, no package verification code can be calculated.
+     * When merging multiple [ScanSummary]s for a particular scanner the earliest start time and lasted end time will
+     * be used as the new values for the respective scanner. Because the [ScanSummary] does not contain the checksums
+     * of the individual files, no package verification code can be calculated.
      */
     fun merge(): List<ScanResult> {
-        val allScanners = scanResults.values.flatMapTo(mutableSetOf()) { results -> results.map { it.scanner } }
+        val scanResultsByPath = scanResults.mapKeys { (provenance, _) -> getPath(provenance) }
 
-        return allScanners.map { scanner ->
-            val scanResultsForScanner = scanResults.mapValues { (_, results) ->
-                results.filter { it.scanner == scanner }
-            }
-
-            val allScanResults = scanResults.values.flatten()
-
-            val startTime = allScanResults.minByOrNull { it.summary.startTime }?.summary?.startTime ?: Instant.now()
-            val endTime = allScanResults.maxByOrNull { it.summary.endTime }?.summary?.endTime ?: startTime
-            val issues = allScanResults.flatMap { it.summary.issues }.distinct()
-
-            val licenseFindings = scanResultsForScanner.mergeLicenseFindings()
-            val copyrightFindings = scanResultsForScanner.mergeCopyrightFindings()
-
-            ScanResult(
-                provenance = nestedProvenance.root,
-                scanner = scanner,
-                summary = ScanSummary(
-                    startTime = startTime,
-                    endTime = endTime,
-                    packageVerificationCode = "",
-                    licenseFindings = licenseFindings,
-                    copyrightFindings = copyrightFindings,
-                    issues = issues
-                ),
-                additionalData = allScanResults.map { it.additionalData }.reduce { acc, map -> acc + map }
-            )
-        }
-    }
-
-    private fun Map<KnownProvenance, List<ScanResult>>.mergeLicenseFindings(): SortedSet<LicenseFinding> {
-        val findingsByPath = mapKeys { getPath(it.key) }.mapValues { (_, scanResults) ->
-            scanResults.flatMap { it.summary.licenseFindings }
-        }
-
-        val findings = findingsByPath.flatMapTo(sortedSetOf()) { (path, findings) ->
-            val prefix = if (path.isEmpty()) path else "$path/"
-            findings.map { it.copy(location = it.location.copy(path = "$prefix${it.location.path}")) }
-        }
-
-        return findings
-    }
-
-    private fun Map<KnownProvenance, List<ScanResult>>.mergeCopyrightFindings(): SortedSet<CopyrightFinding> {
-        val findingsByPath = mapKeys { getPath(it.key) }.mapValues { (_, scanResults) ->
-            scanResults.flatMap { it.summary.copyrightFindings }
-        }
-
-        val findings = findingsByPath.flatMapTo(sortedSetOf()) { (path, findings) ->
-            val prefix = if (path.isEmpty()) path else "$path/"
-            findings.map { it.copy(location = it.location.copy(path = "$prefix${it.location.path}")) }
-        }
-
-        return findings
+        return mergeScanResultsByScanner(scanResultsByPath)
     }
 
     private fun getPath(provenance: KnownProvenance) = nestedProvenance.getPath(provenance)

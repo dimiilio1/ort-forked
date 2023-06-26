@@ -36,32 +36,32 @@ The OSS Review Toolkit (ORT) is a FOSS policy automation and orchestration toolk
 
 You can use it to:
 
-- Generate CycloneDX, SPDX SBOMs, or custom FOSS attribution documentation for your software project
-- Automate your FOSS policy using risk-based Policy as Code to do licensing, security vulnerability, InnerSource
+* Generate CycloneDX, SPDX SBOMs, or custom FOSS attribution documentation for your software project
+* Automate your FOSS policy using risk-based Policy as Code to do licensing, security vulnerability, InnerSource
 and engineering standards checks for your software project and its dependencies
-- Create a source code archive for your software project and its dependencies to comply with certain licenses or have
+* Create a source code archive for your software project and its dependencies to comply with certain licenses or have
 your own copy as nothing on the internet is forever
-- Correct package metadata or licensing findings yourself, using InnerSource or with the help of the FOSS community
+* Correct package metadata or licensing findings yourself, using InnerSource or with the help of the FOSS community
 
 ORT can be used as library (for programmatic use), via a command line interface (for scripted use), or via its CI
-integrations. It consists of the following tools which can be combined into a _highly customizable_ pipeline:
+integrations. It consists of the following tools which can be combined into a *highly customizable* pipeline:
 
-* [_Analyzer_](#analyzer) - determines the dependencies of projects and their metadata, abstracting which package
+* [*Analyzer*](#analyzer) - determines the dependencies of projects and their metadata, abstracting which package
   managers or build systems are actually being used.
-* [_Downloader_](#downloader) - fetches all source code of the projects and their dependencies, abstracting which
+* [*Downloader*](#downloader) - fetches all source code of the projects and their dependencies, abstracting which
   Version Control System (VCS) or other means are used to retrieve the source code.
-* [_Scanner_](#scanner) - uses configured source code scanners to detect license / copyright findings, abstracting
+* [*Scanner*](#scanner) - uses configured source code scanners to detect license / copyright findings, abstracting
   the type of scanner.
-* [_Advisor_](#advisor) - retrieves security advisories for used dependencies from configured vulnerability data 
+* [*Advisor*](#advisor) - retrieves security advisories for used dependencies from configured vulnerability data
   services.
-* [_Evaluator_](#evaluator) - evaluates custom policy rules along with custom license classifications against the data
+* [*Evaluator*](#evaluator) - evaluates custom policy rules along with custom license classifications against the data
   gathered in preceding stages and returns a list of policy violations, e.g. to flag license findings.
-* [_Reporter_](#reporter) - presents results in various formats such as visual reports, Open Source notices or
+* [*Reporter*](#reporter) - presents results in various formats such as visual reports, Open Source notices or
   Bill-Of-Materials (BOMs) to easily identify dependencies, licenses, copyrights or policy rule violations.
-* [_Notifier_](./notifier) - sends result notifications via different channels (like
+* [*Notifier*](./notifier) - sends result notifications via different channels (like
   [emails](./examples/example.notifications.kts) and / or JIRA tickets).
 
-Also see the [list of related tools](#related-tools) that help with running ORT. 
+Also see the [list of related tools](#related-tools) that help with running ORT.
 
 # Installation
 
@@ -86,7 +86,7 @@ by running `git submodule update --init --recursive`.
 Install the following basic prerequisites:
 
 * Docker 18.09 or later (and ensure its daemon is running).
-* Enable [BuildKit](https://docs.docker.com/develop/develop-images/build_enhancements/#to-enable-buildkit-builds) for 
+* Enable [BuildKit](https://docs.docker.com/develop/develop-images/build_enhancements/#to-enable-buildkit-builds) for
   Docker.
 
 Change into the directory with ORT's source code and run `docker build -t ort .`. Alternatively, use the script at
@@ -105,19 +105,25 @@ Gradle and download all required dependencies).
 
 Depending on how ORT was installed, it can be run in the following ways:
 
-- If the Docker image was built, use
+* If the Docker image was built, use
 
-      docker run ort --help
+  ```shell
+  docker run ort --help
+  ```
 
   You can find further hints for using ORT with Docker in the [documentation](./docs/hints-for-use-with-docker.md).
 
-- If the ORT distribution was built from sources, use
+* If the ORT distribution was built from sources, use
 
-      ./cli/build/install/ort/bin/ort --help
+  ```shell
+  ./cli/build/install/ort/bin/ort --help
+  ```
 
-- If running directly from sources via Gradle, use
+* If running directly from sources via Gradle, use
 
-      ./gradlew cli:run --args="--help"
+  ```shell
+  ./gradlew cli:run --args="--help"
+  ```
 
   Note that in this case the working directory used by ORT is that of the `cli` project, not the directory `gradlew` is
   located in (see https://github.com/gradle/gradle/issues/6074).
@@ -131,13 +137,17 @@ parsing the output of some external tools.
 
 Then, let ORT check whether all required external tools are available by running
 
-    ort requirements
+```shell
+ort requirements
+```
 
 and install any missing tools or add compatible versions as indicated.
 
-Finally, ORT tools like the _analyzer_ can be run like
+Finally, ORT tools like the *analyzer* can be run like
 
-    ort --info analyze -f JSON -i /project -o /project/ort/analyzer
+```shell
+ort --info analyze -f JSON -i /project -o /project/ort/analyzer
+```
 
 Just the like top-level `ort` command, the subcommands for all tools provide a `--help` option for detailed usage help.
 Use it like `ort analyze --help`.
@@ -146,7 +156,7 @@ Please see [Getting Started](./docs/getting-started.md) for an introduction to t
 
 ## Running on CI
 
-A basic ORT pipeline (using the _analyzer_, _scanner_ and _reporter_) can easily be run on
+A basic ORT pipeline (using the *analyzer*, *scanner* and *reporter*) can easily be run on
 [Jenkins CI](https://jenkins.io/) by using the [Jenkinsfile](./integrations/jenkins/Jenkinsfile) in a (declarative)
 [pipeline](https://jenkins.io/doc/book/pipeline/) job. Please see the [Jenkinsfile](./integrations/jenkins/Jenkinsfile)
 itself for documentation of the required Jenkins plugins. The job accepts various parameters that are translated to ORT
@@ -194,10 +204,10 @@ While the file is rather static, there are means to override configuration optio
 customize the configuration to a specific environment. The following options are supported, in order of precedence:
 
 * Properties can be defined via environment variables by using the full property path as the variable name.
-  For instance, one can override the Postgres schema by setting 
+  For instance, one can override the Postgres schema by setting
   `ort.scanner.storages.postgres.connection.schema=test_schema`. The variable's name is case-sensitive.
   Some programs like Bash do not support dots in variable names. For this case, the dots can be
-  replaced by double underscores, i.e., the above example is turned into 
+  replaced by double underscores, i.e., the above example is turned into
   `ort__scanner__storages__postgres__connection__schema=test_schema`.
 * In addition to that, one can override the values of properties on the command line using the `-P` option. The option
   expects a key-value pair. Again, the key must define the full path to the property to be overridden, e.g.
@@ -218,7 +228,7 @@ customize the configuration to a specific environment. The following options are
 
 To print the active configuration use:
 
-```bash
+```shell
 ort config --show-active
 ```
 
@@ -247,13 +257,13 @@ A directory that contains license texts which are not provided by ORT.
 |--------|--------|-----------------------------------------|
 | Text   | Global | `$ORT_CONFIG_DIR/custom-license-texts/` |
 
-#### [How to fix text provider script](./docs/how-to-fix-text-provider-kts.md)
+#### [How to fix text provider script](./docs/scripts/how-to-fix-text-provider-kts.md)
 
 A Kotlin script that enables the injection of how-to-fix texts in Markdown format for ORT issues into the reports.
 
-| Format        | Scope  | Default location                               |
-|---------------|--------|------------------------------------------------|
-| Kotlin script | Global | `$ORT_CONFIG_DIR/how-to-fix-text-provider.kts` |
+| Format        | Scope  | Default location                                        |
+|---------------|--------|---------------------------------------------------------|
+| Kotlin script | Global | `$ORT_CONFIG_DIR/reporter.how-to-fix-text-provider.kts` |
 
 #### [License classifications file](docs/config-file-license-classifications-yml.md)
 
@@ -292,9 +302,9 @@ can be used to populate a directory with template package configuration files.
 |-------------|----------------------|-------------------------------------------|
 | YAML / JSON | Package (dependency) | `$ORT_CONFIG_DIR/package-configurations/` |
 
-#### [Policy rules file](./docs/file-rules-kts.md)
+#### [Policy rules file](./docs/scripts/rules-kts.md)
 
-The file containing any policy rule implementations to be used with the _evaluator_.
+The file containing any policy rule implementations to be used with the *evaluator*.
 
 | Format              | Scope     | Default location                      |
 |---------------------|-----------|---------------------------------------|
@@ -322,8 +332,12 @@ This mechanism offers a certain level of security without enforcing an excessive
 be needed for instance to define an explicit allow list. With the two configuration properties even corner cases can be
 defined:
 
-* In order to disable filtering of environment variables completely, set the `deniedProcessEnvironmentVariablesSubstrings` property to a single string that is certainly not contained in any environment variable, such as "This is for sure not contained in a variable name".
-* To prevent that any environment variable is passed to a child process, substrings can be configured in `deniedProcessEnvironmentVariablesSubstrings` that match all variables, for instance one string for each letter of the alphabet.
+* In order to disable filtering of environment variables completely, set the
+  `deniedProcessEnvironmentVariablesSubstrings` property to a single string that is certainly not contained in any
+  environment variable, such as "This is for sure not contained in a variable name".
+* To prevent that any environment variable is passed to a child process, substrings can be configured in
+  `deniedProcessEnvironmentVariablesSubstrings` that match all variables, for instance one string for each letter of the
+  alphabet.
 
 # Details on the tools
 
@@ -331,7 +345,7 @@ defined:
 
 [![Analyzer](./logos/analyzer.png)](./analyzer/src/main/kotlin)
 
-The _analyzer_ is a Software Composition Analysis (SCA) tool that determines the dependencies of software projects
+The *analyzer* is a Software Composition Analysis (SCA) tool that determines the dependencies of software projects
 inside the specified input directory (`-i`). It does so by querying the detected package managers; **no modifications**
 to your existing project source code, like applying build system plugins, are necessary for that to work. The tree of
 transitive dependencies per project is written out as part of an
@@ -407,8 +421,8 @@ or [packages](./plugins/package-managers/spdx/src/funTest/assets/projects/synthe
 
 [![Downloader](./logos/downloader.png)](./downloader/src/main/kotlin)
 
-Taking an ORT result file with an _analyzer_ result as the input (`-i`), the _downloader_ retrieves the source code of
-all contained packages to the specified output directory (`-o`). The _downloader_ takes care of things like normalizing
+Taking an ORT result file with an *analyzer* result as the input (`-i`), the *downloader* retrieves the source code of
+all contained packages to the specified output directory (`-o`). The *downloader* takes care of things like normalizing
 URLs and using the [appropriate VCS tool](./downloader/src/main/kotlin/vcs) to check out source code from version
 control.
 
@@ -425,7 +439,7 @@ Currently, the following Version Control Systems (VCS) are supported:
 
 This tool wraps underlying license / copyright scanners with a common API so all supported scanners can be used in the
 same way to easily run them and compare their results. If passed an ORT result file with an analyzer result (`-i`), the
-_scanner_ will automatically download the sources of the dependencies via the _downloader_ and scan them afterwards.
+*scanner* will automatically download the sources of the dependencies via the *downloader* and scan them afterwards.
 
 We recommend to use ORT with one of the following scanners as their integration has been thoroughly tested (in
 alphabetical order):
@@ -446,7 +460,7 @@ For a comparison of some of these, see this
 ## Storage Backends
 
 In order to not download or scan any previously scanned sources again, or to reuse scan results generated via other
-services, the _scanner_ can be configured to use so-called storage backends. Before processing a package, it checks
+services, the *scanner* can be configured to use so-called storage backends. Before processing a package, it checks
 whether compatible scan results are already available in one of the storages declared; if this is the case, they
 are fetched and reused. Otherwise, the package's source code is downloaded and scanned. Afterwards, the new scan
 results can be put into a storage for later reuse.
@@ -470,14 +484,14 @@ operation is considered successful if all writer storages could successfully per
 
 The configuration of storage backends is located in the [ORT configuration file](#ort-configuration-file). (For the
 general structure of this file and the set of options available refer to the
-[reference configuration](./model/src/main/resources/reference.yml).) The file has a section named _storages_ that
+[reference configuration](./model/src/main/resources/reference.yml).) The file has a section named *storages* that
 lists all the storage backends and assigns them a name. Each storage backend is of a specific type and needs to be
 configured with type-specific properties. The different types of storage backends supported by ORT are described below.
 
 After the declaration of the storage backends, the configuration file has to specify which ones of them the
 scanner should use for looking up existing scan results or to store new results. This is done in two list properties
-named _storageReaders_ and _storageWriters_. The lists reference the names of the storage backends declared in the
-_storages_ section. The scanner invokes the storage backends in the order they appear in the lists; so for readers,
+named *storageReaders* and *storageWriters*. The lists reference the names of the storage backends declared in the
+*storages* section. The scanner invokes the storage backends in the order they appear in the lists; so for readers,
 this defines a priority for look-up operations. Each storage backend can act as a reader; however, some types do not
 support updates and thus cannot serve as writers. If a storage backend is referenced both as reader and writer, the
 scanner creates only a single instance of this storage class.
@@ -488,7 +502,7 @@ a storage entry (like `fileBasedStorage`) can be freely chosen. That name is the
 
 ### Local File Storage
 
-By default, the _scanner_ stores scan results on the local file system in the current user's home directory (i.e.
+By default, the *scanner* stores scan results on the local file system in the current user's home directory (i.e.
 `~/.ort/scanner/scan-results`) for later reuse. Settings like the storage directory and the compression flag can be
 customized in the ORT configuration file (`-c`) with a respective storage configuration:
 
@@ -521,7 +535,7 @@ ort:
             url: "https://artifactory.domain.com/artifactory/repository/scan-results"
             headers:
               X-JFrog-Art-Api: "api-token"
-              
+
     storageReaders: ["artifactoryStorage"]
     storageWriters: ["artifactoryStorage"]
 ```
@@ -550,7 +564,7 @@ ort:
 The database needs to exist. If the schema is set to something else than the default of `public`, it needs to exist and
 be accessible by the configured username.
 
-The _scanner_ will itself create a table called `scan_results` and
+The *scanner* will itself create a table called `scan_results` and
 store the data in a [jsonb](https://www.postgresql.org/docs/current/datatype-json.html) column.
 
 If you do not want to use SSL set the `sslmode` to `disable`, other possible values are explained in the
@@ -560,7 +574,7 @@ configuration options see [ScanStorageConfiguration.kt](./model/src/main/kotlin/
 ### ClearlyDefined Storage
 
 [ClearlyDefined](https://clearlydefined.io) is a service offering curated metadata for Open Source components. This
-includes scan results that can be used by ORT's _scanner_ tool (if they have been generated by a compatible scanner
+includes scan results that can be used by ORT's *scanner* tool (if they have been generated by a compatible scanner
 version with a suitable configuration). This storage backend queries the ClearlyDefined service for scan results of the
 packages to be processed. It is read-only; so it will not upload any new scan results to ClearlyDefined. In the
 configuration the URL of the ClearlyDefined service needs to be set:
@@ -579,13 +593,13 @@ ort:
 
 [![Advisor](./logos/advisor.png)](./advisor/src/main/kotlin)
 
-The _advisor_ retrieves security advisories from configured services. It requires the analyzer result as an input. For
+The *advisor* retrieves security advisories from configured services. It requires the analyzer result as an input. For
 all the packages identified by the analyzer, it queries the services configured for known security vulnerabilities. The
 vulnerabilities returned by these services are then stored in the output result file together with additional
 information like the source of the data and a severity (if available).
 
 Multiple providers for security advisories are available. The providers require specific configuration in the
-[ORT configuration file](./model/src/main/resources/reference.yml), which needs to be placed in the _advisor_
+[ORT configuration file](./model/src/main/resources/reference.yml), which needs to be placed in the *advisor*
 section. When executing the advisor the providers to enable are selected with the `--advisors` option (or its short
 alias `-a`); here a comma-separated list with provider IDs is expected. The following sections describe the providers
 supported by the advisor:
@@ -648,7 +662,7 @@ To enable this provider, pass `-a OSV` on the command line.
 
 [![Evaluator](./logos/evaluator.png)](./evaluator/src/main/kotlin)
 
-The _evaluator_ is used to perform custom license policy checks on scan results. The rules to check against are
+The *evaluator* is used to perform custom license policy checks on scan results. The rules to check against are
 implemented as Kotlin scripts with a dedicated DSL. See
 [example.rules.kts](./examples/example.rules.kts) for an example rules script.
 
@@ -656,7 +670,7 @@ implemented as Kotlin scripts with a dedicated DSL. See
 
 [![Reporter](./logos/reporter.png)](./reporter/src/main/kotlin)
 
-The _reporter_ generates a wide variety of documents in different formats from ORT result files. Currently, the
+The *reporter* generates a wide variety of documents in different formats from ORT result files. Currently, the
 following formats are supported (reporter names are case-insensitive):
 
 * [AsciiDoc Template](docs/reporters/asciidoc-templates.md) (`-f AsciiDocTemplate`)
@@ -707,7 +721,10 @@ external tools to be installed.
 # Development
 
 ORT is written in [Kotlin](https://kotlinlang.org/) and uses [Gradle](https://gradle.org/) as the build system, with
-[Kotlin script](https://docs.gradle.org/current/userguide/kotlin_dsl.html) instead of Groovy as the DSL. Please ensure to have Gradle's incubating [configuration on demand](https://docs.gradle.org/current/userguide/multi_project_configuration_and_execution.html#sec:configuration_on_demand) feature disabled as it is currently [incompatible with ORT](https://github.com/gradle/gradle/issues/4823).
+[Kotlin script](https://docs.gradle.org/current/userguide/kotlin_dsl.html) instead of Groovy as the DSL. Please ensure
+to have Gradle's incubating
+[configuration on demand](https://docs.gradle.org/current/userguide/multi_project_configuration_and_execution.html#sec:configuration_on_demand)
+feature disabled as it is currently [incompatible with ORT](https://github.com/gradle/gradle/issues/4823).
 
 When developing on the command line, use the committed
 [Gradle wrapper](https://docs.gradle.org/current/userguide/gradle_wrapper.html) to bootstrap Gradle in the configured
@@ -727,13 +744,13 @@ For IDE development we recommend the [IntelliJ IDEA Community Edition](https://w
 can directly import the Gradle build files. After cloning the project's source code recursively, simply run IDEA and use
 the following steps to import the project.
 
-1. From the wizard dialog: Select *Import Project*.
+1. From the *Welcome* dialog: Select `Open`.
 
-   From a running IDEA instance: Select *File* -> *New* -> *Project from Existing Sources...*
+   From a running IDEA instance: Select `File` > `New` > `Project from Existing Sources...`
 
 2. Browse to ORT's source code directory and select either the `build.gradle.kts` or the `settings.gradle.kts` file.
 
-3. In the *Import Project from Gradle* dialog select *Use auto-import* and leave all other settings at their defaults.
+3. In the *Open Project* dialog select `Open as Project`.
 
 ## Debugging
 
@@ -745,9 +762,27 @@ created run configuration to your needs, e.g. by adding an argument and options 
 
 ## Testing
 
-For running tests and individual test cases from the IDE, the
-[kotest plugin](https://plugins.jetbrains.com/plugin/14080-kotest) needs to be installed. Afterwards tests can be run
-via the green "Play" icon from the gutter as described above.
+ORT uses [Kotest](https://github.com/kotest/kotest) as the test framework. For running tests and individual test cases
+from the IDE, the [Kotest plugin](https://plugins.jetbrains.com/plugin/14080-kotest) needs to be installed. Afterwards,
+tests can be run via the green "Play" icon from the gutter as described above.
+
+When running functional tests (for package managers) from the command line, ORT supports the special value "unified" for
+Kotest's `kotest.assertions.multi-line-diff` system property. When set like
+
+```shell
+./gradlew -Dkotest.assertions.multi-line-diff=unified -p plugins/package-managers funTest
+```
+
+any failing tests will show the deviation from the expected result in a unified diff format that is compatible with
+`git apply`. If the actual result should be taken as the new expected result, simply copy the diff from the console to
+the clipboard and run
+
+* `wl-paste | col -bx | git apply` (Linux with Wayland)
+* `xsel -b | col -bx | git apply` (Linux with X)
+* `cat /dev/clipboard | dos2unix | cut -d ' ' -f 5- | git apply` (Windows with Git Bash)
+
+to apply the diff to the local Git working tree (this does not create a commit yet). After reviewing the changes, create
+a commit to accept the new expected result.
 
 # Related Tools
 
@@ -758,13 +793,13 @@ A [repository](https://github.com/oss-review-toolkit/ort-config) with exemplary 
 ## ORT Workbench
 
 The [ORT Workbench](https://github.com/oss-review-toolkit/ort-workbench) is an ORT result file viewer developed by the
-ORT core team. It can be used as an alternative to creating a [report](#reporter) to review the ORT output. 
+ORT core team. It can be used as an alternative to creating a [report](#reporter) to review the ORT output.
 
 ![Screenshot](https://github.com/oss-review-toolkit/ort-workbench/raw/main/assets/screenshot.png)
 
 ## ORT GitHub Action
 
-A [GitHub Action](https://github.com/oss-review-toolkit/ort-ci-github-action) to run ORT for your GitHub repositories. 
+A [GitHub Action](https://github.com/oss-review-toolkit/ort-ci-github-action) to run ORT for your GitHub repositories.
 
 ## ORT GitLab Pipeline
 

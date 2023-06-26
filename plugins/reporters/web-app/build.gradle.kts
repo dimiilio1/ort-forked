@@ -18,8 +18,8 @@
  */
 
 plugins {
-    // Apply core plugins.
-    `java-library`
+    // Apply precompiled plugins.
+    id("ort-library-conventions")
 }
 
 val generatedResourcesDir = file("$buildDir/generated-resources/main")
@@ -34,9 +34,7 @@ val copyWebAppTemplate by tasks.registering(Copy::class) {
     outputs.cacheIf { true }
 }
 
-sourceSets.named("main") {
-    output.dir(mapOf("builtBy" to copyWebAppTemplate), generatedResourcesDir)
-}
+sourceSets.main.get().output.dir(mapOf("builtBy" to copyWebAppTemplate), generatedResourcesDir)
 
 dependencies {
     api(project(":reporter"))

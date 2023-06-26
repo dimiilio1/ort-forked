@@ -34,7 +34,6 @@ import java.time.Instant
 
 import org.ossreviewtoolkit.model.AnalyzerResult
 import org.ossreviewtoolkit.model.AnalyzerRun
-import org.ossreviewtoolkit.model.ArtifactProvenance
 import org.ossreviewtoolkit.model.CopyrightFinding
 import org.ossreviewtoolkit.model.Hash
 import org.ossreviewtoolkit.model.Identifier
@@ -50,7 +49,6 @@ import org.ossreviewtoolkit.model.RepositoryProvenance
 import org.ossreviewtoolkit.model.ScanResult
 import org.ossreviewtoolkit.model.ScanSummary
 import org.ossreviewtoolkit.model.ScannerDetails
-import org.ossreviewtoolkit.model.ScannerRun
 import org.ossreviewtoolkit.model.Scope
 import org.ossreviewtoolkit.model.TextLocation
 import org.ossreviewtoolkit.model.VcsInfo
@@ -59,6 +57,7 @@ import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
 import org.ossreviewtoolkit.model.config.ScopeExclude
 import org.ossreviewtoolkit.model.config.ScopeExcludeReason
 import org.ossreviewtoolkit.utils.spdx.toSpdx
+import org.ossreviewtoolkit.utils.test.scannerRunOf
 import org.ossreviewtoolkit.utils.test.shouldNotBeNull
 
 class OpossumReporterTest : WordSpec({
@@ -158,8 +157,10 @@ class OpossumReporterTest : WordSpec({
         }
 
         "create a signal with copyright if some file is added by SCANNER report" {
-            val signals =
-                opossumInput.getSignalsForFile("/pom.xml/compile/first-package-group/first-package@0.0.1/some/file")
+            val signals = opossumInput.getSignalsForFile(
+                "/pom.xml/compile/first-package-group/first-package@0.0.1/project-path/some/file"
+            )
+
             signals.size shouldBe 2
             signals.find { it.source == "ORT-Scanner-SCANNER@1.2.3" } shouldNotBeNull {
                 copyright shouldContain "Copyright 2020 Some copyright holder in source artifact"
@@ -263,10 +264,10 @@ private fun createOrtResult(): OrtResult {
                         declaredLicenses = setOf("MIT"),
                         definitionFilePath = "pom.xml",
                         homepageUrl = "first project's homepage",
-                        scopeDependencies = sortedSetOf(
+                        scopeDependencies = setOf(
                             Scope(
                                 name = "compile",
-                                dependencies = sortedSetOf(
+                                dependencies = setOf(
                                     PackageReference(
                                         id = Identifier("Maven:first-package-group:first-package:0.0.1")
                                     ),
@@ -286,7 +287,7 @@ private fun createOrtResult(): OrtResult {
                             ),
                             Scope(
                                 name = "test",
-                                dependencies = sortedSetOf(
+                                dependencies = setOf(
                                     PackageReference(
                                         id = Identifier("Maven:fifth-package-group:fifth-package:0.0.1")
                                     )
@@ -300,24 +301,24 @@ private fun createOrtResult(): OrtResult {
                         declaredLicenses = setOf("BSD-3-Clause"),
                         definitionFilePath = "npm-project/package.json",
                         homepageUrl = "first project's homepage",
-                        scopeDependencies = sortedSetOf(
+                        scopeDependencies = setOf(
                             Scope(
                                 name = "devDependencies",
-                                dependencies = sortedSetOf(
+                                dependencies = setOf(
                                     PackageReference(
                                         id = Identifier("NPM:@something:somepackage:1.2.3"),
-                                        dependencies = sortedSetOf(
+                                        dependencies = setOf(
                                             PackageReference(
                                                 id = Identifier("NPM:@something:somepackage-dep:1.2.3"),
-                                                dependencies = sortedSetOf(
+                                                dependencies = setOf(
                                                     PackageReference(
                                                         id = Identifier("NPM:@something:somepackage-dep-dep:1.2.3"),
-                                                        dependencies = sortedSetOf(
+                                                        dependencies = setOf(
                                                             PackageReference(
                                                                 id = Identifier(
                                                                     "NPM:@something:" +
                                                                             "somepackage-dep-dep-dep:1.2.3"
-                                                                ),
+                                                                )
                                                             )
                                                         )
                                                     )
@@ -404,7 +405,7 @@ private fun createOrtResult(): OrtResult {
                         Identifier("NPM:@something:somepackage:1.2.3"),
                         Identifier("NPM:@something:somepackage-dep:1.2.3"),
                         Identifier("NPM:@something:somepackage-dep-dep:1.2.3"),
-                        Identifier("NPM:@something:somepackage-dep-dep-dep:1.2.3"),
+                        Identifier("NPM:@something:somepackage-dep-dep-dep:1.2.3")
                     ).map {
                         Package(
                             id = it,
@@ -434,84 +435,85 @@ private fun createOrtResult(): OrtResult {
                             message = "Message-3"
                         )
                     )
-                ),
-            ),
+                )
+            )
         ),
-        scanner = ScannerRun.EMPTY.copy(
-            scanResults = sortedMapOf(
-                Identifier("Maven:first-package-group:first-package:0.0.1") to listOf(
-                    ScanResult(
-                        provenance = ArtifactProvenance(
-                            sourceArtifact = RemoteArtifact(
-                                url = "https://some-host/first-package-sources.jar",
-                                hash = Hash.NONE
+        scanner = scannerRunOf(
+            Identifier("Maven:first-package-group:first-package:0.0.1") to listOf(
+                ScanResult(
+                    provenance = RepositoryProvenance(
+                        vcsInfo = VcsInfo(
+                            type = VcsType.GIT,
+                            revision = "master",
+                            url = "ssh://git@github.com/path/first-package-repo.git",
+                            path = "project-path"
+                        ),
+                        resolvedRevision = "deadbeef"
+                    ),
+                    scanner = ScannerDetails(
+                        name = "SCANNER",
+                        version = "1.2.3",
+                        configuration = "configuration"
+                    ),
+                    summary = ScanSummary.EMPTY.copy(
+                        packageVerificationCode = "0000000000000000000000000000000000000000",
+                        licenseFindings = setOf(
+                            LicenseFinding(
+                                license = "Apache-2.0",
+                                location = TextLocation("LICENSE", 1)
                             )
                         ),
-                        scanner = ScannerDetails(
-                            name = "SCANNER",
-                            version = "1.2.3",
-                            configuration = "configuration"
-                        ),
-                        summary = ScanSummary.EMPTY.copy(
-                            packageVerificationCode = "0000000000000000000000000000000000000000",
-                            licenseFindings = sortedSetOf(
-                                LicenseFinding(
-                                    license = "Apache-2.0",
-                                    location = TextLocation("LICENSE", 1)
-                                )
+                        copyrightFindings = setOf(
+                            CopyrightFinding(
+                                statement = "Copyright 2020 Some copyright holder in source artifact",
+                                location = TextLocation("project-path/some/file", 1)
                             ),
-                            copyrightFindings = sortedSetOf(
-                                CopyrightFinding(
-                                    statement = "Copyright 2020 Some copyright holder in source artifact",
-                                    location = TextLocation("some/file", 1)
-                                ),
-                                CopyrightFinding(
-                                    statement = "Copyright 2020 Some other copyright holder in source artifact",
-                                    location = TextLocation("some/file", 7)
-                                )
+                            CopyrightFinding(
+                                statement = "Copyright 2020 Some other copyright holder in source artifact",
+                                location = TextLocation("project-path/some/file", 7)
                             )
                         )
+                    )
+                ),
+                ScanResult(
+                    provenance = RepositoryProvenance(
+                        vcsInfo = VcsInfo(
+                            type = VcsType.GIT,
+                            revision = "master",
+                            url = "ssh://git@github.com/path/first-package-repo.git",
+                            path = "project-path"
+                        ),
+                        resolvedRevision = "deadbeef"
                     ),
-                    ScanResult(
-                        provenance = RepositoryProvenance(
-                            vcsInfo = VcsInfo(
-                                type = VcsType.GIT,
-                                revision = "master",
-                                url = "ssh://git@github.com/path/first-package-repo.git",
-                                path = "project-path"
-                            ),
-                            resolvedRevision = "deadbeef"
+                    scanner = ScannerDetails(
+                        name = "otherSCANNER",
+                        version = "1.2.3",
+                        configuration = "otherConfiguration"
+                    ),
+                    summary = ScanSummary.EMPTY.copy(
+                        startTime = Instant.EPOCH,
+                        endTime = Instant.EPOCH,
+                        packageVerificationCode = "0000000000000000000000000000000000000000",
+                        licenseFindings = setOf(
+                            LicenseFinding(
+                                license = "BSD-2-Clause",
+                                location = TextLocation("LICENSE", 1)
+                            )
                         ),
-                        scanner = ScannerDetails(
-                            name = "otherSCANNER",
-                            version = "1.2.3",
-                            configuration = "otherConfiguration"
+                        copyrightFindings = setOf(
+                            CopyrightFinding(
+                                statement = "Copyright 2020 Some copyright holder in VCS",
+                                location = TextLocation("project-path/some/file", 1)
+                            )
                         ),
-                        summary = ScanSummary.EMPTY.copy(
-                            startTime = Instant.EPOCH,
-                            endTime = Instant.EPOCH,
-                            packageVerificationCode = "0000000000000000000000000000000000000000",
-                            licenseFindings = sortedSetOf(
-                                LicenseFinding(
-                                    license = "BSD-2-Clause",
-                                    location = TextLocation("LICENSE", 1)
-                                )
+                        issues = listOf(
+                            Issue(
+                                source = "Source-4",
+                                message = "Message-4"
                             ),
-                            copyrightFindings = sortedSetOf(
-                                CopyrightFinding(
-                                    statement = "Copyright 2020 Some copyright holder in VCS",
-                                    location = TextLocation("some/file", 1)
-                                )
-                            ),
-                            issues = listOf(
-                                Issue(
-                                    source = "Source-4",
-                                    message = "Message-4"
-                                ),
-                                Issue(
-                                    source = "Source-5",
-                                    message = "Message-5"
-                                )
+                            Issue(
+                                source = "Source-5",
+                                message = "Message-5"
                             )
                         )
                     )

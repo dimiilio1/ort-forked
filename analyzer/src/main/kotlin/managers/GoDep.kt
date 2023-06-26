@@ -116,7 +116,7 @@ class GoDep(
 
         val projects = parseProjects(workingDir, gopath)
         val packages = mutableSetOf<Package>()
-        val packageRefs = mutableListOf<PackageReference>()
+        val packageRefs = mutableSetOf<PackageReference>()
 
         for (project in projects) {
             // parseProjects() made sure that all entries contain these keys
@@ -156,7 +156,7 @@ class GoDep(
             packageRefs += pkg.toReference(linkage = PackageLinkage.STATIC, issues = issues)
         }
 
-        val scope = Scope("default", packageRefs.toSortedSet())
+        val scope = Scope("default", packageRefs)
 
         val projectName = runCatching {
             val uri = URI(projectVcs.url)
@@ -185,7 +185,7 @@ class GoDep(
                     vcs = VcsInfo.EMPTY,
                     vcsProcessed = projectVcs,
                     homepageUrl = "",
-                    scopeDependencies = sortedSetOf(scope)
+                    scopeDependencies = setOf(scope)
                 ),
                 packages = packages
             )

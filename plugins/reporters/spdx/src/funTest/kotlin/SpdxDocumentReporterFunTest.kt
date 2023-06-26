@@ -24,6 +24,7 @@ import com.networknt.schema.SpecVersion
 
 import io.kotest.core.TestConfiguration
 import io.kotest.core.spec.style.WordSpec
+import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.collections.beEmpty
 import io.kotest.matchers.should
 
@@ -44,7 +45,6 @@ import org.ossreviewtoolkit.model.RepositoryProvenance
 import org.ossreviewtoolkit.model.ScanResult
 import org.ossreviewtoolkit.model.ScanSummary
 import org.ossreviewtoolkit.model.ScannerDetails
-import org.ossreviewtoolkit.model.ScannerRun
 import org.ossreviewtoolkit.model.Scope
 import org.ossreviewtoolkit.model.TextLocation
 import org.ossreviewtoolkit.model.VcsInfo
@@ -62,9 +62,9 @@ import org.ossreviewtoolkit.utils.spdx.SpdxModelMapper.fromJson
 import org.ossreviewtoolkit.utils.spdx.SpdxModelMapper.fromYaml
 import org.ossreviewtoolkit.utils.spdx.model.SpdxDocument
 import org.ossreviewtoolkit.utils.spdx.toSpdx
-import org.ossreviewtoolkit.utils.test.createTestTempDir
 import org.ossreviewtoolkit.utils.test.getAssetFile
 import org.ossreviewtoolkit.utils.test.matchExpectedResult
+import org.ossreviewtoolkit.utils.test.scannerRunOf
 
 class SpdxDocumentReporterFunTest : WordSpec({
     "Reporting to JSON" should {
@@ -111,7 +111,7 @@ class SpdxDocumentReporterFunTest : WordSpec({
 private fun TestConfiguration.generateReport(ortResult: OrtResult, format: FileFormat): String {
     val input = ReporterInput(ortResult)
 
-    val outputDir = createTestTempDir()
+    val outputDir = tempdir()
 
     val reportOptions = mapOf(
         SpdxDocumentReporter.OPTION_CREATION_INFO_COMMENT to "some creation info comment",
@@ -162,10 +162,10 @@ private val ortResult = OrtResult(
                     declaredLicenses = setOf("MIT"),
                     definitionFilePath = "",
                     homepageUrl = "first project's homepage",
-                    scopeDependencies = sortedSetOf(
+                    scopeDependencies = setOf(
                         Scope(
                             name = "compile",
-                            dependencies = sortedSetOf(
+                            dependencies = setOf(
                                 PackageReference(
                                     id = Identifier("Maven:first-package-group:first-package:0.0.1")
                                 ),
@@ -180,12 +180,15 @@ private val ortResult = OrtResult(
                                 ),
                                 PackageReference(
                                     id = Identifier("Maven:sixth-package-group:sixth-package:0.0.1")
+                                ),
+                                PackageReference(
+                                    id = Identifier("Maven:seventh-package-group:seventh-package:0.0.1")
                                 )
                             )
                         ),
                         Scope(
                             name = "test",
-                            dependencies = sortedSetOf(
+                            dependencies = setOf(
                                 PackageReference(
                                     id = Identifier("Maven:fifth-package-group:fifth-package:0.0.1")
                                 )
@@ -198,14 +201,20 @@ private val ortResult = OrtResult(
             packages = setOf(
                 Package(
                     id = Identifier("Maven:first-package-group:first-package:0.0.1"),
-                    binaryArtifact = RemoteArtifact("https://some-host/first-package.jar", Hash.NONE),
+                    binaryArtifact = RemoteArtifact(
+                        url = "https://some-host/first-package.jar",
+                        hash = Hash.create("0000000000000000000000000000000000000000")
+                    ),
                     concludedLicense = "BSD-2-Clause AND BSD-3-Clause AND MIT".toSpdx(),
                     declaredLicenses = setOf("BSD-3-Clause", "MIT OR GPL-2.0-only"),
                     description = "A package with all supported attributes set, with a VCS URL containing a user " +
-                            "name, and with a scan result containing two copyright finding matched to a license " +
-                            "finding.",
+                            "name, and with two scan results for the VCS containing copyright findings matched to a " +
+                            "license finding.",
                     homepageUrl = "first package's homepage URL",
-                    sourceArtifact = RemoteArtifact("https://some-host/first-package-sources.jar", Hash.NONE),
+                    sourceArtifact = RemoteArtifact(
+                        url = "https://some-host/first-package-sources.jar",
+                        hash = Hash.create("0000000000000000000000000000000000000000")
+                    ),
                     vcs = VcsInfo(
                         type = VcsType.GIT,
                         revision = "master",
@@ -260,65 +269,103 @@ private val ortResult = OrtResult(
                     homepageUrl = "",
                     sourceArtifact = RemoteArtifact.EMPTY,
                     vcs = VcsInfo.EMPTY
+                ),
+                Package(
+                    id = Identifier("Maven:seventh-package-group:seventh-package:0.0.1"),
+                    binaryArtifact = RemoteArtifact.EMPTY,
+                    declaredLicenses = setOf(),
+                    description = "A package with a source artifact scan result.",
+                    homepageUrl = "",
+                    sourceArtifact = RemoteArtifact(
+                        url = "https://some-host/seventh-package-sources.jar",
+                        hash = Hash.create("0000000000000000000000000000000000000000")
+                    ),
+                    vcs = VcsInfo.EMPTY
                 )
             )
         )
     ),
-    scanner = ScannerRun.EMPTY.copy(
-        scanResults = sortedMapOf(
-            Identifier("Maven:first-package-group:first-package:0.0.1") to listOf(
-                ScanResult(
-                    provenance = ArtifactProvenance(
-                        sourceArtifact = RemoteArtifact(
-                            url = "https://some-host/first-package-sources.jar",
-                            hash = Hash.NONE
+    scanner = scannerRunOf(
+        Identifier("Maven:first-package-group:first-package:0.0.1") to listOf(
+            ScanResult(
+                provenance = RepositoryProvenance(
+                    vcsInfo = VcsInfo(
+                        type = VcsType.GIT,
+                        revision = "master",
+                        url = "ssh://git@github.com/path/first-package-repo.git",
+                        path = "project-path"
+                    ),
+                    resolvedRevision = "deadbeef"
+                ),
+                scanner = ScannerDetails.EMPTY.copy(name = "scanner1"),
+                summary = ScanSummary.EMPTY.copy(
+                    packageVerificationCode = "0000000000000000000000000000000000000000",
+                    licenseFindings = setOf(
+                        LicenseFinding(
+                            license = "Apache-2.0",
+                            location = TextLocation("LICENSE", 1)
                         )
                     ),
-                    scanner = ScannerDetails.EMPTY,
-                    summary = ScanSummary.EMPTY.copy(
-                        packageVerificationCode = "0000000000000000000000000000000000000000",
-                        licenseFindings = sortedSetOf(
-                            LicenseFinding(
-                                license = "Apache-2.0",
-                                location = TextLocation("LICENSE", 1)
-                            )
+                    copyrightFindings = setOf(
+                        CopyrightFinding(
+                            statement = "Copyright 2020 Some copyright holder in source artifact",
+                            location = TextLocation("project-path/some/file", 1)
                         ),
-                        copyrightFindings = sortedSetOf(
-                            CopyrightFinding(
-                                statement = "Copyright 2020 Some copyright holder in source artifact",
-                                location = TextLocation("some/file", 1)
-                            ),
-                            CopyrightFinding(
-                                statement = "Copyright 2020 Some other copyright holder in source artifact",
-                                location = TextLocation("some/file", 7)
-                            )
+                        CopyrightFinding(
+                            statement = "Copyright 2020 Some other copyright holder in source artifact",
+                            location = TextLocation("project-path/some/file", 7)
                         )
                     )
-                ),
-                ScanResult(
-                    provenance = RepositoryProvenance(
-                        vcsInfo = VcsInfo(
-                            type = VcsType.GIT,
-                            revision = "master",
-                            url = "ssh://git@github.com/path/first-package-repo.git",
-                            path = "project-path"
-                        ),
-                        resolvedRevision = "deadbeef"
+                )
+            ),
+            ScanResult(
+                provenance = RepositoryProvenance(
+                    vcsInfo = VcsInfo(
+                        type = VcsType.GIT,
+                        revision = "master",
+                        url = "ssh://git@github.com/path/first-package-repo.git",
+                        path = "project-path"
                     ),
-                    scanner = ScannerDetails.EMPTY,
-                    summary = ScanSummary.EMPTY.copy(
-                        packageVerificationCode = "0000000000000000000000000000000000000000",
-                        licenseFindings = sortedSetOf(
-                            LicenseFinding(
-                                license = "BSD-2-Clause",
-                                location = TextLocation("LICENSE", 1)
-                            )
-                        ),
-                        copyrightFindings = sortedSetOf(
-                            CopyrightFinding(
-                                statement = "Copyright 2020 Some copyright holder in VCS",
-                                location = TextLocation("some/file", 1)
-                            )
+                    resolvedRevision = "deadbeef"
+                ),
+                scanner = ScannerDetails.EMPTY.copy(name = "scanner2"),
+                summary = ScanSummary.EMPTY.copy(
+                    packageVerificationCode = "0000000000000000000000000000000000000000",
+                    licenseFindings = setOf(
+                        LicenseFinding(
+                            license = "BSD-2-Clause",
+                            location = TextLocation("LICENSE", 1)
+                        )
+                    ),
+                    copyrightFindings = setOf(
+                        CopyrightFinding(
+                            statement = "Copyright 2020 Some copyright holder in VCS",
+                            location = TextLocation("project-path/some/file", 1)
+                        )
+                    )
+                )
+            )
+        ),
+        Identifier("Maven:seventh-package-group:seventh-package:0.0.1") to listOf(
+            ScanResult(
+                provenance = ArtifactProvenance(
+                    sourceArtifact = RemoteArtifact(
+                        url = "https://some-host/seventh-package-sources.jar",
+                        hash = Hash.create("0000000000000000000000000000000000000000")
+                    )
+                ),
+                scanner = ScannerDetails.EMPTY,
+                summary = ScanSummary.EMPTY.copy(
+                    licenseFindings = setOf(
+                        LicenseFinding(
+                            license = "GPL-3.0-only",
+                            location = TextLocation("LICENSE", 1)
+                        )
+                    ),
+                    copyrightFindings = setOf(
+                        CopyrightFinding(
+                            statement = "Copyright 2020 Some copyright holder in source artifact",
+                            location = TextLocation("some/file", 1)
                         )
                     )
                 )

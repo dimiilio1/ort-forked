@@ -5,7 +5,7 @@ This tutorial gives a brief introduction to how the tools work together at the e
 ORT:
 
 * Install ORT.
-* Analyze the dependencies of `mime-types` using the _analyzer_.
+* Analyze the dependencies of `mime-types` using the *analyzer*.
 * Scan the source code of `mime-types` and its dependencies using the `scanner`.
 * Run the evaluator to find any rule violations.
 * Generate reports to show the results.
@@ -30,13 +30,13 @@ For the full list of supported package managers and Version Control Systems see 
 In the future, we will provide binaries of the ORT tools, but currently you have to build the tools on your own. First
 download the source code (including Git submodules) from GitHub:
 
-```bash
+```shell
 git clone --recurse-submodules https://github.com/oss-review-toolkit/ort.git
 ```
 
 To build the command line interface run:
 
-```bash
+```shell
 cd ort
 ./gradlew installDist
 ```
@@ -44,7 +44,7 @@ cd ort
 This will create the script to run ORT at `cli/build/install/ort/bin/ort`. To get the general command line help run it
 with the `--help` option:
 
-```bash
+```shell
 cli/build/install/ort/bin/ort --help
 ```
 
@@ -53,7 +53,7 @@ cli/build/install/ort/bin/ort --help
 Before scanning `mime-types` its source code has to be downloaded. For reliable results we use version 2.1.18 (replace
 `[mime-types-dir]` with the directory you want to clone `mime-types` to):
 
-```bash
+```shell
 git clone https://github.com/jshttp/mime-types.git [mime-types-dir]
 cd [mime-types-dir]
 git checkout 2.1.18
@@ -61,10 +61,10 @@ git checkout 2.1.18
 
 ## 4. Run the analyzer on `mime-types`
 
-The next step is to run the _analyzer_. It will create a JSON or YAML output file containing the full dependency tree of
+The next step is to run the *analyzer*. It will create a JSON or YAML output file containing the full dependency tree of
 `mime-types` including the metadata of `mime-types` and its dependencies.
 
-```bash
+```shell
 # Command line help specific to the analyzer.
 cli/build/install/ort/bin/ort analyze --help
 
@@ -78,11 +78,11 @@ cli/build/install/ort/bin/ort analyze -i [mime-types-dir] -o [analyzer-output-di
 cli/build/install/ort/bin/ort --debug --stacktrace analyze -i [mime-types-dir] -o [analyzer-output-dir]
 ```
 
-The _analyzer_ will search for build files of all supported package managers. In case of `mime-types` it will find the
+The *analyzer* will search for build files of all supported package managers. In case of `mime-types` it will find the
 `package.json` file and write the results of the dependency analysis to the output file `analyzer-result.yml`. On the
 first attempt of running the analyzer on the `mime-types` package it will fail with an error message:
 
-```bash
+```shell
 The following package managers are activated:
         Bower, Bundler, Cargo, Composer, DotNet, GoDep, Gradle, Maven, NPM, NuGet, PIP, SBT, Stack, Yarn
 Analyzing project path:
@@ -95,7 +95,7 @@ This happens because `mime-types` does not have `package-lock.json` file. Withou
 dependencies that are defined with version ranges could change at any time, leading to different results of the
 analyzer. To override this check, use the global `-P ort.analyzer.allowDynamicVersions=true` option:
 
-```bash
+```shell
 $ cli/build/install/ort/bin/ort -P ort.analyzer.allowDynamicVersions=true analyze -i [mime-types-dir] -o [analyzer-output-dir]
 The following package managers are activated:
         Bundler, Composer, GoDep, Gradle, Maven, NPM, PIP, SBT, Stack, Yarn
@@ -110,9 +110,9 @@ information about each dependency. The scope names come from the package manager
 
 Note that the `analyzer-result.yml` is supposed to capture all known information about a project, which can then be
 "filtered" in later steps. For example, scopes which are not relevant for the distribution will still be listed,
-but can be configured to get excluded so that they e.g. do not get downloaded and scanned by the _scanner_ step.
+but can be configured to get excluded so that they e.g. do not get downloaded and scanned by the *scanner* step.
 To specify which scopes should be excluded, add an `.ort.yml` configuration file to the input directory of the
-_analyzer_. For more details see [Configuration File](config-file-ort-yml.md).
+*analyzer*. For more details see [Configuration File](config-file-ort-yml.md).
 
 For this guide, `[mime-types-dir]/.ort.yml` can be created with following content:
 
@@ -243,11 +243,11 @@ analyzer:
 ## 5. Run the scanner
 
 To scan the source code of `mime-types` and its dependencies the source code of `mime-types` and all its dependencies
-needs to be downloaded. The _downloader_ tool could be used for this, but it is also integrated in the `scanner` tool,
+needs to be downloaded. The *downloader* tool could be used for this, but it is also integrated in the `scanner` tool,
 so the scanner will automatically download the source code if the required VCS metadata could be obtained.
 
-Note that if _downloader_ is unable to download the source code due to say a missing source code location in the package
-metadata then you can use [curations](config-file-curations-yml.md) to fix up the package's metadata.
+Note that if the *downloader* is unable to download the source code due to say a missing source code location in the
+package metadata then you can use [curations](config-file-curations-yml.md) to fix up the package's metadata.
 
 ORT is designed to integrate lots of different scanners and is not limited to license scanners, technically any tool
 that explores the source code of a software package could be integrated. The actual scanner does not have to run on the
@@ -257,9 +257,9 @@ will perform the actual scanning remotely.
 For this tutorial [ScanCode](https://github.com/nexB/scancode-toolkit) is used as a scanner. Please install it according
 to [these instructions](https://github.com/nexB/scancode-toolkit/#installation) first.
 
-As for the _analyzer_ you can get the command line options for the `scanner` using the `--help` option:
+As for the *analyzer* you can get the command line options for the `scanner` using the `--help` option:
 
-```bash
+```shell
 cli/build/install/ort/bin/ort scan --help
 ```
 
@@ -268,10 +268,10 @@ The `mime-types` package has only one dependency in the `dependencies` scope, bu
 scanner on the `dependencies` scope in this tutorial. If you also want to scan the `devDependencies` it is strongly
 advised to configure a [scan storage](../README.md#storage-backends) for the scan results to speed up repeated scans.
 
-As during the _analyzer_ step an `.ort.yml` configuration file was provided to exclude `devDependencies`,
+As during the *analyzer* step an `.ort.yml` configuration file was provided to exclude `devDependencies`,
 the `--skip-excluded` option can be used to avoid the download and scanning of that scope.
 
-```bash
+```shell
 $ cli/build/install/ort/bin/ort scan -i [analyzer-output-dir]/analyzer-result.yml -o [scanner-output-dir] --skip-excluded
 Using scanner 'ScanCode'.
 Limiting scan to scopes: [dependencies]
@@ -298,11 +298,11 @@ on a bigger project you will see that `ScanCode` often finds more licenses than 
 The evaluator can apply a set of rules against the scan result created above.
 ORT provides examples for the policy rules file ([example.rules.kts](../examples/example.rules.kts)), user-defined
 categorization of licenses ([license-classifications.yml](../examples/license-classifications.yml)) and user-defined
-package curations ([curations.yml](../examples/curations.yml)) that can be used for testing the _evaluator_.
+package curations ([curations.yml](../examples/curations.yml)) that can be used for testing the *evaluator*.
 
 To run the example rules use:
 
-```bash
+```shell
 cli/build/install/ort/bin/ort evaluate
   --package-curations-file curations.yml
   --rules-file evaluator.rules.kts
@@ -312,20 +312,21 @@ cli/build/install/ort/bin/ort evaluate
 ```
 
 See the [curations.yml documentation](config-file-curations-yml.md) to learn more about using curations to correct
-invalid or missing package metadata and the [license-classifications.yml documentation](config-file-license-classifications-yml.md) on
-how you can classify licenses to simplify writing the policy rules.
+invalid or missing package metadata and the
+[license-classifications.yml documentation](config-file-license-classifications-yml.md) on how you can classify licenses
+to simplify writing the policy rules.
 
-It is possible to write your own evaluator rules as a Kotlin script and pass it to the _evaluator_ using `--rules-file`.
+It is possible to write your own evaluator rules as a Kotlin script and pass it to the *evaluator* using `--rules-file`.
 Note that detailed documentation for writing custom rules is not yet available.
 
 ## 7. Generate a report
 
 The `evaluation-result.yml` file can now be used as input for the reporter to generate human-readable reports and open
-source notices. 
+source notices.
 
 For example, to generate a static HTML report, WebApp report, and an open source notice by package, use:
 
-```bash
+```shell
 cli/build/install/ort/bin/ort report
   -f PlainTextTemplate,StaticHtml,WebApp
   -i [evaluator-output-dir]/evaluation-result.yml
@@ -335,10 +336,10 @@ Created 'WebApp' report: [reporter-output-dir]/scan-report-web-app.html
 Created 'PlainTextTemplate' report: [reporter-output-dir]/NOTICE_DEFAULT
 ```
 
-If you do not want to run the _evaluator_ you can pass the _scanner_ result e.g. `[scanner-output-dir]/scan-result.yml`
+If you do not want to run the *evaluator* you can pass the *scanner* result e.g. `[scanner-output-dir]/scan-result.yml`
 to the `reporter` instead. To learn how you can customize generated notices see
 [plain-text-templates.md](reporters/plain-text-templates.md). To learn how to customize the how-to-fix texts for scanner
-and analyzer issues see [how-to-fix-text-provider-kts.md](how-to-fix-text-provider-kts.md).
+and analyzer issues see [how-to-fix-text-provider-kts.md](scripts/how-to-fix-text-provider-kts.md).
 
 ## 8. Curating Package Metadata or License Findings
 

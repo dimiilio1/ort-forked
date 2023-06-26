@@ -74,9 +74,6 @@ fun matchExpectedResult(
         val expectedLines = expected.lines()
         val actualLines = actual.lines()
 
-        // De-indent the unified diff for easy copy & paste from the console.
-        val separator = "\n\b\b\b\b"
-
         MatcherResult(
             expected == actual,
             {
@@ -93,10 +90,11 @@ fun matchExpectedResult(
                     yet:
                     - `wl-paste | col -bx | git apply` (Linux with Wayland)
                     - `xsel -b | col -bx | git apply` (Linux with X)
+                    - `cat /dev/clipboard | dos2unix | cut -d ' ' -f 5- | git apply` (Windows with Git Bash)
                     Then copy the following lines to the clipboard and run the previously pasted commands.
-                """.trimIndent() + diff.joinToString(separator, separator)
+                """.trimIndent() + diff.joinToString("\n", "\n")
             },
-            { "Expected and actual results should differ, but they match." },
+            { "Expected and actual results should differ, but they match." }
         )
     }
 }

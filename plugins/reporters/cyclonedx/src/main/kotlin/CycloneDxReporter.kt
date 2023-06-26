@@ -48,19 +48,19 @@ import org.ossreviewtoolkit.utils.ort.ORT_NAME
 import org.ossreviewtoolkit.utils.spdx.SpdxLicense
 
 /**
- * A [Reporter] that creates software bills of materials (SBOM) in the [CycloneDX][1] format. For each [Project]
- * contained in the ORT result a separate SBOM is created.
+ * A [Reporter] that creates software bills of materials (SBOM) in the [CycloneDX](https://cyclonedx.org) format. For
+ * each [Project] contained in the ORT result a separate SBOM is created.
  *
  * This reporter supports the following options:
+ * - *schema.version*: The CycloneDX schema version to use. Defaults to [DEFAULT_SCHEMA_VERSION].
  * - *single.bom*: If true (the default), a single SBOM for all projects is created; if set to false, separate SBOMs are
  *                 created for each project.
  * - *output.file.formats*: A comma-separated list of (case-insensitive) output formats to export to. Supported are XML
  *                          and JSON.
- * [1]: https://cyclonedx.org
  */
 class CycloneDxReporter : Reporter {
     companion object {
-        val DEFAULT_SCHEMA_VERSION = CycloneDxSchema.Version.VERSION_13
+        val DEFAULT_SCHEMA_VERSION = CycloneDxSchema.Version.VERSION_14
 
         const val REPORT_BASE_FILENAME = "bom.cyclonedx"
 
@@ -103,8 +103,8 @@ class CycloneDxReporter : Reporter {
     private fun mapHash(hash: org.ossreviewtoolkit.model.Hash): Hash? =
         enumValues<Hash.Algorithm>().find { it.spec == hash.algorithm.toString() }?.let { Hash(it, hash.value) }
 
-    private fun mapLicenseNamesToObjects(licenseNames: Collection<String>, origin: String, input: ReporterInput) =
-        licenseNames.map { licenseName ->
+    private fun Collection<String>.mapNamesToLicenses(origin: String, input: ReporterInput): List<License> =
+        map { licenseName ->
             val spdxId = SpdxLicense.forId(licenseName)?.id
             val licenseText = input.licenseTextProvider.getLicenseText(licenseName)
 
@@ -233,15 +233,17 @@ class CycloneDxReporter : Reporter {
 
     private fun addPackageToBom(input: ReporterInput, pkg: Package, bom: Bom, dependencyType: String) {
         val resolvedLicenseInfo = input.licenseInfoResolver.resolveLicenseInfo(pkg.id).filterExcluded()
+            .applyChoices(input.ortResult.getPackageLicenseChoices(pkg.id))
+            .applyChoices(input.ortResult.getRepositoryLicenseChoices())
 
         val concludedLicenseNames = resolvedLicenseInfo.getLicenseNames(LicenseSource.CONCLUDED)
         val declaredLicenseNames = resolvedLicenseInfo.getLicenseNames(LicenseSource.DECLARED)
         val detectedLicenseNames = resolvedLicenseInfo.getLicenseNames(LicenseSource.DETECTED)
 
         // Get all licenses, but note down their origins inside an extensible type.
-        val licenseObjects = mapLicenseNamesToObjects(concludedLicenseNames, "concluded license", input) +
-                mapLicenseNamesToObjects(declaredLicenseNames, "declared license", input) +
-                mapLicenseNamesToObjects(detectedLicenseNames, "detected license", input)
+        val licenseObjects = concludedLicenseNames.mapNamesToLicenses("concluded license", input) +
+                declaredLicenseNames.mapNamesToLicenses("declared license", input) +
+                detectedLicenseNames.mapNamesToLicenses("detected license", input)
 
         val binaryHash = mapHash(pkg.binaryArtifact.hash)
         val sourceHash = mapHash(pkg.sourceArtifact.hash)
@@ -312,10 +314,16 @@ class CycloneDxReporter : Reporter {
                     // [1] https://github.com/CycloneDX/cyclonedx-core-java/issues/99.
                     val bomWithoutExtensibleTypes = bom.apply {
                         components.forEach { component ->
+                            // Clear the "dependencyType".
                             component.extensibleTypes = null
+
                             component.licenseChoice.licenses.forEach { license ->
+                                // Clear the "origin".
                                 license.extensibleTypes = null
                             }
+
+                            // Remove duplicates that may occur due to clearing the distingushing extensive type.
+                            component.licenseChoice.licenses = component.licenseChoice.licenses.distinct()
                         }
                     }
 

@@ -86,14 +86,15 @@ class AdvisorTest : WordSpec({
             val provider2 = mockkAdviceProvider()
 
             coEvery { provider1.retrievePackageFindings(packages) } returns mapOf(
-                pkg1 to listOf(advisorResult1, advisorResult2),
-                pkg2 to listOf(advisorResult3)
+                pkg1 to advisorResult1,
+                pkg2 to advisorResult3
             )
             coEvery { provider2.retrievePackageFindings(packages) } returns mapOf(
-                pkg2 to listOf(advisorResult4)
+                pkg1 to advisorResult2,
+                pkg2 to advisorResult4
             )
 
-            val expectedResults = sortedMapOf(
+            val expectedResults = mapOf(
                 pkg1.id to listOf(advisorResult1, advisorResult2),
                 pkg2.id to listOf(advisorResult3, advisorResult4)
             )

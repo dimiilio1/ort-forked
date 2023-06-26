@@ -68,25 +68,23 @@ class Osv(name: String, config: OsvConfiguration) : AdviceProvider(name) {
         httpClient = OkHttpClientHelper.buildClient()
     )
 
-    override suspend fun retrievePackageFindings(packages: Set<Package>): Map<Package, List<AdvisorResult>> {
+    override suspend fun retrievePackageFindings(packages: Set<Package>): Map<Package, AdvisorResult> {
         val startTime = Instant.now()
 
         val vulnerabilitiesForPackage = getVulnerabilitiesForPackage(packages)
 
-        return packages.associateWith { pkg ->
+        return packages.mapNotNull { pkg ->
             vulnerabilitiesForPackage[pkg.id]?.let { vulnerabilities ->
-                listOf(
-                    AdvisorResult(
-                        advisor = details,
-                        summary = AdvisorSummary(
-                            startTime = startTime,
-                            endTime = Instant.now()
-                        ),
-                        vulnerabilities = vulnerabilities.map { it.toOrtVulnerability() }
-                    )
+                pkg to AdvisorResult(
+                    advisor = details,
+                    summary = AdvisorSummary(
+                        startTime = startTime,
+                        endTime = Instant.now()
+                    ),
+                    vulnerabilities = vulnerabilities.map { it.toOrtVulnerability() }
                 )
-            }.orEmpty()
-        }
+            }
+        }.toMap()
     }
 
     private fun getVulnerabilitiesForPackage(packages: Set<Package>): Map<Identifier, List<Vulnerability>> {
@@ -158,7 +156,8 @@ private fun createRequest(pkg: Package): VulnerabilitiesForPackageRequest? {
         return VulnerabilitiesForPackageRequest(
             pkg = org.ossreviewtoolkit.clients.osv.Package(
                 name = name,
-                ecosystem = ecosystem
+                ecosystem = ecosystem,
+                purl = pkg.purl.takeUnless { it.isEmpty() }
             ),
             version = pkg.id.version
         )
@@ -208,7 +207,7 @@ private fun Vulnerability.toOrtVulnerability(): org.ossreviewtoolkit.model.Vulne
             VulnerabilityReference(
                 url = it,
                 scoringSystem = scoringSystem,
-                severity = severity,
+                severity = severity
             )
         }.getOrNull()
     }

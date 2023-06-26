@@ -18,8 +18,8 @@
  */
 
 plugins {
-    // Apply core plugins.
-    `java-library`
+    // Apply precompiled plugins.
+    id("ort-library-conventions")
 }
 
 dependencies {
@@ -36,7 +36,6 @@ dependencies {
     implementation(libs.jacksonCore)
     implementation(libs.jacksonDatabind)
     implementation(libs.jacksonDataformatYaml)
-    implementation(libs.jacksonModuleKotlin)
     implementation(libs.jruby)
     implementation(libs.log4jApi)
 

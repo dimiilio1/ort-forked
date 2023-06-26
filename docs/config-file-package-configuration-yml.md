@@ -6,16 +6,16 @@ A package configuration file allows you to define path excludes and license find
 packages included via a package manager as project dependencies, and not for the project's own source code repository to
 be scanned.
 
-### When To Use
+## When To Use
 
 Use a package configuration file to:
 
-- Mark files and directories as not included in released artifacts -- use it to make clear that license findings in
+* Mark files and directories as not included in released artifacts -- use it to make clear that license findings in
   documentation or tests in a package sources do not apply to the release (binary) artifact which is a dependency in
   your project.
-- Overwrite scanner findings to correct identified licenses in a dependency for a specific file(s).
+* Overwrite scanner findings to correct identified licenses in a dependency for a specific file(s).
 
-# Package Configuration File Basics
+## Package Configuration File Basics
 
 Each package configuration applies exactly to one *package id* and *provenance* which must be specified. The
 *provenance* can be specified as either a *source artifact* or a *VCS location* with an optional revision.
@@ -70,9 +70,9 @@ ORT consumes package configuration from a so-called "package configuration direc
 for `.yml` files. Each such file must contain exactly one package configuration and there must not be more than one
 package configuration for any package/provenance combination within that directory. The default location is
 `$ORT_CONFIG_DIR/package-configurations/`. To use a custom location you can pass it to the `--package-configurations-dir`
-option of the _evaluator_:
+option of the *evaluator*:
 
-```bash
+```shell
 cli/build/install/ort/bin/ort evaluate
   -i [scanner-output-dir]/scan-result.yml
   -o [evaluator-output-dir]
@@ -82,9 +82,9 @@ cli/build/install/ort/bin/ort evaluate
   --rules-file $ORT_CONFIG_DIR/evaluator.rules.kts
 ```
 
-Or to the _reporter_:
+Or to the *reporter*:
 
-```bash
+```shell
 cli/build/install/ort/bin/ort report
   -i [evaluator-output-dir]/evaluation-result.yml
   -o [reporter-output-dir]

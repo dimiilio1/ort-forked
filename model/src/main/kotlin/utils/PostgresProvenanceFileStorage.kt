@@ -19,8 +19,7 @@
 
 package org.ossreviewtoolkit.model.utils
 
-import java.io.File
-import java.io.IOException
+import java.io.InputStream
 
 import javax.sql.DataSource
 
@@ -44,10 +43,10 @@ import org.ossreviewtoolkit.model.RepositoryProvenance
 import org.ossreviewtoolkit.model.utils.DatabaseUtils.checkDatabaseEncoding
 import org.ossreviewtoolkit.model.utils.DatabaseUtils.tableExists
 import org.ossreviewtoolkit.model.utils.DatabaseUtils.transaction
-import org.ossreviewtoolkit.utils.ort.createOrtTempFile
 
 /**
- * A PostgreSQL based implementation of [ProvenanceFileStorage].
+ * A [DataSource]-based implementation of [ProvenanceFileStorage] that stores files associated by [KnownProvenance] in a
+ * (Postgres) database.
  */
 class PostgresProvenanceFileStorage(
     /**
@@ -56,7 +55,7 @@ class PostgresProvenanceFileStorage(
     dataSource: Lazy<DataSource>,
 
     /**
-     * The name of the table used for storing package provenances.
+     * The name of the table to use for storing the contents of the associated files.
      */
     tableName: String
 ) : ProvenanceFileStorage {
@@ -80,27 +79,27 @@ class PostgresProvenanceFileStorage(
         }
     }
 
-    override fun hasFile(provenance: KnownProvenance): Boolean =
+    override fun hasData(provenance: KnownProvenance): Boolean =
         database.transaction {
             table.slice(table.provenance.count()).select {
                 table.provenance eq provenance.storageKey()
             }.first()[table.provenance.count()].toInt()
         } == 1
 
-    override fun putFile(provenance: KnownProvenance, file: File) {
+    override fun putData(provenance: KnownProvenance, data: InputStream) {
         database.transaction {
             table.deleteWhere {
                 table.provenance eq provenance.storageKey()
             }
 
-            table.insert {
-                it[this.provenance] = provenance.storageKey()
-                it[zipData] = file.readBytes()
+            table.insert { statement ->
+                statement[this.provenance] = provenance.storageKey()
+                statement[zipData] = data.use { it.readBytes() }
             }
         }
     }
 
-    override fun getFile(provenance: KnownProvenance): File? {
+    override fun getData(provenance: KnownProvenance): InputStream? {
         val bytes = database.transaction {
             table.select {
                 table.provenance eq provenance.storageKey()
@@ -109,16 +108,7 @@ class PostgresProvenanceFileStorage(
             }.firstOrNull()
         } ?: return null
 
-        val file = createOrtTempFile(suffix = ".zip")
-
-        try {
-            file.writeBytes(bytes)
-        } catch (e: IOException) {
-            file.delete()
-            throw e
-        }
-
-        return file
+        return bytes.inputStream()
     }
 }
 

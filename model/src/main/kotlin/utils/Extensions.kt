@@ -17,6 +17,8 @@
  * License-Filename: LICENSE
  */
 
+@file:Suppress("TooManyFunctions")
+
 package org.ossreviewtoolkit.model.utils
 
 import java.net.URI
@@ -29,12 +31,19 @@ import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.PackageProvider
 import org.ossreviewtoolkit.model.RemoteArtifact
+import org.ossreviewtoolkit.model.RepositoryProvenance
 import org.ossreviewtoolkit.model.TextLocation
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.utils.common.percentEncode
 
-internal fun TextLocation.prependPath(prefix: String): String =
-    if (prefix.isBlank()) path else "${prefix.removeSuffix("/")}/$path"
+fun String.prependPath(prefix: String): String =
+    if (prefix.isBlank()) this else "${prefix.removeSuffix("/")}/$this"
+
+internal fun TextLocation.prependedPath(prefix: String): String =
+    path.prependPath(prefix)
+
+fun TextLocation.prependPath(prefix: String): TextLocation =
+    if (prefix.isEmpty()) this else copy(path = path.prependPath(prefix))
 
 /**
  * Map the [type][Identifier.type] of a [package identifier][Package.id] to a ClearlyDefined [ComponentType], or return
@@ -143,6 +152,9 @@ enum class PurlType(private val value: String) {
     DEBIAN("deb"),
     DRUPAL("drupal"),
     GEM("gem"),
+    GENERIC("generic"),
+    GITHUB("github"),
+    GITLAB("gitlab"),
     GOLANG("golang"),
     MAVEN("maven"),
     NPM("npm"),
@@ -226,6 +238,18 @@ fun createPurl(
         append(value)
     }
 }
+
+/**
+ * Return a copy of this [RepositoryProvenance] with an empty VCS path.
+ */
+fun RepositoryProvenance.clearVcsPath() = copy(vcsInfo = vcsInfo.copy(path = ""))
+
+/**
+ * Return a copy of this [RepositoryProvenance] with [VcsInfo] revision set to the resolved revision of this
+ * [RepositoryProvenance].
+ */
+fun RepositoryProvenance.alignRevisions(): RepositoryProvenance =
+    copy(vcsInfo = vcsInfo.copy(revision = resolvedRevision))
 
 /**
  * Return the repo manifest path parsed from this string. The string is interpreted as a URL and the manifest path is

@@ -1,14 +1,14 @@
 # The `.ort.yml` file
 
-The items below can be configured by adding an `.ort.yml` file to the root of the source code repository.
-All configurations in this file apply only to this Project's context. Usually the global context is preferred for an
+The items below can be configured by adding an `.ort.yml` file to the root of the source code repository. All
+configurations in this file apply only to this Project's context. Usually the global context is preferred for an
 increased degree of automation and local configurations should only be done if there are good reasons.
 
 * [excludes](#excludes) - Mark [files, directories](#excluding-paths) or [package manager scopes](#excluding-scopes) as
   not included in released artifacts.
 * [curations](#curations) - Overwrite package metadata, set a concluded license or correct license findings.
 * [resolutions](#resolutions) - Resolve any issues or policy rule violations.
-* [license choices](#License-Choices) - Select a license for packages which offer a license choice.
+* [license choices](#license-choices) - Select a license for packages which offer a license choice.
 
 The sections below explain each in further detail. Prefer to learn by example? See the [.ort.yml](../.ort.yml) for the
 OSS Review Toolkit itself.
@@ -18,7 +18,7 @@ OSS Review Toolkit itself.
 ### When to Use Excludes
 
 Excludes are used to define which OSS is distributed to third parties and which code is only used internally, e.g. for
-building, documenting or testing the code. 
+building, documenting or testing the code.
 
 Exclusions apply to paths (files/directories) or scopes. Examples of currently supported exclusions:
 
@@ -42,7 +42,7 @@ generates:
 * The reason for the exclusion is shown next to the result.
 
 This is a rather safe option, since the reports still display elements marked as excluded and thus allow the user to
-verify the correctness of the declared exclusions. If it is clear that the excluded projects or scopes are irrelevant 
+verify the correctness of the declared exclusions. If it is clear that the excluded projects or scopes are irrelevant
 from a compliance point of view, ORT can be configured to skip them completely during the analysis phase. The affected
 elements are then not processed any further and do not occur in generated reports. Especially for larger projects with
 many excluded elements, this can significantly reduce resource usage and analysis time. To enable this mode, add the
@@ -75,8 +75,8 @@ excludes:
 ```
 
 Where the list of available options for `reason` is defined in
-[PathExcludeReason.kt](../model/src/main/kotlin/config/PathExcludeReason.kt).
-For how to write a glob pattern, please see the
+[PathExcludeReason.kt](../model/src/main/kotlin/config/PathExcludeReason.kt). For how to write a glob pattern, please
+see the
 [AntPathMatcher documentation](https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/util/AntPathMatcher.html).
 
 The path exclude above has the following effects:
@@ -143,7 +143,7 @@ scopes defined in the examples below match the scopes in your project.
 ### When to Use Curations
 
 License finding curations should be used when you want to correct the licenses detected in the source code of the
-project. To define curations on global level for third-party packages, please use 
+project. To define curations on global level for third-party packages, please use
 [curations](config-file-curations-yml.md) or [package configurations](config-file-package-configuration-yml.md).
 
 ### Curating Project License Findings
@@ -155,7 +155,6 @@ license-Id of any `LicenseFinding` or eliminates the `LicenseFinding` in case th
 As an example, the following curation would replace similar findings of `GPL-2.0-only` with `Apache-2.0` in all `.cpp`
 files in the `src` directory:
 
-e.g.:
 ```yaml
 curations:
   license_findings:
@@ -168,9 +167,10 @@ curations:
     concluded_license: "Apache-2.0"
  ```
 
-To correct identified licenses in a dependency you can use a package configuration to overwrite scanner findings.
-Note that this feature requires `enableRepositoryPackageConfigurations` to be enabled in the
+To correct identified licenses in a dependency you can use a package configuration to overwrite scanner findings. Note
+that this feature requires `enableRepositoryPackageConfigurations` to be enabled in the
 [config.yml](../README.md#ort-configuration-file).
+
 ```yaml
 package_configurations:
 - id: 'Maven:com.example:package:1.2.3'
@@ -185,7 +185,7 @@ package_configurations:
     concluded_license: "Apache-2.0"
 ```
 
-For details of the specification, see 
+For details of the specification, see
 [LicenseFindingCuration.kt](../model/src/main/kotlin/config/LicenseFindingCuration.kt).
 The list of available options for `reason` are defined in
 [LicenseFindingCurationReason.kt](../model/src/main/kotlin/config/LicenseFindingCurationReason.kt).
@@ -194,11 +194,10 @@ The list of available options for `reason` are defined in
 
 Package curations can be added if you want to correct metadata of third-party dependencies.
 
-The following example corrects the source-artifact URL of the package with the id `Maven:com.example:dummy:0.0.1`.
-Note that this feature requires `enableRepositoryPackageCurations` to be enabled in the
+The following example corrects the source-artifact URL of the package with the id `Maven:com.example:dummy:0.0.1`.  Note
+that this feature requires `enableRepositoryPackageCurations` to be enabled in the
 [config.yml](../README.md#ort-configuration-file).
 
-e.g.:
 ```yaml
 curations:
   packages:
@@ -223,13 +222,14 @@ applied to each scan.
 
 ### Resolution Basics
 
-Resolutions allow you to *resolve* issues, policy rule violations or vulnerabilities by marking them as acceptable. A resolution is
-applied to specific issues or violations via the regular expression specified in the `message` of a resolution.
+Resolutions allow you to *resolve* issues, policy rule violations or vulnerabilities by marking them as acceptable. A
+resolution is applied to specific issues or violations via the regular expression specified in the `message` of a
+resolution.
 
 To be able to show why a resolution is acceptable, each resolution must include an explanation. The explanation consists
 of:
 
-* `reason` -- an identifier selected from a predefined list of options. 
+* `reason` -- an identifier selected from a predefined list of options.
 * `comment` -- free text, providing an explanation and optionally a link to further information.
 
 ### Resolving Issues
@@ -250,6 +250,7 @@ resolutions:
     reason: "One of IssueResolutionReason e.g BUILD_TOOL_ISSUE,CANT_FIX_ISSUE."
     comment: "A comment further explaining why the reason above is acceptable."
 ```
+
 Where the list of available options for `reason` is defined in
 [IssueResolutionReason.kt](../model/src/main/kotlin/config/IssueResolutionReason.kt)
 
@@ -308,7 +309,8 @@ resolutions:
 Where the list of available options for `reason` is defined in
 [VulnerabilityResolutionReason.kt](../model/src/main/kotlin/config/VulnerabilityResolutionReason.kt).
 
-For example, to ignore a vulnerability that is ineffective, because it is not invoked in your project, your `.ort.yml` could include:
+For example, to ignore a vulnerability that is ineffective, because it is not invoked in your project, your `.ort.yml`
+could include:
 
 ```yaml
 resolutions:
@@ -322,20 +324,17 @@ resolutions:
 
 ### When to Use License Choices
 
-For multi-licensed dependencies a specific license can be selected.
-The license choice can be applied to a package or globally to an SPDX expression in the project.
-A choice is only valid for licenses combined with the SPDX operator `OR`.
-The choices are applied in the evaluator, and the reporter to the effective license of a package, which is calculated
-by the chosen [LicenseView](../model/src/main/kotlin/licenses/LicenseView.kt).
+For multi-licensed dependencies a specific license can be selected. The license choice can be applied to a package or
+globally to an SPDX expression in the project. A choice is only valid for licenses combined with the SPDX operator `OR`.
+The choices are applied in the evaluator, and the reporter to the effective license of a package, which is calculated by
+the chosen [LicenseView](../model/src/main/kotlin/licenses/LicenseView.kt).
 
 ### License Choice by Package
 
 To select a license from a multi-licensed dependency, specified by its `packageId`, an SPDX expression for a `choice`
-must be provided.
-The `choice` is either applied to the whole effective SPDX expression of the package or to an optional `given` SPDX 
-expression that can represent only a sub-expression of the whole effective SPDX expression. 
+must be provided. The `choice` is either applied to the whole effective SPDX expression of the package or to an optional
+`given` SPDX expression that can represent only a sub-expression of the whole effective SPDX expression.
 
-e.g.
 ```yaml
 license_choices:
   package_license_choices:
@@ -360,15 +359,12 @@ license_choices:
 ### License Choice for the Project
 
 To globally select a license from an SPDX expression, that offers a choice, an SPDX expression for a `given` and a
-`choice` must be provided.
-The `choice` is applied to the whole `given` SPDX expression.
-With a repository license choice, the license choice is applied to each package that offers this license as a choice. 
-Not allowing `given` to be null helps only applying the choice to a wanted `given` as opposed to all licenses with that
-choice, which could lead to unwanted choices.
-The license choices for a project can be overwritten by applying a 
+`choice` must be provided. The `choice` is applied to the whole `given` SPDX expression. With a repository license
+choice, the license choice is applied to each package that offers this license as a choice. Not allowing `given` to be
+null helps only applying the choice to a wanted `given` as opposed to all licenses with that choice, which could lead to
+unwanted choices. The license choices for a project can be overwritten by applying a
 [license choice to a package](#license-choice-by-package).
 
-e.g.
 ```yaml
 license_choices:
   repository_license_choices:
@@ -376,17 +372,15 @@ license_choices:
     choice: "B"
 ```
 
----
-**NOTE**
+### Invalid License Choice
 
-The choice will be applied to the WHOLE `given` license.
-If the choice does not provide a valid result, an exception will be thrown upon deserialization.
+The choice will be applied to the WHOLE `given` license. If the choice does not provide a valid result, an exception
+will be thrown upon deserialization.
 
-e.g. invalid configuration:
+Example for an invalid configuration:
+
 ```yaml
 # This is invalid, as 'E' must be in the resulting license.
 - given: (C OR D) AND E
   choice: C
 ```
-
----

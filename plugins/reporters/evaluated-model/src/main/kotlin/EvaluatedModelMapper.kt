@@ -24,6 +24,7 @@ import org.ossreviewtoolkit.model.CuratedPackage
 import org.ossreviewtoolkit.model.DependencyNode
 import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.Issue
+import org.ossreviewtoolkit.model.LicenseFinding
 import org.ossreviewtoolkit.model.PackageLinkage
 import org.ossreviewtoolkit.model.Project
 import org.ossreviewtoolkit.model.Provenance
@@ -88,10 +89,13 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
      */
     fun build(deduplicateDependencyTree: Boolean = false): EvaluatedModel {
         createExcludeInfo()
-        createScopes()
 
         val resultProjects = input.ortResult.getProjects().sortedBy { it.id }
         val resultPackages = input.ortResult.getPackages().sortedBy { it.metadata.id }
+
+        resultProjects.forEach { project ->
+            createScopes(project)
+        }
 
         resultProjects.forEach { project ->
             addProject(project)
@@ -198,10 +202,8 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
         }
     }
 
-    private fun createScopes() {
-        input.ortResult.getProjects().flatMap { project ->
-            input.ortResult.dependencyNavigator.scopeNames(project)
-        }.forEach { scope ->
+    private fun createScopes(project: Project) {
+        input.ortResult.dependencyNavigator.scopeNames(project).sorted().forEach { scope ->
             scopes[scope] = EvaluatedScope(
                 name = scope,
                 excludes = scopeExcludes.addIfRequired(input.ortResult.getExcludes().findScopeExcludes(scope))
@@ -490,28 +492,32 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
             visitedNodes += getInternalId() to createDependencyNode(dependency, linkage, issues)
 
             val children = visitDependencies { dependencies ->
-                dependencies.map { node ->
-                    val nodeId = node.getInternalId()
+                dependencies
+                    .map { it.getStableReference() } // Obtain stable reference to not lose node data when sorting.
+                    .sortedBy { it.id }
+                    .map { node ->
+                        val nodeId = node.getInternalId()
 
-                    if (deduplicateDependencyTree && nodeId in visitedNodes) {
-                        // Cut the duplicate subtree here and only return the node without its children.
-                        visitedNodes.getValue(nodeId).copy(children = emptyList())
-                    } else {
-                        node.toEvaluatedTreeNode(scope, path + dependency)
-                    }
+                        if (deduplicateDependencyTree && nodeId in visitedNodes) {
+                            // Cut the duplicate subtree here and only return the node without its children.
+                            visitedNodes.getValue(nodeId).copy(children = emptyList())
+                        } else {
+                            node.toEvaluatedTreeNode(scope, path + dependency)
+                        }
                 }.toList()
             }
 
             return createDependencyNode(dependency, linkage, issues, children)
         }
 
-        val scopeTrees = input.ortResult.dependencyNavigator.scopeNames(project).map { scope ->
+        val scopeTrees = input.ortResult.dependencyNavigator.scopeNames(project).sorted().map { scope ->
             // Deduplication should not happen across scopes.
             visitedNodes.clear()
 
-            val subTrees = input.ortResult.dependencyNavigator.directDependencies(project, scope).map {
-                it.toEvaluatedTreeNode(scopes.getValue(scope), mutableListOf())
-            }.toList()
+            val subTrees = input.ortResult.dependencyNavigator.directDependencies(project, scope)
+                .map { it.getStableReference() } // Obtain stable reference to not lose node data when sorting.
+                .sortedBy { it.id }
+                .mapTo(mutableListOf()) { it.toEvaluatedTreeNode(scopes.getValue(scope), mutableListOf()) }
 
             val applicableScopeExcludes = input.ortResult.getExcludes().findScopeExcludes(scope)
             val evaluatedScopeExcludes = scopeExcludes.addIfRequired(applicableScopeExcludes)
@@ -635,8 +641,9 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
     ) {
         val pathExcludes = getPathExcludes(id, scanResult.provenance)
         val licenseFindingCurations = getLicenseFindingCurations(id, scanResult.provenance)
+        // Sort the curated findings here to avoid the need to sort in the web-app each time it is loaded.
         val curatedFindings = curationsMatcher.applyAll(scanResult.summary.licenseFindings, licenseFindingCurations)
-            .mapNotNullTo(mutableSetOf()) { it.curatedFinding }
+            .mapNotNull { it.curatedFinding }.toSortedSet(LicenseFinding.COMPARATOR)
         val matchResult = findingsMatcher.match(curatedFindings, scanResult.summary.copyrightFindings)
         val matchedFindings = matchResult.matchedFindings.entries.groupBy { it.key.license }.mapValues { entry ->
             val licenseFindings = entry.value.map { it.key }
@@ -687,7 +694,7 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
     }
 
     private fun addShortestPaths(project: Project) {
-        input.ortResult.dependencyNavigator.getShortestPaths(project).forEach { (scopeName, scopePaths) ->
+        input.ortResult.dependencyNavigator.getShortestPaths(project).toSortedMap().forEach { (scopeName, scopePaths) ->
             scopePaths.forEach { (id, path) ->
                 val pkg = packages.getValue(id)
 

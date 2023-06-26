@@ -21,7 +21,6 @@ package org.ossreviewtoolkit.reporter
 
 import java.time.Duration
 import java.time.Instant
-import java.util.SortedMap
 
 import kotlin.time.toKotlinDuration
 
@@ -59,8 +58,8 @@ object StatisticsCalculator {
             excludesPackages = ortResult.getPackages().count { ortResult.isExcluded(it.metadata.id) },
             totalTreeDepth = getTreeDepth(ortResult),
             includedTreeDepth = getTreeDepth(ortResult = ortResult, ignoreExcluded = true),
-            includedScopes = getIncludedScopes(ortResult).toSortedSet(),
-            excludedScopes = getExcludedScopes(ortResult).toSortedSet()
+            includedScopes = getIncludedScopes(ortResult),
+            excludedScopes = getExcludedScopes(ortResult)
         ),
         licenses = getLicenseStatistics(ortResult, licenseInfoResolver),
         executionDurationInSeconds = getExecutionDurationInSeconds(ortResult)
@@ -133,10 +132,10 @@ object StatisticsCalculator {
     ): LicenseStatistics {
         val ids = ortResult.getProjectsAndPackages()
 
-        fun countLicenses(view: LicenseView): SortedMap<String, Int> =
+        fun countLicenses(view: LicenseView): Map<String, Int> =
             ids.flatMap { id ->
                 licenseInfoResolver.resolveLicenseInfo(id).filter(view).map { it.license.toString() }
-            }.groupingBy { it }.eachCount().toSortedMap()
+            }.groupingBy { it }.eachCount().toMap()
 
         val declaredLicenses = countLicenses(LicenseView.ONLY_DECLARED)
         val detectedLicenses = countLicenses(LicenseView.ONLY_DETECTED)
@@ -153,7 +152,7 @@ object StatisticsCalculator {
                 analyzer?.let { secondsBetween(it.startTime, it.endTime) },
                 scanner?.let { secondsBetween(it.startTime, it.endTime) },
                 advisor?.let { secondsBetween(it.startTime, it.endTime) },
-                evaluator?.let { secondsBetween(it.startTime, it.endTime) },
+                evaluator?.let { secondsBetween(it.startTime, it.endTime) }
             ).sum()
         }
 

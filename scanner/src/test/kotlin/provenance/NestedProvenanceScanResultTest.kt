@@ -117,11 +117,11 @@ private val scanResultRoot = ScanResult(
     provenance = provenanceRoot,
     scanner = scannerDetails,
     summary = ScanSummary.EMPTY.copy(
-        licenseFindings = sortedSetOf(
+        licenseFindings = setOf(
             LicenseFinding("Apache-2.0", TextLocation("file", 1)),
             LicenseFinding("Apache-2.0", TextLocation("submodules/file", 1))
         ),
-        copyrightFindings = sortedSetOf(
+        copyrightFindings = setOf(
             CopyrightFinding("Copyright", TextLocation("file", 1)),
             CopyrightFinding("Copyright", TextLocation("submodules/file", 1))
         )
@@ -132,11 +132,11 @@ private val scanResultSubmoduleA = ScanResult(
     provenance = provenanceSubmoduleA,
     scanner = scannerDetails,
     summary = ScanSummary.EMPTY.copy(
-        licenseFindings = sortedSetOf(
+        licenseFindings = setOf(
             LicenseFinding("Apache-2.0", TextLocation("fileA", 1)),
             LicenseFinding("Apache-2.0", TextLocation("dir/fileA", 1))
         ),
-        copyrightFindings = sortedSetOf(
+        copyrightFindings = setOf(
             CopyrightFinding("Copyright", TextLocation("fileA", 1)),
             CopyrightFinding("Copyright", TextLocation("dir/fileA", 1))
         )
@@ -147,11 +147,11 @@ private val scanResultSubmoduleB = ScanResult(
     provenance = provenanceSubmoduleA,
     scanner = scannerDetails,
     summary = ScanSummary.EMPTY.copy(
-        licenseFindings = sortedSetOf(
+        licenseFindings = setOf(
             LicenseFinding("Apache-2.0", TextLocation("fileB", 1)),
             LicenseFinding("Apache-2.0", TextLocation("dir/fileB", 1))
         ),
-        copyrightFindings = sortedSetOf(
+        copyrightFindings = setOf(
             CopyrightFinding("Copyright", TextLocation("fileB", 1)),
             CopyrightFinding("Copyright", TextLocation("dir/fileB", 1))
         )

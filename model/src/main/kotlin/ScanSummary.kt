@@ -23,12 +23,15 @@ import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.databind.annotation.JsonSerialize
 
 import java.time.Instant
-import java.util.SortedSet
 
 import org.ossreviewtoolkit.model.config.LicenseFilePatterns
+import org.ossreviewtoolkit.model.utils.CopyrightFindingSortedSetConverter
+import org.ossreviewtoolkit.model.utils.LicenseFindingSortedSetConverter
 import org.ossreviewtoolkit.model.utils.RootLicenseMatcher
+import org.ossreviewtoolkit.model.utils.SnippetFindingSortedSetConverter
 import org.ossreviewtoolkit.utils.common.FileMatcher
 import org.ossreviewtoolkit.utils.spdx.SpdxExpression
 
@@ -57,14 +60,26 @@ data class ScanSummary(
     /**
      * The detected license findings.
      */
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
     @JsonProperty("licenses")
-    val licenseFindings: SortedSet<LicenseFinding>,
+    @JsonSerialize(converter = LicenseFindingSortedSetConverter::class)
+    val licenseFindings: Set<LicenseFinding> = emptySet(),
 
     /**
      * The detected copyright findings.
      */
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
     @JsonProperty("copyrights")
-    val copyrightFindings: SortedSet<CopyrightFinding>,
+    @JsonSerialize(converter = CopyrightFindingSortedSetConverter::class)
+    val copyrightFindings: Set<CopyrightFinding> = emptySet(),
+
+    /**
+     * The detected snippet findings.
+     */
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
+    @JsonProperty("snippets")
+    @JsonSerialize(converter = SnippetFindingSortedSetConverter::class)
+    val snippetFindings: Set<SnippetFinding> = emptySet(),
 
     /**
      * The list of issues that occurred during the scan. This property is not serialized if the list is empty to reduce
@@ -82,9 +97,7 @@ data class ScanSummary(
         val EMPTY = ScanSummary(
             startTime = Instant.EPOCH,
             endTime = Instant.EPOCH,
-            packageVerificationCode = "",
-            licenseFindings = sortedSetOf(),
-            copyrightFindings = sortedSetOf()
+            packageVerificationCode = ""
         )
     }
 
@@ -106,12 +119,9 @@ data class ScanSummary(
 
         fun TextLocation.matchesPath() = this.path.startsWith("$path/") || this.path in applicableLicenseFiles
 
-        val licenseFindings = licenseFindings.filter { it.location.matchesPath() }.toSortedSet()
-        val copyrightFindings = copyrightFindings.filter { it.location.matchesPath() }.toSortedSet()
-
         return copy(
-            licenseFindings = licenseFindings,
-            copyrightFindings = copyrightFindings
+            licenseFindings = licenseFindings.filterTo(mutableSetOf()) { it.location.matchesPath() },
+            copyrightFindings = copyrightFindings.filterTo(mutableSetOf()) { it.location.matchesPath() }
         )
     }
 
@@ -123,8 +133,8 @@ data class ScanSummary(
         val matcher = FileMatcher(ignorePatterns)
 
         return copy(
-            licenseFindings = licenseFindings.filterTo(sortedSetOf()) { !matcher.matches(it.location.path) },
-            copyrightFindings = copyrightFindings.filterTo(sortedSetOf()) { !matcher.matches(it.location.path) }
+            licenseFindings = licenseFindings.filterTo(mutableSetOf()) { !matcher.matches(it.location.path) },
+            copyrightFindings = copyrightFindings.filterTo(mutableSetOf()) { !matcher.matches(it.location.path) }
         )
     }
 }

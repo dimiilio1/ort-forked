@@ -49,14 +49,14 @@ import org.apache.logging.log4j.kotlin.Logging
 
 object ArchiveUtils : Logging
 
-enum class ArchiveType(vararg val extensions: String) {
+enum class ArchiveType(extension: String, vararg aliases: String) {
     SEVENZIP(".7z"),
-    ZIP(".aar", ".egg", ".jar", ".war", ".whl", ".zip"),
+    ZIP(".zip", ".aar", ".egg", ".jar", ".war", ".whl"),
 
-    TAR(".gem", ".tar"),
     TAR_BZIP2(".tar.bz2", ".tbz2"),
-    TAR_GZIP(".crate", ".tar.gz", ".tgz"),
+    TAR_GZIP(".tar.gz", ".tgz", ".crate"),
     TAR_XZ(".tar.xz", ".txz"),
+    TAR(".tar", ".gem"),
 
     DEB(".deb", ".udeb"),
 
@@ -70,6 +70,8 @@ enum class ArchiveType(vararg val extensions: String) {
             } ?: NONE
         }
     }
+
+    val extensions = listOf(extension, *aliases)
 }
 
 /**
@@ -112,6 +114,8 @@ fun File.unpackTryAllTypes(targetDirectory: File, filter: (ArchiveEntry) -> Bool
     }.find { archiveType ->
         runCatching {
             unpack(targetDirectory, forceArchiveType = archiveType, filter)
+        }.onSuccess {
+            ArchiveUtils.logger.debug { "Unpacked stream as $archiveType to '$targetDirectory'." }
         }.onFailure {
             suppressedExceptions += IOException("Unpacking '$this' as $archiveType failed.", it)
         }.isSuccess
@@ -301,7 +305,9 @@ private fun ArchiveInputStream.unpack(
             copyExecutableModeBit(target, mode(entry))
         }
 
-        if (!processed) throw IOException("Unsupported archive format or empty archive.")
+        if (this is TarArchiveInputStream && !processed) {
+            throw IOException("Unsupported archive type or empty archive.")
+        }
     }
 
 /**

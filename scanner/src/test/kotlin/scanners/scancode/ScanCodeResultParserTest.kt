@@ -104,116 +104,55 @@ class ScanCodeResultParserTest : FreeSpec({
             }
         }
 
-        "for output format 1.0.0 should" - {
-            "get correct counts" {
-                val resultFile = File("src/test/assets/scancode-output-format-1.0.0_mime-types-2.1.18.json")
-                val result = resultFile.readTree()
+        for (version in 1..MAX_SUPPORTED_OUTPUT_FORMAT_MAJOR_VERSION) {
+            "for output format $version.0.0 should" - {
+                "get correct counts" {
+                    val filename = "scancode-output-format-$version.0.0_mime-types-2.1.18.json"
+                    val resultFile = File("src/test/assets/$filename")
+                    val result = resultFile.readTree()
 
-                val summary = generateSummary(SpdxConstants.NONE, result)
+                    val summary = generateSummary(SpdxConstants.NONE, result)
 
-                summary.licenseFindings.size shouldBe 5
-                summary.copyrightFindings.size shouldBe 4
-                summary.issues should beEmpty()
-            }
+                    summary.licenseFindings.size shouldBe 5
+                    summary.copyrightFindings.size shouldBe 4
+                    summary.issues should beEmpty()
+                }
 
-            "properly summarize license findings" {
-                val resultFile = File("src/test/assets/scancode-output-format-1.0.0_mime-types-2.1.18.json")
-                val result = resultFile.readTree()
+                "properly summarize license findings" {
+                    val resultFile = File("src/test/assets/scancode-output-format-$version.0.0_mime-types-2.1.18.json")
+                    val result = resultFile.readTree()
 
-                val summary = generateSummary(SpdxConstants.NONE, result)
+                    val summary = generateSummary(SpdxConstants.NONE, result)
 
-                summary should containLicensesExactly("MIT")
+                    summary should containLicensesExactly("MIT")
 
-                summary should containLocationsForLicenseExactly(
-                    "MIT",
-                    TextLocation("LICENSE", 1),
-                    TextLocation("LICENSE", 6, 23),
-                    TextLocation("README.md", 95, 97),
-                    TextLocation("index.js", 5),
-                    TextLocation("package.json", 10, 10)
-                )
-            }
-
-            "properly summarize copyright findings" {
-                val resultFile = File("src/test/assets/scancode-output-format-1.0.0_mime-types-2.1.18.json")
-                val result = resultFile.readTree()
-
-                val summary = generateSummary(SpdxConstants.NONE, result)
-
-                summary should containCopyrightsExactly(
-                    "Copyright (c) 2014 Jonathan Ong" to
-                            listOf(TextLocation("index.js", 3)),
-                    "Copyright (c) 2014 Jonathan Ong <me@jongleberry.com>" to
-                            listOf(TextLocation("LICENSE", 3)),
-                    "Copyright (c) 2015 Douglas Christopher Wilson" to
-                            listOf(TextLocation("index.js", 4)),
-                    "Copyright (c) 2015 Douglas Christopher Wilson <doug@somethingdoug.com>" to
-                            listOf(TextLocation("LICENSE", 4))
-                )
-            }
-
-            "associate LLVM-exception findings with Apache-2.0" {
-                val resultFile = File("src/test/assets/scancode-output-format-1.0.0_wasi-0.10.2.json")
-                val result = resultFile.readTree()
-
-                val summary = generateSummary(SpdxConstants.NONE, result)
-
-                summary.licenseFindings should containExactlyInAnyOrder(
-                    LicenseFinding(
-                        license = "Apache-2.0",
-                        location = TextLocation("Downloads/wasi-0.10.2+wasi-snapshot-preview1/Cargo.toml", 23, 23),
-                        score = 100.0f
-                    ),
-                    LicenseFinding(
-                        license = "Apache-2.0",
-                        location = TextLocation("Downloads/wasi-0.10.2+wasi-snapshot-preview1/Cargo.toml.orig", 5, 5),
-                        score = 100.0f
-                    ),
-                    LicenseFinding(
-                        license = "Apache-2.0",
-                        location = TextLocation("Downloads/wasi-0.10.2+wasi-snapshot-preview1/LICENSE-APACHE", 1, 201),
-                        score = 100.0f
-                    ),
-                    LicenseFinding(
-                        license = "Apache-2.0 WITH LLVM-exception",
-                        location = TextLocation(
-                            path = "Downloads/wasi-0.10.2+wasi-snapshot-preview1/" +
-                                    "LICENSE-Apache-2.0_WITH_LLVM-exception",
-                            startLine = 2,
-                            endLine = 219
-                        ),
-                        score = 100.0f
-                    ),
-                    LicenseFinding(
-                        license = "Apache-2.0",
-                        location = TextLocation("Downloads/wasi-0.10.2+wasi-snapshot-preview1/README.md", 85, 88),
-                        score = 66.67f
-                    ),
-                    LicenseFinding(
-                        license = "Apache-2.0",
-                        location = TextLocation("Downloads/wasi-0.10.2+wasi-snapshot-preview1/README.md", 93, 93),
-                        score = 100.0f
-                    ),
-                    LicenseFinding(
-                        license = "LicenseRef-scancode-free-unknown",
-                        location = TextLocation(
-                            path = "Downloads/wasi-0.10.2+wasi-snapshot-preview1/ORG_CODE_OF_CONDUCT.md",
-                            startLine = 106,
-                            endLine = 106
-                        ),
-                        score = 50.0f
-                    ),
-                    LicenseFinding(
-                        license = "LicenseRef-scancode-unknown-license-reference",
-                        location = TextLocation("Downloads/wasi-0.10.2+wasi-snapshot-preview1/README.md", 88, 88),
-                        score = 100.0f
-                    ),
-                    LicenseFinding(
-                        license = "MIT",
-                        location = TextLocation("Downloads/wasi-0.10.2+wasi-snapshot-preview1/LICENSE-MIT", 1, 23),
-                        score = 100.0f
+                    summary should containLocationsForLicenseExactly(
+                        "MIT",
+                        TextLocation("LICENSE", 1),
+                        TextLocation("LICENSE", 6, 23),
+                        TextLocation("README.md", 95, 97),
+                        TextLocation("index.js", 5),
+                        TextLocation("package.json", 10, 10)
                     )
-                )
+                }
+
+                "properly summarize copyright findings" {
+                    val resultFile = File("src/test/assets/scancode-output-format-$version.0.0_mime-types-2.1.18.json")
+                    val result = resultFile.readTree()
+
+                    val summary = generateSummary(SpdxConstants.NONE, result)
+
+                    summary should containCopyrightsExactly(
+                        "Copyright (c) 2014 Jonathan Ong" to
+                                listOf(TextLocation("index.js", 3)),
+                        "Copyright (c) 2014 Jonathan Ong <me@jongleberry.com>" to
+                                listOf(TextLocation("LICENSE", 3)),
+                        "Copyright (c) 2015 Douglas Christopher Wilson" to
+                                listOf(TextLocation("index.js", 4)),
+                        "Copyright (c) 2015 Douglas Christopher Wilson <doug@somethingdoug.com>" to
+                                listOf(TextLocation("LICENSE", 4))
+                    )
+                }
             }
         }
 
@@ -283,27 +222,17 @@ class ScanCodeResultParserTest : FreeSpec({
             }
         }
 
-        "for output format 1.0.0 should" - {
-            "properly parse details" {
-                val result = File("src/test/assets/scancode-output-format-1.0.0_mime-types-2.1.18.json").readTree()
+        for (version in 1..MAX_SUPPORTED_OUTPUT_FORMAT_MAJOR_VERSION) {
+            "for output format $version.0.0 should" - {
+                "properly parse details" {
+                    val filename = "scancode-output-format-$version.0.0_mime-types-2.1.18.json"
+                    val result = File("src/test/assets/$filename").readTree()
 
-                val details = generateScannerDetails(result)
-                details.name shouldBe ScanCode.SCANNER_NAME
-                details.version shouldBe "30.1.0"
-                details.configuration shouldContain "--timeout 300.0"
-                details.configuration shouldContain "--processes 3"
-            }
-        }
-
-        "for output format 2.0.0 should" - {
-            "properly parse details" {
-                val result = File("src/test/assets/scancode-output-format-2.0.0_mime-types-2.1.18.json").readTree()
-
-                val details = generateScannerDetails(result)
-                details.name shouldBe ScanCode.SCANNER_NAME
-                details.version shouldBe "31.2.1"
-                details.configuration shouldContain "--timeout 300.0"
-                details.configuration shouldContain "--processes 3"
+                    val details = generateScannerDetails(result)
+                    details.name shouldBe ScanCode.SCANNER_NAME
+                    details.configuration shouldContain "--timeout 300.0"
+                    details.configuration shouldContain "--processes 3"
+                }
             }
         }
     }

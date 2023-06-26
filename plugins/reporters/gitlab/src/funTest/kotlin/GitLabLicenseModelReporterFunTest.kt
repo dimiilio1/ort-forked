@@ -21,6 +21,7 @@ package org.ossreviewtoolkit.plugins.reporters.gitlab
 
 import io.kotest.core.TestConfiguration
 import io.kotest.core.spec.style.WordSpec
+import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.shouldBe
 
 import org.ossreviewtoolkit.model.AnalyzerResult
@@ -41,7 +42,6 @@ import org.ossreviewtoolkit.model.config.ScopeExclude
 import org.ossreviewtoolkit.model.config.ScopeExcludeReason
 import org.ossreviewtoolkit.reporter.ReporterInput
 import org.ossreviewtoolkit.utils.common.normalizeLineBreaks
-import org.ossreviewtoolkit.utils.test.createTestTempDir
 import org.ossreviewtoolkit.utils.test.getAssetAsString
 
 class GitLabLicenseModelReporterFunTest : WordSpec({
@@ -49,7 +49,7 @@ class GitLabLicenseModelReporterFunTest : WordSpec({
         "create the expected JSON license model containing only non-excluded packages" {
             val ortResult = createOrtResult()
 
-            val jsonLicenseModel = generateReport(ortResult = ortResult, skipExcluded = true) + "\n"
+            val jsonLicenseModel = generateReport(ortResult = ortResult, skipExcluded = true)
 
             jsonLicenseModel shouldBe getAssetAsString("gitlab-license-model-test-skip-excluded-expected-output.json")
         }
@@ -57,7 +57,7 @@ class GitLabLicenseModelReporterFunTest : WordSpec({
         "create the expected JSON license model containing all packages referenced by any project " {
             val ortResult = createOrtResult()
 
-            val jsonLicenseModel = generateReport(ortResult = ortResult, skipExcluded = false) + "\n"
+            val jsonLicenseModel = generateReport(ortResult = ortResult, skipExcluded = false)
 
             jsonLicenseModel shouldBe getAssetAsString("gitlab-license-model-test-expected-output.json")
         }
@@ -67,7 +67,7 @@ class GitLabLicenseModelReporterFunTest : WordSpec({
 private fun TestConfiguration.generateReport(ortResult: OrtResult, skipExcluded: Boolean): String =
     GitLabLicenseModelReporter().generateReport(
         input = ReporterInput(ortResult = ortResult),
-        outputDir = createTestTempDir(),
+        outputDir = tempdir(),
         options = mapOf(GitLabLicenseModelReporter.OPTION_SKIP_EXCLUDED to skipExcluded.toString())
     ).single().readText().normalizeLineBreaks()
 
@@ -92,10 +92,10 @@ private fun createOrtResult(): OrtResult {
                     Project.EMPTY.copy(
                         id = Identifier("Gradle:some-group:some-gradle-project:0.0.1"),
                         definitionFilePath = "some/path/build.gradle",
-                        scopeDependencies = sortedSetOf(
+                        scopeDependencies = setOf(
                             Scope(
                                 name = "compile",
-                                dependencies = sortedSetOf(
+                                dependencies = setOf(
                                     PackageReference(
                                         id = Identifier("Maven:some-group:first-package:0.0.1")
                                     )
@@ -103,7 +103,7 @@ private fun createOrtResult(): OrtResult {
                             ),
                             Scope(
                                 name = "test",
-                                dependencies = sortedSetOf(
+                                dependencies = setOf(
                                     PackageReference(
                                         id = Identifier("Maven:some-group:excluded-package:0.0.4")
                                     )
@@ -113,10 +113,10 @@ private fun createOrtResult(): OrtResult {
                     ),
                     Project.EMPTY.copy(
                         id = Identifier("PIP::some-pip-project:0.0.2"),
-                        scopeDependencies = sortedSetOf(
+                        scopeDependencies = setOf(
                             Scope(
                                 name = "install",
-                                dependencies = sortedSetOf(
+                                dependencies = setOf(
                                     PackageReference(
                                         id = Identifier("PIP::second-package:0.0.2")
                                     )

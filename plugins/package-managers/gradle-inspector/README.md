@@ -9,7 +9,9 @@ address [several][] [shortcomings][] of the "legacy" [Gradle] analyzer, but in o
 As the [GradleInspector] is disabled by default, it needs to be enabled explicitly (along with any other package
 managers that should be enabled):
 
-    ort analyze -P ort.analyzer.enabledPackageManagers=GradleInspector[,...]
+```shell
+ort analyze -P ort.analyzer.enabledPackageManagers=GradleInspector[,...]
+```
 
 It is recommended to *not* also enable the "legacy" [Gradle] analyzer at the same time, as both analyzers would find the
 same definition files.
@@ -34,7 +36,7 @@ Also, the `isModified` check which compares with artifacts of the same name in M
 
 Due to this setup of the [GradleInspector], the [OrtModelBuilder] can actually be debugged. To do so, create a run
 configuration in IntelliJ IDEA that runs `ort analyze` and sets the *VM options* to `-Dorg.gradle.debug=true`. Also,
-create another *Remote JVm Debug* run configuration with default settings. Now, when debugging the first run
+create another *Remote JVM Debug* run configuration with default settings. Now, when debugging the first run
 configuration, it will block execution of the Gradle plugin until the remote debugger is attached by debugging the
 second run configuration, and any breakpoints in the [OrtModelBuilder] will be hit.
 

@@ -22,6 +22,7 @@ package org.ossreviewtoolkit.model.config
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.TestConfiguration
 import io.kotest.core.spec.style.WordSpec
+import io.kotest.engine.spec.tempfile
 import io.kotest.extensions.system.withEnvironment
 import io.kotest.matchers.collections.containExactly
 import io.kotest.matchers.collections.containExactlyInAnyOrder
@@ -40,7 +41,6 @@ import java.lang.IllegalArgumentException
 import org.ossreviewtoolkit.model.Severity
 import org.ossreviewtoolkit.model.SourceCodeOrigin
 import org.ossreviewtoolkit.utils.common.EnvironmentVariableFilter
-import org.ossreviewtoolkit.utils.test.createTestTempFile
 import org.ossreviewtoolkit.utils.test.shouldNotBeNull
 
 class OrtConfigurationTest : WordSpec({
@@ -92,7 +92,7 @@ class OrtConfigurationTest : WordSpec({
                         "clientPassword" to "clientPassword",
                         "token" to "token"
                     )
-                ),
+                )
             )
 
             ortConfig.severeIssueThreshold shouldBe Severity.ERROR
@@ -200,10 +200,35 @@ class OrtConfigurationTest : WordSpec({
                     "LicenseRef-scancode-generic-cla" to "NOASSERTION"
                 )
 
+                fileListStorage shouldNotBeNull {
+                    fileStorage shouldNotBeNull {
+                        httpFileStorage should beNull()
+                        localFileStorage shouldNotBeNull {
+                            directory shouldBe File("~/.ort/scanner/file-lists")
+                        }
+                    }
+
+                    postgresStorage shouldNotBeNull {
+                        with(connection) {
+                            url shouldBe "jdbc:postgresql://your-postgresql-server:5444/your-database"
+                            schema shouldBe "public"
+                            username shouldBe "username"
+                            password shouldBe "password"
+                            sslmode shouldBe "required"
+                            sslcert shouldBe "/defaultdir/postgresql.crt"
+                            sslkey shouldBe "/defaultdir/postgresql.pk8"
+                            sslrootcert shouldBe "/defaultdir/root.crt"
+                        }
+
+                        type shouldBe StorageType.PROVENANCE_BASED
+                    }
+                }
+
                 options shouldNotBeNull {
                     get("ScanCode") shouldNotBeNull {
                         this shouldContainExactly mapOf(
                             "commandLine" to "--copyright --license --info --strip-root --timeout 300",
+                            "commandLineNonConfig" to "--processes 4",
                             "parseLicenseExpressions" to "true",
                             "minVersion" to "3.2.1-rc2",
                             "maxVersion" to "32.0.0"
@@ -512,6 +537,6 @@ class OrtConfigurationTest : WordSpec({
  * Create a test configuration with the [data] specified.
  */
 private fun TestConfiguration.createTestConfig(data: String): File =
-    createTestTempFile(suffix = ".yml").apply {
+    tempfile(suffix = ".yml").apply {
         writeText(data)
     }

@@ -19,7 +19,6 @@
 
 package org.ossreviewtoolkit.advisor.advisors
 
-import java.io.IOException
 import java.net.URI
 import java.time.Instant
 
@@ -28,20 +27,22 @@ import org.apache.logging.log4j.kotlin.Logging
 import org.ossreviewtoolkit.advisor.AbstractAdviceProviderFactory
 import org.ossreviewtoolkit.advisor.AdviceProvider
 import org.ossreviewtoolkit.clients.ossindex.OssIndexService
+import org.ossreviewtoolkit.clients.ossindex.OssIndexService.ComponentReport
+import org.ossreviewtoolkit.clients.ossindex.OssIndexService.ComponentReportRequest
 import org.ossreviewtoolkit.model.AdvisorCapability
 import org.ossreviewtoolkit.model.AdvisorDetails
 import org.ossreviewtoolkit.model.AdvisorResult
 import org.ossreviewtoolkit.model.AdvisorSummary
+import org.ossreviewtoolkit.model.Issue
 import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.Vulnerability
 import org.ossreviewtoolkit.model.VulnerabilityReference
 import org.ossreviewtoolkit.model.config.AdvisorConfiguration
 import org.ossreviewtoolkit.model.config.OssIndexConfiguration
 import org.ossreviewtoolkit.model.utils.toPurl
+import org.ossreviewtoolkit.utils.common.collectMessages
 import org.ossreviewtoolkit.utils.common.enumSetOf
 import org.ossreviewtoolkit.utils.ort.OkHttpClientHelper
-
-import retrofit2.HttpException
 
 /**
  * The number of packages to request from Sonatype OSS Index in one request.
@@ -63,48 +64,58 @@ class OssIndex(name: String, config: OssIndexConfiguration) : AdviceProvider(nam
 
     private val service by lazy {
         OssIndexService.create(
-            url = config.serverUrl,
-            client = OkHttpClientHelper.buildClient()
+            config.serverUrl,
+            config.username,
+            config.password,
+            OkHttpClientHelper.buildClient()
         )
     }
 
-    override suspend fun retrievePackageFindings(packages: Set<Package>): Map<Package, List<AdvisorResult>> {
+    private val getComponentReport by lazy {
+        val hasCredentials = config.username != null && config.password != null
+        if (hasCredentials) service::getAuthorizedComponentReport else service::getComponentReport
+    }
+
+    override suspend fun retrievePackageFindings(packages: Set<Package>): Map<Package, AdvisorResult> {
         val startTime = Instant.now()
 
         val purls = packages.mapNotNull { pkg -> pkg.purl.takeUnless { it.isEmpty() } }
+        val chunks = purls.chunked(BULK_REQUEST_SIZE)
 
-        return try {
-            val componentReports = mutableMapOf<String, OssIndexService.ComponentReport>()
+        val componentReports = mutableMapOf<String, ComponentReport>()
+        val issues = mutableListOf<Issue>()
 
-            val chunks = purls.chunked(BULK_REQUEST_SIZE)
-            chunks.forEachIndexed { index, chunkOfPurls ->
-                logger.debug {
-                    "Getting report for ${chunkOfPurls.size} components (chunk ${index + 1} of ${chunks.size})."
-                }
+        chunks.forEachIndexed { index, chunk ->
+            logger.debug { "Getting report for ${chunk.size} components (chunk ${index + 1} of ${chunks.size})." }
 
-                val requestResults = getComponentReport(service, chunkOfPurls).associateBy {
+            runCatching {
+                val results = getComponentReport(ComponentReportRequest(chunk)).associateBy {
                     it.coordinates
                 }
 
-                componentReports += requestResults.filterValues { it.vulnerabilities.isNotEmpty() }
-            }
-
-            val endTime = Instant.now()
-
-            packages.mapNotNullTo(mutableListOf()) { pkg ->
-                componentReports[pkg.id.toPurl()]?.let { report ->
-                    pkg to listOf(
-                        AdvisorResult(
-                            details,
-                            AdvisorSummary(startTime, endTime),
-                            vulnerabilities = report.vulnerabilities.map { it.toVulnerability() }
-                        )
-                    )
+                componentReports += results.filterValues { it.vulnerabilities.isNotEmpty() }
+            }.onFailure {
+                // Create dummy reports for all components in the chunk as the current data model does not allow to
+                // return issues that are not associated to any package.
+                componentReports += chunk.associateWith { purl ->
+                    ComponentReport(purl, reference = "", vulnerabilities = emptyList())
                 }
-            }.toMap()
-        } catch (e: IOException) {
-            createFailedResults(startTime, packages, e)
+
+                issues += Issue(source = providerName, message = it.collectMessages())
+            }
         }
+
+        val endTime = Instant.now()
+
+        return packages.mapNotNullTo(mutableListOf()) { pkg ->
+            componentReports[pkg.id.toPurl()]?.let { report ->
+                pkg to AdvisorResult(
+                    details,
+                    AdvisorSummary(startTime, endTime, issues),
+                    vulnerabilities = report.vulnerabilities.map { it.toVulnerability() }
+                )
+            }
+        }.toMap()
     }
 
     /**
@@ -127,18 +138,4 @@ class OssIndex(name: String, config: OssIndexConfiguration) : AdviceProvider(nam
             references = references
         )
     }
-
-    /**
-     * Invoke the [OSS Index service][service] to request detail information for the given [purls]. Catch HTTP
-     * exceptions thrown by the service and re-throw them as [IOException].
-     */
-    private suspend fun getComponentReport(
-        service: OssIndexService,
-        purls: List<String>
-    ): List<OssIndexService.ComponentReport> =
-        try {
-            service.getComponentReport(OssIndexService.ComponentReportRequest(purls))
-        } catch (e: HttpException) {
-            throw IOException(e)
-        }
 }

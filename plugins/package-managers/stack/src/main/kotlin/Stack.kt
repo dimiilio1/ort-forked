@@ -24,7 +24,6 @@ import com.fasterxml.jackson.module.kotlin.readValue
 
 import java.io.File
 import java.io.IOException
-import java.util.SortedSet
 
 import org.apache.logging.log4j.kotlin.Logging
 
@@ -48,7 +47,8 @@ import org.ossreviewtoolkit.model.utils.toPurl
 import org.ossreviewtoolkit.utils.common.CommandLineTool
 import org.ossreviewtoolkit.utils.common.ProcessCapture
 import org.ossreviewtoolkit.utils.common.safeDeleteRecursively
-import org.ossreviewtoolkit.utils.ort.OkHttpClientHelper
+import org.ossreviewtoolkit.utils.ort.downloadText
+import org.ossreviewtoolkit.utils.ort.okHttpClient
 
 import org.semver4j.RangesList
 import org.semver4j.RangesListFactory
@@ -190,8 +190,8 @@ class Stack(
             if (pkg != null && pkg.id.name != "ghc") dependencyPackageMap[dependency] = pkg
         }
 
-        fun List<String>.toPackageReferences(): SortedSet<PackageReference> =
-            mapNotNullTo(sortedSetOf()) { name ->
+        fun List<String>.toPackageReferences(): Set<PackageReference> =
+            mapNotNullTo(mutableSetOf()) { name ->
                 // TODO: Stack identifies dependencies only by name. Find out how dependencies with the same name but in
                 //       different namespaces should be handled.
                 dependencyPackageMap.entries.find { (dependency, _) -> dependency.name == name }?.let { entry ->
@@ -205,7 +205,7 @@ class Stack(
         fun List<Dependency>.getProjectDependencies(): List<String> =
             single { it.location?.type == PROJECT_PACKAGE_TYPE }.dependencies
 
-        val scopes = sortedSetOf(
+        val scopes = setOf(
             Scope(EXTERNAL_SCOPE_NAME, externalDependencyList.getProjectDependencies().toPackageReferences()),
             Scope(TEST_SCOPE_NAME, testDependencyList.getProjectDependencies().toPackageReferences()),
             Scope(BENCH_SCOPE_NAME, benchDependencyList.getProjectDependencies().toPackageReferences())
@@ -231,7 +231,7 @@ class Stack(
     private fun downloadCabalFile(pkgId: Identifier): String? {
         val url = "${getPackageUrl(pkgId.name, pkgId.version)}/src/${pkgId.name}.cabal"
 
-        return OkHttpClientHelper.downloadText(url).onFailure {
+        return okHttpClient.downloadText(url).onFailure {
             logger.warn { "Unable to retrieve Hackage metadata for package '${pkgId.toCoordinates()}'." }
         }.getOrNull()
     }

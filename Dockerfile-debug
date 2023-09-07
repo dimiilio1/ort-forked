@@ -1,0 +1,3 @@
+FROM main-registry.gitlab.in.here.com/oss/oss-review-toolkit/ort-gitlab-ci/ort-here:latest
+
+COPY ./cli/build/ /home/ort/

@@ -47,7 +47,7 @@ import org.ossreviewtoolkit.utils.spdx.toSpdxId
 
 import org.semver4j.Semver
 
-const val MAX_SUPPORTED_OUTPUT_FORMAT_MAJOR_VERSION = 2
+const val MAX_SUPPORTED_OUTPUT_FORMAT_MAJOR_VERSION = 3
 
 private val LICENSE_REF_PREFIX_SCAN_CODE = "${SpdxConstants.LICENSE_REF_PREFIX}${ScanCode.SCANNER_NAME.lowercase()}-"
 private val TIMESTAMP_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HHmmss.n").withZone(ZoneId.of("UTC"))
@@ -65,10 +65,20 @@ fun parseResult(result: JsonElement): ScanCodeResult {
     // Select the correct set of (de-)serializers bundled in a module for parsing the respective format version.
     val module = when (outputFormatVersion?.major) {
         null, 1 -> SerializersModule {
+            polymorphicDefaultDeserializer(FileEntry::class) { FileEntry.Version1.serializer() }
+            polymorphicDefaultDeserializer(LicenseEntry::class) { LicenseEntry.Version1.serializer() }
             polymorphicDefaultDeserializer(CopyrightEntry::class) { CopyrightEntry.Version1.serializer() }
         }
 
+        2 -> SerializersModule {
+            polymorphicDefaultDeserializer(FileEntry::class) { FileEntry.Version1.serializer() }
+            polymorphicDefaultDeserializer(LicenseEntry::class) { LicenseEntry.Version1.serializer() }
+            polymorphicDefaultDeserializer(CopyrightEntry::class) { CopyrightEntry.Version2.serializer() }
+        }
+
         else -> SerializersModule {
+            polymorphicDefaultDeserializer(FileEntry::class) { FileEntry.Version3.serializer() }
+            polymorphicDefaultDeserializer(LicenseEntry::class) { LicenseEntry.Version3.serializer() }
             polymorphicDefaultDeserializer(CopyrightEntry::class) { CopyrightEntry.Version2.serializer() }
         }
     }
@@ -89,7 +99,7 @@ private data class LicenseMatch(
     val score: Float
 )
 
-private fun LicenseEntry.getSpdxId(): String {
+private fun getSpdxId(spdxLicenseKey: String?, key: String): String {
     // There is a bug in ScanCode 3.0.2 that returns an empty string instead of null for licenses unknown to SPDX.
     val spdxId = spdxLicenseKey.orEmpty().toSpdxId(allowPlusSuffix = true)
 
@@ -99,7 +109,7 @@ private fun LicenseEntry.getSpdxId(): String {
     return "$LICENSE_REF_PREFIX_SCAN_CODE${key.toSpdxId(allowPlusSuffix = true)}"
 }
 
-fun ScanCodeResult.toScanSummary(parseExpressions: Boolean = true): ScanSummary {
+fun ScanCodeResult.toScanSummary(): ScanSummary {
     val licenseFindings = mutableSetOf<LicenseFinding>()
     val copyrightFindings = mutableSetOf<CopyrightFinding>()
     val issues = mutableListOf<Issue>()
@@ -111,7 +121,7 @@ fun ScanCodeResult.toScanSummary(parseExpressions: Boolean = true): ScanSummary 
         issues += ScanCode.createAndLogIssue(
             source = ScanCode.SCANNER_NAME,
             message = "The output format version $outputFormatVersion exceeds the supported major version " +
-                    "$MAX_SUPPORTED_OUTPUT_FORMAT_MAJOR_VERSION. Results may be incomplete or incorrect.",
+                "$MAX_SUPPORTED_OUTPUT_FORMAT_MAJOR_VERSION. Results may be incomplete or incorrect.",
             severity = Severity.WARNING
         )
     }
@@ -119,31 +129,26 @@ fun ScanCodeResult.toScanSummary(parseExpressions: Boolean = true): ScanSummary 
     val filesOfTypeFile = files.filter { it.type == "file" }
 
     // Build a map of all ScanCode license keys in the result associated with their corresponding SPDX ID.
-    val scanCodeKeyToSpdxIdMappings = mutableMapOf<String, String>()
-
-    filesOfTypeFile.forEach { file ->
-        file.licenses.forEach { license ->
-            scanCodeKeyToSpdxIdMappings[license.key] = license.getSpdxId()
-        }
-    }
+    val scanCodeKeyToSpdxIdMappings = licenseReferences?.associate { it.key to it.spdxLicenseKey }
+        ?: files.flatMap { file ->
+            file.licenses.filterIsInstance<LicenseEntry.Version1>().map { license ->
+                license.key to getSpdxId(license.spdxLicenseKey, license.key)
+            }
+        }.toMap()
 
     filesOfTypeFile.forEach { file ->
         // ScanCode creates separate license entries for each license in an expression. Deduplicate these by grouping by
-        // the same expression if expression parsing is enabled.
-        val licenses = file.licenses.takeUnless { parseExpressions }
-            ?: file.licenses.groupBy {
-                LicenseMatch(it.matchedRule.licenseExpression, it.startLine, it.endLine, it.score)
-            }.map {
-                // Arbitrarily take the first of the duplicate license entries.
-                it.value.first()
-            }
+        // the same expression.
+        val licenses = file.licenses.groupBy {
+            LicenseMatch(it.licenseExpression, it.startLine, it.endLine, it.score)
+        }.map {
+            // Arbitrarily take the first of the duplicate license entries.
+            it.value.first()
+        }
 
         licenses.mapTo(licenseFindings) { license ->
             // ScanCode uses its own license keys as identifiers in license expressions.
-            val scanCodeLicenseExpression = license.key.takeUnless { parseExpressions }
-                ?: license.matchedRule.licenseExpression
-
-            val spdxLicenseExpression = scanCodeLicenseExpression.mapLicense(scanCodeKeyToSpdxIdMappings)
+            val spdxLicenseExpression = license.licenseExpression.mapLicense(scanCodeKeyToSpdxIdMappings)
 
             LicenseFinding(
                 license = spdxLicenseExpression,

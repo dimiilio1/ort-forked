@@ -30,7 +30,6 @@ import java.sql.SQLException
 import org.apache.logging.log4j.kotlin.Logging
 
 import org.jetbrains.exposed.dao.id.IntIdTable
-import org.jetbrains.exposed.sql.Column
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.SchemaUtils
 import org.jetbrains.exposed.sql.SchemaUtils.withDataBaseLock
@@ -89,7 +88,7 @@ class UploadResultToPostgresCommand : OrtCommand(
                     val config = configs.first()
                     println(
                         "Multiple PostgreSQL storages are configured, using the first one which points to schema " +
-                                "${config.connection.schema} at ${config.connection.url}."
+                            "${config.connection.schema} at ${config.connection.url}."
                     )
                 }
 
@@ -145,5 +144,5 @@ class UploadResultToPostgresCommand : OrtCommand(
 }
 
 private class OrtResults(tableName: String, columnName: String) : IntIdTable(tableName) {
-    val result: Column<OrtResult> = jsonb(columnName, OrtResult::class)
+    val result = jsonb<OrtResult>(columnName)
 }

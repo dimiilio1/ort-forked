@@ -32,17 +32,6 @@ interface GitParameters : ValueSourceParameters {
     val workingDir: DirectoryProperty
 }
 
-abstract class GitVersionValueSource : ValueSource<String, GitParameters> {
-    override fun obtain(): String = Git.open(parameters.workingDir.get().asFile).use { git ->
-        // Make the output exactly match "git describe --abbrev=10 --always --tags --dirty --match=[0-9]*", which is
-        // what is used in "scripts/docker_build.sh", to make the hash match what JitPack uses.
-        val description = git.describe().setAbbrev(10).setAlways(true).setTags(true).setMatch("[0-9]*").call()
-
-        // Simulate the "--dirty" option with JGit.
-        description.takeUnless { git.status().call().hasUncommittedChanges() } ?: "$description-dirty"
-    }
-}
-
 abstract class GitFilesValueSource : ValueSource<List<File>, GitParameters> {
     override fun obtain(): List<File> {
         val filePaths = mutableListOf<File>()

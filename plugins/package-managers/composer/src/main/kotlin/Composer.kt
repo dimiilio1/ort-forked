@@ -156,7 +156,10 @@ class Composer(
     }
 
     private fun parseScope(
-        scopeName: String, manifest: JsonNode, lockFile: JsonNode, packages: Map<String, Package>,
+        scopeName: String,
+        manifest: JsonNode,
+        lockFile: JsonNode,
+        packages: Map<String, Package>,
         virtualPackages: Set<String>
     ): Scope {
         val requiredPackages = manifest[scopeName].fieldNamesOrEmpty().asSequence()
@@ -182,7 +185,7 @@ class Composer(
             if (packageName in dependencyBranch) {
                 logger.debug {
                     "Not adding circular dependency '$packageName' to the tree, it is already on this branch of the " +
-                            "dependency tree: ${dependencyBranch.joinToString(" -> ")}."
+                        "dependency tree: ${dependencyBranch.joinToString(" -> ")}."
                 }
 
                 return@forEach

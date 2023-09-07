@@ -232,15 +232,12 @@ class FossId internal constructor(
     /**
      * Create a [ScanSummary] containing a single [issue], started at [startTime] and finished at [endTime].
      */
-    private fun createSingleIssueSummary(
-        startTime: Instant,
-        endTime: Instant = Instant.now(),
-        issue: Issue
-    ) = ScanSummary.EMPTY.copy(
-        startTime = startTime,
-        endTime = endTime,
-        issues = listOf(issue)
-    )
+    private fun createSingleIssueSummary(startTime: Instant, endTime: Instant = Instant.now(), issue: Issue) =
+        ScanSummary.EMPTY.copy(
+            startTime = startTime,
+            endTime = endTime,
+            issues = listOf(issue)
+        )
 
     override fun scanPackage(pkg: Package, context: ScanContext): ScanResult {
         val (result, duration) = measureTimedValue {
@@ -254,7 +251,7 @@ class FossId internal constructor(
                 val issue = createAndLogIssue(
                     source = name,
                     message = "Package '${pkg.id.toCoordinates()}' uses VCS type '${pkg.vcsProcessed.type}', but " +
-                            "only ${VcsType.GIT} is supported.",
+                        "only ${VcsType.GIT} is supported.",
                     severity = Severity.WARNING
                 )
 
@@ -275,7 +272,7 @@ class FossId internal constructor(
                 val issue = createAndLogIssue(
                     source = name,
                     message = "Ignoring package '${pkg.id.toCoordinates()}' from '${pkg.vcsProcessed.url}' as it has " +
-                            "path '${pkg.vcsProcessed.path}' set and scanning cannot be limited to paths.",
+                        "path '${pkg.vcsProcessed.path}' set and scanning cannot be limited to paths.",
                     severity = Severity.WARNING
                 )
                 val provenance = RepositoryProvenance(pkg.vcsProcessed, pkg.vcsProcessed.revision)
@@ -319,7 +316,7 @@ class FossId internal constructor(
                         val issue = createAndLogIssue(
                             source = name,
                             message = "Package '${pkg.id.toCoordinates()}' has been scanned in asynchronous mode. " +
-                                    "Scan results need to be inspected on the server instance.",
+                                "Scan results need to be inspected on the server instance.",
                             severity = Severity.HINT
                         )
                         val summary = createSingleIssueSummary(startTime, issue = issue)
@@ -380,7 +377,7 @@ class FossId internal constructor(
                 ScanStatus.QUEUED -> {
                     logger.warn {
                         "Found a previous scan which is still running. Will ignore the 'waitForResult' option and " +
-                                "wait..."
+                            "wait..."
                     }
                     waitScanComplete(scanCode)
                     true

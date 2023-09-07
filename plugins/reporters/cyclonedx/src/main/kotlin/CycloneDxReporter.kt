@@ -21,6 +21,7 @@ package org.ossreviewtoolkit.plugins.reporters.cyclonedx
 
 import java.io.File
 import java.util.Base64
+import java.util.Date
 import java.util.SortedSet
 import java.util.UUID
 
@@ -34,6 +35,8 @@ import org.cyclonedx.model.ExternalReference
 import org.cyclonedx.model.Hash
 import org.cyclonedx.model.License
 import org.cyclonedx.model.LicenseChoice
+import org.cyclonedx.model.Metadata
+import org.cyclonedx.model.Tool
 
 import org.ossreviewtoolkit.model.FileFormat
 import org.ossreviewtoolkit.model.LicenseSource
@@ -44,6 +47,8 @@ import org.ossreviewtoolkit.model.utils.toPurl
 import org.ossreviewtoolkit.reporter.Reporter
 import org.ossreviewtoolkit.reporter.ReporterInput
 import org.ossreviewtoolkit.utils.common.isFalse
+import org.ossreviewtoolkit.utils.ort.Environment
+import org.ossreviewtoolkit.utils.ort.ORT_FULL_NAME
 import org.ossreviewtoolkit.utils.ort.ORT_NAME
 import org.ossreviewtoolkit.utils.spdx.SpdxLicense
 
@@ -52,6 +57,7 @@ import org.ossreviewtoolkit.utils.spdx.SpdxLicense
  * each [Project] contained in the ORT result a separate SBOM is created.
  *
  * This reporter supports the following options:
+ * - *data.license*: The license for the data contained in the report. Deafults to [DEFAULT_DATA_LICENSE].
  * - *schema.version*: The CycloneDX schema version to use. Defaults to [DEFAULT_SCHEMA_VERSION].
  * - *single.bom*: If true (the default), a single SBOM for all projects is created; if set to false, separate SBOMs are
  *                 created for each project.
@@ -61,10 +67,12 @@ import org.ossreviewtoolkit.utils.spdx.SpdxLicense
 class CycloneDxReporter : Reporter {
     companion object {
         val DEFAULT_SCHEMA_VERSION = CycloneDxSchema.Version.VERSION_14
+        val DEFAULT_DATA_LICENSE = SpdxLicense.CC0_1_0
 
         const val REPORT_BASE_FILENAME = "bom.cyclonedx"
 
         const val OPTION_SCHEMA_VERSION = "schema.version"
+        const val OPTION_DATA_LICENSE = "data.license"
         const val OPTION_SINGLE_BOM = "single.bom"
         const val OPTION_OUTPUT_FILE_FORMATS = "output.file.formats"
     }
@@ -127,11 +135,7 @@ class CycloneDxReporter : Reporter {
             }
         }
 
-    override fun generateReport(
-        input: ReporterInput,
-        outputDir: File,
-        options: Map<String, String>
-    ): List<File> {
+    override fun generateReport(input: ReporterInput, outputDir: File, options: Map<String, String>): List<File> {
         val outputFiles = mutableListOf<File>()
 
         val projects = input.ortResult.getProjects(omitExcluded = true).sortedBy { it.id }
@@ -141,6 +145,7 @@ class CycloneDxReporter : Reporter {
             it.versionString == options[OPTION_SCHEMA_VERSION]
         } ?: DEFAULT_SCHEMA_VERSION
 
+        val dataLicense = options[OPTION_DATA_LICENSE] ?: DEFAULT_DATA_LICENSE.id
         val createSingleBom = !options[OPTION_SINGLE_BOM].isFalse()
 
         val outputFileFormats = options[OPTION_OUTPUT_FILE_FORMATS]
@@ -148,9 +153,21 @@ class CycloneDxReporter : Reporter {
             ?.mapTo(mutableSetOf()) { FileFormat.valueOf(it.uppercase()) }
             ?: setOf(FileFormat.XML)
 
+        val metadata = Metadata().apply {
+            timestamp = Date()
+            tools = listOf(
+                Tool().apply {
+                    name = ORT_FULL_NAME
+                    version = Environment.ORT_VERSION
+                }
+            )
+            licenseChoice = LicenseChoice().apply { expression = dataLicense }
+        }
+
         if (createSingleBom) {
             val bom = Bom().apply {
                 serialNumber = "urn:uuid:${UUID.randomUUID()}"
+                this.metadata = metadata
                 components = mutableListOf()
             }
 
@@ -187,6 +204,7 @@ class CycloneDxReporter : Reporter {
             projects.forEach { project ->
                 val bom = Bom().apply {
                     serialNumber = "urn:uuid:${UUID.randomUUID()}"
+                    this.metadata = metadata
                     components = mutableListOf()
                 }
 
@@ -242,8 +260,8 @@ class CycloneDxReporter : Reporter {
 
         // Get all licenses, but note down their origins inside an extensible type.
         val licenseObjects = concludedLicenseNames.mapNamesToLicenses("concluded license", input) +
-                declaredLicenseNames.mapNamesToLicenses("declared license", input) +
-                detectedLicenseNames.mapNamesToLicenses("detected license", input)
+            declaredLicenseNames.mapNamesToLicenses("declared license", input) +
+            detectedLicenseNames.mapNamesToLicenses("detected license", input)
 
         val binaryHash = mapHash(pkg.binaryArtifact.hash)
         val sourceHash = mapHash(pkg.sourceArtifact.hash)

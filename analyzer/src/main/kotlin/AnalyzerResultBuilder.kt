@@ -56,54 +56,54 @@ class AnalyzerResultBuilder {
             .resolvePackageManagerDependencies()
     }
 
-    fun addResult(projectAnalyzerResult: ProjectAnalyzerResult) = apply {
-        // TODO: It might be, e.g. in the case of PIP "requirements.txt" projects, that different projects with
-        //       the same ID exist. We need to decide how to handle that case.
-        val existingProject = projects.find { it.id == projectAnalyzerResult.project.id }
+    fun addResult(projectAnalyzerResult: ProjectAnalyzerResult) =
+        apply {
+            // TODO: It might be, e.g. in the case of PIP "requirements.txt" projects, that different projects with
+            //       the same ID exist. We need to decide how to handle that case.
+            val existingProject = projects.find { it.id == projectAnalyzerResult.project.id }
 
-        if (existingProject != null) {
-            val existingDefinitionFileUrl = existingProject.let {
-                "${it.vcsProcessed.url}/${it.definitionFilePath}"
-            }
-            val incomingDefinitionFileUrl = projectAnalyzerResult.project.let {
-                "${it.vcsProcessed.url}/${it.definitionFilePath}"
-            }
+            if (existingProject != null) {
+                val existingDefinitionFileUrl = existingProject.let {
+                    "${it.vcsProcessed.url}/${it.definitionFilePath}"
+                }
+                val incomingDefinitionFileUrl = projectAnalyzerResult.project.let {
+                    "${it.vcsProcessed.url}/${it.definitionFilePath}"
+                }
 
-            val issue = createAndLogIssue(
-                source = "analyzer",
-                message = "Multiple projects with the same id '${existingProject.id.toCoordinates()}' " +
+                val issue = createAndLogIssue(
+                    source = "analyzer",
+                    message = "Multiple projects with the same id '${existingProject.id.toCoordinates()}' " +
                         "found. Not adding the project defined in '$incomingDefinitionFileUrl' to the " +
                         "analyzer results as it duplicates the project defined in " +
                         "'$existingDefinitionFileUrl'."
-            )
+                )
 
-            val projectIssues = issues.getOrDefault(existingProject.id, emptyList())
-            issues[existingProject.id] = projectIssues + issue
-        } else {
-            projects += projectAnalyzerResult.project
-            addPackages(projectAnalyzerResult.packages)
+                val projectIssues = issues.getOrDefault(existingProject.id, emptyList())
+                issues[existingProject.id] = projectIssues + issue
+            } else {
+                projects += projectAnalyzerResult.project
+                addPackages(projectAnalyzerResult.packages)
 
-            if (projectAnalyzerResult.issues.isNotEmpty()) {
-                issues[projectAnalyzerResult.project.id] = projectAnalyzerResult.issues
+                if (projectAnalyzerResult.issues.isNotEmpty()) {
+                    issues[projectAnalyzerResult.project.id] = projectAnalyzerResult.issues
+                }
             }
         }
-    }
 
     /**
      * Add the given [packageSet] to this builder. This function can be used for packages that have been obtained
      * independently of a [ProjectAnalyzerResult].
      */
-    fun addPackages(packageSet: Set<Package>) = apply {
-        packages += packageSet
-    }
+    fun addPackages(packageSet: Set<Package>) = apply { packages += packageSet }
 
     /**
      * Add a [DependencyGraph][graph] with all dependencies detected by the [PackageManager] with the given
      * [name][packageManagerName] to the result produced by this builder.
      */
-    fun addDependencyGraph(packageManagerName: String, graph: DependencyGraph) = apply {
-        dependencyGraphs[packageManagerName] = graph
-    }
+    fun addDependencyGraph(packageManagerName: String, graph: DependencyGraph) =
+        apply {
+            dependencyGraphs[packageManagerName] = graph
+        }
 }
 
 private fun AnalyzerResult.resolvePackageManagerDependencies(): AnalyzerResult {

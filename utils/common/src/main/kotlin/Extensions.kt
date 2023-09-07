@@ -75,9 +75,10 @@ fun Collection<Int>.collapseToRanges(): List<Pair<Int, Int>> {
 /**
  * Return a string of common-separated ranges as denoted by the list of pairs.
  */
-fun Collection<Pair<Int, Int>>.prettyPrintRanges(): String = joinToString { (startValue, endValue) ->
-    if (startValue == endValue) startValue.toString() else "$startValue-$endValue"
-}
+fun Collection<Pair<Int, Int>>.prettyPrintRanges(): String =
+    joinToString { (startValue, endValue) ->
+        if (startValue == endValue) startValue.toString() else "$startValue-$endValue"
+    }
 
 /**
  * Format this [Double] as a string with the provided number of [decimalPlaces].

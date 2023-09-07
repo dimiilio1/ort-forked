@@ -82,11 +82,7 @@ class StaticHtmlReporter : Reporter {
     private val css = javaClass.getResource("/static-html-reporter.css").readText()
     private val licensesSha1 = mutableMapOf<String, String>()
 
-    override fun generateReport(
-        input: ReporterInput,
-        outputDir: File,
-        options: Map<String, String>
-    ): List<File> {
+    override fun generateReport(input: ReporterInput, outputDir: File, options: Map<String, String>): List<File> {
         val reportTableModel = ReportTableModelMapper.map(
             input.ortResult,
             input.licenseInfoResolver,
@@ -730,9 +726,9 @@ private fun ResolvedLicenseLocation.permalink(id: Identifier): String? {
                 return with(id) {
                     val group = namespace.replace('.', '/')
                     "https://repository.sonatype.org/" +
-                            "service/local/repositories/central-proxy/" +
-                            "archive/$group/$name/$version/$name-$version-sources.jar/" +
-                            "!/${location.path}"
+                        "service/local/repositories/central-proxy/" +
+                        "archive/$group/$name/$version/$name-$version-sources.jar/" +
+                        "!/${location.path}"
                 }
             }
         }

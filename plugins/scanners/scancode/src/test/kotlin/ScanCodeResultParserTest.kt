@@ -108,19 +108,19 @@ class ScanCodeResultParserTest : FreeSpec({
 
                     summary should containCopyrightsExactly(
                         "Copyright (c) 2014 Jonathan Ong" to
-                                listOf(TextLocation("index.js", 3)),
+                            listOf(TextLocation("index.js", 3)),
                         "Copyright (c) 2014 Jonathan Ong <me@jongleberry.com>" to
-                                listOf(TextLocation("LICENSE", 3)),
+                            listOf(TextLocation("LICENSE", 3)),
                         "Copyright (c) 2015 Douglas Christopher Wilson" to
-                                listOf(TextLocation("index.js", 4)),
+                            listOf(TextLocation("index.js", 4)),
                         "Copyright (c) 2015 Douglas Christopher Wilson <doug@somethingdoug.com>" to
-                                listOf(TextLocation("LICENSE", 4))
+                            listOf(TextLocation("LICENSE", 4))
                     )
                 }
             }
         }
 
-        "for output format 3.0.0 should" - {
+        "for output format 4.0.0 should" - {
             "create an issue about an unsupported version" {
                 val headers = """
                     {
@@ -142,7 +142,7 @@ class ScanCodeResultParserTest : FreeSpec({
                           },
                           "start_timestamp": "2022-12-12T065635.691832",
                           "end_timestamp": "2022-12-12T065637.770792",
-                          "output_format_version": "3.0.0"
+                          "output_format_version": "4.0.0"
                         }
                       ],
                       "files": [
@@ -155,8 +155,8 @@ class ScanCodeResultParserTest : FreeSpec({
                 summary.issues.map { it.copy(timestamp = Instant.EPOCH) } shouldHaveSingleElement Issue(
                     timestamp = Instant.EPOCH,
                     source = ScanCode.SCANNER_NAME,
-                    message = "The output format version 3.0.0 exceeds the supported major version " +
-                            "$MAX_SUPPORTED_OUTPUT_FORMAT_MAJOR_VERSION. Results may be incomplete or incorrect.",
+                    message = "The output format version 4.0.0 exceeds the supported major version " +
+                        "$MAX_SUPPORTED_OUTPUT_FORMAT_MAJOR_VERSION. Results may be incomplete or incorrect.",
                     severity = Severity.WARNING
                 )
             }

@@ -90,15 +90,15 @@ class ScannerTest : WordSpec({
 
             scanner.scan(setOf(pkgWithArtifact), packageContext)
                 .getAllScanResults()[pkgWithArtifact.id] shouldNotBeNull {
-                    this shouldNot beEmpty()
-                    forEach { it.scanner.name shouldBe "package scanner" }
-                }
+                this shouldNot beEmpty()
+                forEach { it.scanner.name shouldBe "package scanner" }
+            }
 
             scanner.scan(setOf(pkgWithArtifact), projectContext)
                 .getAllScanResults()[pkgWithArtifact.id] shouldNotBeNull {
-                    this shouldNot beEmpty()
-                    forEach { it.scanner.name shouldBe "project scanner" }
-                }
+                this shouldNot beEmpty()
+                forEach { it.scanner.name shouldBe "project scanner" }
+            }
         }
 
         "Not scan projects if no scanner wrapper for projects is configured" {
@@ -132,9 +132,9 @@ class ScannerTest : WordSpec({
 
             val scannerWrapper = spyk(FakePackageScannerWrapper()) {
                 every { scanPackage(pkgWithArtifact, any()) } returns
-                        createScanResult(pkgWithArtifact.artifactProvenance(), details)
+                    createScanResult(pkgWithArtifact.artifactProvenance(), details)
                 every { scanPackage(pkgWithVcs, any()) } returns
-                        createScanResult(pkgWithVcs.repositoryProvenance(), details)
+                    createScanResult(pkgWithVcs.repositoryProvenance(), details)
             }
 
             val scanner = createScanner(packageScannerWrappers = listOf(scannerWrapper))
@@ -425,9 +425,9 @@ class ScannerTest : WordSpec({
 
             val nestedProvenanceResolver = spyk(FakeNestedProvenanceResolver()) {
                 every { resolveNestedProvenance(pkgCompletelyScanned.repositoryProvenance()) } returns
-                        nestedProvenanceCompletelyScanned
+                    nestedProvenanceCompletelyScanned
                 every { resolveNestedProvenance(pkgPartlyScanned.repositoryProvenance()) } returns
-                        nestedProvenancePartlyScanned
+                    nestedProvenancePartlyScanned
             }
 
             val reader = spyk(FakePackageBasedStorageReader(scannerWrapper.details)) {
@@ -566,9 +566,9 @@ class ScannerTest : WordSpec({
 
             val nestedProvenanceResolver = spyk(FakeNestedProvenanceResolver()) {
                 every { resolveNestedProvenance(pkgCompletelyScanned.repositoryProvenance()) } returns
-                        nestedProvenanceCompletelyScanned
+                    nestedProvenanceCompletelyScanned
                 every { resolveNestedProvenance(pkgPartlyScanned.repositoryProvenance()) } returns
-                        nestedProvenancePartlyScanned
+                    nestedProvenancePartlyScanned
             }
 
             val reader = spyk(FakeProvenanceBasedStorageReader(scannerWrapper.details)) {
@@ -923,10 +923,8 @@ private class FakeProvenanceBasedStorageWriter : ProvenanceBasedScanStorageWrite
     override fun write(scanResult: ScanResult) = Unit
 }
 
-private fun createContext(
-    labels: Map<String, String> = emptyMap(),
-    type: PackageType = PackageType.PACKAGE
-) = ScanContext(labels, type)
+private fun createContext(labels: Map<String, String> = emptyMap(), type: PackageType = PackageType.PACKAGE) =
+    ScanContext(labels, type)
 
 private fun createScanner(
     provenanceDownloader: ProvenanceDownloader = FakeProvenanceDownloader(),
@@ -936,20 +934,19 @@ private fun createScanner(
     nestedProvenanceResolver: NestedProvenanceResolver = FakeNestedProvenanceResolver(),
     packageScannerWrappers: List<ScannerWrapper> = emptyList(),
     projectScannerWrappers: List<ScannerWrapper> = emptyList()
-) =
-    Scanner(
-        ScannerConfiguration(archive = FileArchiverConfiguration(enabled = false)),
-        DownloaderConfiguration(),
-        provenanceDownloader,
-        storageReaders,
-        storageWriters,
-        packageProvenanceResolver,
-        nestedProvenanceResolver,
-        mapOf(
-            PackageType.PROJECT to projectScannerWrappers,
-            PackageType.PACKAGE to packageScannerWrappers
-        )
+) = Scanner(
+    ScannerConfiguration(archive = FileArchiverConfiguration(enabled = false)),
+    DownloaderConfiguration(),
+    provenanceDownloader,
+    storageReaders,
+    storageWriters,
+    packageProvenanceResolver,
+    nestedProvenanceResolver,
+    mapOf(
+        PackageType.PROJECT to projectScannerWrappers,
+        PackageType.PACKAGE to packageScannerWrappers
     )
+)
 
 private fun Package.Companion.new(type: String = "", group: String = "", name: String = "", version: String = "") =
     EMPTY.copy(id = Identifier(type, group, name, version))
@@ -980,24 +977,22 @@ private fun createScanResult(
     licenseFindings: Set<LicenseFinding> = setOf(
         LicenseFinding("Apache-2.0", TextLocation("${scannerDetails.name}.txt", 1, 2))
     )
-) =
-    ScanResult(
-        provenance,
-        scannerDetails,
-        ScanSummary.EMPTY.copy(licenseFindings = licenseFindings)
-    )
+) = ScanResult(
+    provenance,
+    scannerDetails,
+    ScanSummary.EMPTY.copy(licenseFindings = licenseFindings)
+)
 
 private fun createNestedScanResult(
     provenance: KnownProvenance,
     scannerDetails: ScannerDetails,
     subRepositories: Map<String, RepositoryProvenance> = emptyMap()
-) =
-    NestedProvenanceScanResult(
-        NestedProvenance(root = provenance, subRepositories = subRepositories),
-        scanResults = mapOf(
-            provenance to listOf(createScanResult(provenance, scannerDetails))
-        ) + subRepositories.values.associateWith { listOf(createScanResult(it, scannerDetails)) }
-    )
+) = NestedProvenanceScanResult(
+    NestedProvenance(root = provenance, subRepositories = subRepositories),
+    scanResults = mapOf(
+        provenance to listOf(createScanResult(provenance, scannerDetails))
+    ) + subRepositories.values.associateWith { listOf(createScanResult(it, scannerDetails)) }
+)
 
 private fun createStoredScanResult(provenance: Provenance, scannerDetails: ScannerDetails) =
     ScanResult(
@@ -1014,10 +1009,9 @@ private fun createStoredNestedScanResult(
     provenance: KnownProvenance,
     scannerDetails: ScannerDetails,
     subRepositories: Map<String, RepositoryProvenance> = emptyMap()
-) =
-    NestedProvenanceScanResult(
-        NestedProvenance(root = provenance, subRepositories = subRepositories),
-        scanResults = mapOf(
-            provenance to listOf(createStoredScanResult(provenance, scannerDetails))
-        ) + subRepositories.values.associateWith { listOf(createStoredScanResult(it, scannerDetails)) }
-    )
+) = NestedProvenanceScanResult(
+    NestedProvenance(root = provenance, subRepositories = subRepositories),
+    scanResults = mapOf(
+        provenance to listOf(createStoredScanResult(provenance, scannerDetails))
+    ) + subRepositories.values.associateWith { listOf(createStoredScanResult(it, scannerDetails)) }
+)

@@ -37,7 +37,6 @@ import org.ossreviewtoolkit.scanner.ScanResultsStorage
 import org.ossreviewtoolkit.scanner.ScannerCriteria
 import org.ossreviewtoolkit.utils.common.Os
 import org.ossreviewtoolkit.utils.common.ProcessCapture
-import org.ossreviewtoolkit.utils.common.isTrue
 import org.ossreviewtoolkit.utils.common.safeDeleteRecursively
 import org.ossreviewtoolkit.utils.common.splitOnWhitespace
 import org.ossreviewtoolkit.utils.common.withoutPrefix
@@ -45,6 +44,7 @@ import org.ossreviewtoolkit.utils.ort.createOrtTempDir
 
 import org.semver4j.RangesList
 import org.semver4j.RangesListFactory
+import org.semver4j.Semver
 
 /**
  * A wrapper for [ScanCode](https://github.com/nexB/scancode-toolkit).
@@ -56,9 +56,6 @@ import org.semver4j.RangesListFactory
  *   looking up results from the [ScanResultsStorage]. Defaults to [DEFAULT_CONFIGURATION_OPTIONS].
  * * **"commandLineNonConfig":** Command line options that do not modify the result and should therefore not be
  *   considered in [configuration], like "--processes". Defaults to [DEFAULT_NON_CONFIGURATION_OPTIONS].
- * * **"parseLicenseExpressions":** By default the license `key`, which can contain a single license id, is used for the
- *   detected licenses. If this option is set to "true", the detected `license_expression` is used instead, which can
- *   contain an SPDX expression.
  */
 class ScanCode internal constructor(
     name: String,
@@ -67,6 +64,7 @@ class ScanCode internal constructor(
     companion object : Logging {
         const val SCANNER_NAME = "ScanCode"
 
+        private const val LICENSE_REFERENCES_OPTION_VERSION = "32.0.0"
         private const val OUTPUT_FORMAT = "json-pp"
         internal const val TIMEOUT = 300
 
@@ -117,12 +115,18 @@ class ScanCode internal constructor(
     private val nonConfigurationOptions = scanCodeConfiguration["commandLineNonConfig"]?.splitOnWhitespace()
         ?: DEFAULT_NON_CONFIGURATION_OPTIONS
 
-    val commandLineOptions by lazy {
+    internal fun getCommandLineOptions(version: String) =
         buildList {
             addAll(configurationOptions)
             addAll(nonConfigurationOptions)
+
+            if (Semver(version).isGreaterThanOrEqualTo(LICENSE_REFERENCES_OPTION_VERSION)) {
+                // Required to be able to map ScanCode license keys to SPDX IDs.
+                add("--license-references")
+            }
         }
-    }
+
+    val commandLineOptions by lazy { getCommandLineOptions(version) }
 
     override fun command(workingDir: File?) =
         listOfNotNull(workingDir, if (Os.isWindows) "scancode.bat" else "scancode").joinToString(File.separator)
@@ -166,8 +170,7 @@ class ScanCode internal constructor(
     }
 
     override fun createSummary(result: String, startTime: Instant, endTime: Instant): ScanSummary {
-        val parseLicenseExpressions = scanCodeConfiguration["parseLicenseExpressions"].isTrue()
-        val summary = parseResult(result).toScanSummary(parseLicenseExpressions)
+        val summary = parseResult(result).toScanSummary()
 
         val issues = summary.issues.toMutableList()
 
@@ -180,14 +183,12 @@ class ScanCode internal constructor(
     /**
      * Execute ScanCode with the configured arguments to scan the given [path] and produce [resultFile].
      */
-    internal fun runScanCode(
-        path: File,
-        resultFile: File
-    ) = ProcessCapture(
-        command(),
-        *commandLineOptions.toTypedArray(),
-        path.absolutePath,
-        OUTPUT_FORMAT_OPTION,
-        resultFile.absolutePath
-    )
+    internal fun runScanCode(path: File, resultFile: File) =
+        ProcessCapture(
+            command(),
+            *commandLineOptions.toTypedArray(),
+            path.absolutePath,
+            OUTPUT_FORMAT_OPTION,
+            resultFile.absolutePath
+        )
 }

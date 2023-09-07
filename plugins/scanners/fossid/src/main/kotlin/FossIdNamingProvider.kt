@@ -48,12 +48,13 @@ internal class FossIdNamingProvider(
         val FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")
     }
 
-    fun createProjectCode(projectName: String): String = namingProjectPattern?.let {
-        val builtins = mapOf(
-            "#projectName" to projectName
-        )
-        replaceNamingConventionVariables(namingProjectPattern, builtins, namingConventionVariables)
-    } ?: projectName
+    fun createProjectCode(projectName: String): String =
+        namingProjectPattern?.let {
+            val builtins = mapOf(
+                "#projectName" to projectName
+            )
+            replaceNamingConventionVariables(namingProjectPattern, builtins, namingConventionVariables)
+        } ?: projectName
 
     fun createScanCode(projectName: String, deltaTag: FossId.DeltaTag? = null, branch: String = ""): String {
         var defaultPattern = "#projectName_#currentTimestamp"
@@ -72,7 +73,9 @@ internal class FossIdNamingProvider(
      * Replace the naming convention variables with their values. Used for projects and scans.
      */
     private fun replaceNamingConventionVariables(
-        namingConventionPattern: String, builtins: Map<String, String>, namingConventionVariables: Map<String, String>
+        namingConventionPattern: String,
+        builtins: Map<String, String>,
+        namingConventionVariables: Map<String, String>
     ): String {
         logger.info { "Parameterizing the name with pattern '$namingConventionPattern'." }
         val currentTimestamp = FORMATTER.format(LocalDateTime.now())

@@ -25,10 +25,12 @@ import com.fasterxml.jackson.databind.annotation.JsonSerialize
 
 import org.ossreviewtoolkit.utils.common.getDuplicates
 import org.ossreviewtoolkit.utils.spdx.SpdxConstants.REF_PREFIX
+import org.ossreviewtoolkit.utils.spdx.SpdxLicense
 
 private const val SPDX_ID = "${REF_PREFIX}DOCUMENT"
 private const val SPDX_VERSION_MAJOR_MINOR = "SPDX-2.2"
-private const val DATA_LICENSE = "CC0-1.0"
+
+private val DATA_LICENSE = SpdxLicense.CC0_1_0.id
 
 /**
  * An SPDX document as specified by https://github.com/spdx/spdx-spec/tree/development/v2.2.1/chapters and
@@ -145,7 +147,7 @@ data class SpdxDocument(
         val duplicateExternalDocumentRefs = externalDocumentRefs.getDuplicates { it.externalDocumentId }
         require(duplicateExternalDocumentRefs.isEmpty()) {
             "The document must not contain duplicate external document references but has " +
-                    "${duplicateExternalDocumentRefs.keys}."
+                "${duplicateExternalDocumentRefs.keys}."
         }
 
         require(documentNamespace.isNotBlank()) { "The document namespace must not be blank." }
@@ -168,7 +170,7 @@ data class SpdxDocument(
         val hasDescribesRelationship = relationships.any { it.relationshipType == SpdxRelationship.Type.DESCRIBES }
         require(hasDescribesRelationship || documentDescribes.isNotEmpty()) {
             "The document must either have at least one relationship of type 'DESCRIBES' or contain the " +
-                    "'documentDescribes' field."
+                "'documentDescribes' field."
         }
     }
 }

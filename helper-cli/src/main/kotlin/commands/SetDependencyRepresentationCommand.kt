@@ -64,8 +64,7 @@ internal class SetDependencyRepresentationCommand : CliktCommand(
     enum class TargetFormat {
         /** The dependency graph format. */
         GRAPH {
-            override fun convert(result: AnalyzerResult): AnalyzerResult =
-                DependencyGraphConverter.convert(result)
+            override fun convert(result: AnalyzerResult): AnalyzerResult = DependencyGraphConverter.convert(result)
         },
 
         /** The classic dependency tree format. */
@@ -109,8 +108,8 @@ internal class SetDependencyRepresentationCommand : CliktCommand(
     private val ortFile by option(
         "--ort-file", "-i",
         help = "The ORT result file to read as input. This can be the serialized form of an OrtResult, an " +
-                "AnalyzerResult, or a ProjectAnalyzerResult. NOTE: If no output file is specified, this file is " +
-                "overwritten."
+            "AnalyzerResult, or a ProjectAnalyzerResult. NOTE: If no output file is specified, this file is " +
+            "overwritten."
     ).convert { it.expandTilde() }
         .file(mustExist = true, canBeFile = true, canBeDir = false, mustBeWritable = false, mustBeReadable = true)
         .convert { it.absoluteFile.normalize() }

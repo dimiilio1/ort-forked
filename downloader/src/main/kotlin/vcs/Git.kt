@@ -120,11 +120,12 @@ class Git : VersionControlSystem(), CommandLineTool {
             match.groups["version"]!!.value
         }.orEmpty()
 
-    override fun getWorkingTree(vcsDirectory: File): WorkingTree = GitWorkingTree(
-        workingDir = vcsDirectory,
-        vcsType = type,
-        repositoryUrlPrefixReplacements = REPOSITORY_URL_PREFIX_REPLACEMENTS
-    )
+    override fun getWorkingTree(vcsDirectory: File): WorkingTree =
+        GitWorkingTree(
+            workingDir = vcsDirectory,
+            vcsType = type,
+            repositoryUrlPrefixReplacements = REPOSITORY_URL_PREFIX_REPLACEMENTS
+        )
 
     override fun isApplicableUrlInternal(vcsUrl: String): Boolean =
         runCatching {

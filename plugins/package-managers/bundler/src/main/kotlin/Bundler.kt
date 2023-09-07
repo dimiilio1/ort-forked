@@ -238,12 +238,17 @@ class Bundler(
     }
 
     private fun parseScope(
-        workingDir: File, projectId: Identifier, groupName: String, dependencyList: List<String>,
-        scopes: MutableSet<Scope>, gemSpecs: MutableMap<String, GemSpec>, issues: MutableList<Issue>
+        workingDir: File,
+        projectId: Identifier,
+        groupName: String,
+        dependencyList: List<String>,
+        scopes: MutableSet<Scope>,
+        gemSpecs: MutableMap<String, GemSpec>,
+        issues: MutableList<Issue>
     ) {
         logger.debug {
             "Parsing scope '$groupName' with top-level dependencies $dependencyList for project " +
-                    "'${projectId.toCoordinates()}' in '$workingDir'."
+                "'${projectId.toCoordinates()}' in '$workingDir'."
         }
 
         val scopeDependencies = mutableSetOf<PackageReference>()
@@ -256,8 +261,12 @@ class Bundler(
     }
 
     private fun parseDependency(
-        workingDir: File, projectId: Identifier, gemName: String, gemSpecs: MutableMap<String, GemSpec>,
-        scopeDependencies: MutableSet<PackageReference>, issues: MutableList<Issue>
+        workingDir: File,
+        projectId: Identifier,
+        gemName: String,
+        gemSpecs: MutableMap<String, GemSpec>,
+        scopeDependencies: MutableSet<PackageReference>,
+        issues: MutableList<Issue>
     ) {
         logger.debug { "Parsing dependency '$gemName'." }
 
@@ -291,7 +300,7 @@ class Bundler(
             issues += createAndLogIssue(
                 source = managerName,
                 message = "Failed to parse dependency '$gemName' of project '${projectId.toCoordinates()}' in " +
-                        "'$workingDir': ${it.collectMessages()}"
+                    "'$workingDir': ${it.collectMessages()}"
             )
         }
     }
@@ -366,7 +375,7 @@ class Bundler(
                 OkHttpClientHelper.HTTP_TOO_MANY_REQUESTS -> {
                     throw IOException(
                         "RubyGems reported too many requests when requesting metadata for gem '$name', see " +
-                                "https://guides.rubygems.org/rubygems-org-api/#rate-limits."
+                            "https://guides.rubygems.org/rubygems-org-api/#rate-limits."
                     )
                 }
 

@@ -17,6 +17,8 @@
  * License-Filename: LICENSE
  */
 
+package org.ossreviewtoolkit.clients.fossid
+
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 
@@ -28,18 +30,6 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNot
 import io.kotest.matchers.types.shouldBeTypeOf
 
-import org.ossreviewtoolkit.clients.fossid.FossIdRestService
-import org.ossreviewtoolkit.clients.fossid.checkResponse
-import org.ossreviewtoolkit.clients.fossid.deleteScan
-import org.ossreviewtoolkit.clients.fossid.getScan
-import org.ossreviewtoolkit.clients.fossid.listIdentifiedFiles
-import org.ossreviewtoolkit.clients.fossid.listIgnoredFiles
-import org.ossreviewtoolkit.clients.fossid.listMarkedAsIdentifiedFiles
-import org.ossreviewtoolkit.clients.fossid.listMatchedLines
-import org.ossreviewtoolkit.clients.fossid.listPendingFiles
-import org.ossreviewtoolkit.clients.fossid.listScanResults
-import org.ossreviewtoolkit.clients.fossid.listScansForProject
-import org.ossreviewtoolkit.clients.fossid.listSnippets
 import org.ossreviewtoolkit.clients.fossid.model.Scan
 import org.ossreviewtoolkit.clients.fossid.model.identification.identifiedFiles.IdentifiedFile
 import org.ossreviewtoolkit.clients.fossid.model.identification.ignored.IgnoredFile
@@ -262,6 +252,30 @@ class FossIdClientReturnTypeTest : StringSpec({
     "When the scan to delete does not exist, no exception is thrown" {
         service.deleteScan("", "", SCAN_CODE_1).shouldNotBeNull().run {
             error shouldBe "Classes.TableRepository.row_not_found"
+        }
+    }
+
+    "A file can be marked as identified" {
+        service.markAsIdentified(
+            "",
+            "",
+            SCAN_CODE_1,
+            "src/main/java/com/vdurmont/semver4j/Range.java",
+            false
+        ).shouldNotBeNull().run {
+            checkResponse("mark file as identified")
+        }
+    }
+
+    "A file can be unmarked as identified" {
+        service.unmarkAsIdentified(
+            "",
+            "",
+            SCAN_CODE_1,
+            "src/main/java/com/vdurmont/semver4j/Range.java",
+            false
+        ).shouldNotBeNull().run {
+            checkResponse("unmark file as identified")
         }
     }
 })

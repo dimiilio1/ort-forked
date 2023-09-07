@@ -57,7 +57,6 @@ import org.ossreviewtoolkit.reporter.ReporterInput
 import org.ossreviewtoolkit.utils.common.normalizeLineBreaks
 import org.ossreviewtoolkit.utils.ort.Environment
 import org.ossreviewtoolkit.utils.spdx.SpdxLicense
-import org.ossreviewtoolkit.utils.spdx.SpdxModelMapper
 import org.ossreviewtoolkit.utils.spdx.SpdxModelMapper.FileFormat
 import org.ossreviewtoolkit.utils.spdx.SpdxModelMapper.fromJson
 import org.ossreviewtoolkit.utils.spdx.SpdxModelMapper.fromYaml
@@ -101,7 +100,7 @@ class SpdxDocumentReporterFunTest : WordSpec({
                 SpdxDocumentReporter.OPTION_FILE_INFORMATION_ENABLED to "false"
             )
 
-            val document = SpdxModelMapper.fromJson<SpdxDocument>(jsonSpdxDocument)
+            val document = fromJson<SpdxDocument>(jsonSpdxDocument)
 
             document.files should beEmpty()
         }
@@ -141,12 +140,13 @@ private fun TestConfiguration.generateReport(
         .normalizeLineBreaks()
 }
 
-private fun SpdxDocument.getCustomReplacements() = mapOf(
-    "<REPLACE_LICENSE_LIST_VERSION>" to SpdxLicense.LICENSE_LIST_VERSION.substringBefore("-"),
-    "<REPLACE_ORT_VERSION>" to Environment.ORT_VERSION,
-    "<REPLACE_CREATION_DATE_AND_TIME>" to creationInfo.created.toString(),
-    "<REPLACE_DOCUMENT_NAMESPACE>" to documentNamespace
-)
+private fun SpdxDocument.getCustomReplacements() =
+    mapOf(
+        "<REPLACE_LICENSE_LIST_VERSION>" to SpdxLicense.LICENSE_LIST_VERSION.substringBefore("-"),
+        "<REPLACE_ORT_VERSION>" to Environment.ORT_VERSION,
+        "<REPLACE_CREATION_DATE_AND_TIME>" to creationInfo.created.toString(),
+        "<REPLACE_DOCUMENT_NAMESPACE>" to documentNamespace
+    )
 
 private val analyzedVcs = VcsInfo(
     type = VcsType.GIT,
@@ -225,8 +225,8 @@ private val ortResult = OrtResult(
                     concludedLicense = "BSD-2-Clause AND BSD-3-Clause AND MIT".toSpdx(),
                     declaredLicenses = setOf("BSD-3-Clause", "MIT OR GPL-2.0-only"),
                     description = "A package with all supported attributes set, with a VCS URL containing a user " +
-                            "name, and with two scan results for the VCS containing copyright findings matched to a " +
-                            "license finding.",
+                        "name, and with two scan results for the VCS containing copyright findings matched to a " +
+                        "license finding.",
                     homepageUrl = "first package's homepage URL",
                     sourceArtifact = RemoteArtifact(
                         url = "https://some-host/first-package-sources.jar",
@@ -272,7 +272,7 @@ private val ortResult = OrtResult(
                     declaredLicenses = setOf("LicenseRef-scancode-philips-proprietary-notice-2000"),
                     concludedLicense = "LicenseRef-scancode-purdue-bsd".toSpdx(),
                     description = "A package used only from the excluded 'test' scope, with non-SPDX license IDs in " +
-                            "the declared and concluded license.",
+                        "the declared and concluded license.",
                     homepageUrl = "",
                     sourceArtifact = RemoteArtifact.EMPTY,
                     vcs = VcsInfo.EMPTY

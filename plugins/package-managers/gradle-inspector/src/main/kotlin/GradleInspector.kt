@@ -117,19 +117,20 @@ class GradleInspector(
     private val initScriptFile by lazy { extractInitScript() }
 
     private fun extractInitScript(): File {
-        fun extractResource(name: String, target: File) = target.apply {
-            val resource = checkNotNull(GradleInspector::class.java.getResource(name)) {
-                "Resource '$name' not found."
-            }
+        fun extractResource(name: String, target: File) =
+            target.apply {
+                val resource = checkNotNull(GradleInspector::class.java.getResource(name)) {
+                    "Resource '$name' not found."
+                }
 
-            logger.debug { "Extracting resource '${resource.path.substringAfterLast('/')}' to '$target'..." }
+                logger.debug { "Extracting resource '${resource.path.substringAfterLast('/')}' to '$target'..." }
 
-            resource.openStream().use { inputStream ->
-                outputStream().use { outputStream ->
-                    inputStream.copyTo(outputStream)
+                resource.openStream().use { inputStream ->
+                    outputStream().use { outputStream ->
+                        inputStream.copyTo(outputStream)
+                    }
                 }
             }
-        }
 
         val toolsDir = ortToolsDirectory.resolve(managerName).apply { safeMkdirs() }
         val pluginJar = extractResource("/gradle-plugin.jar", toolsDir.resolve("gradle-plugin.jar"))
@@ -168,14 +169,14 @@ class GradleInspector(
             if (stdout.size() > 0) {
                 logger.debug {
                     "Analyzing the project in '$projectDir' produced the following standard output:\n" +
-                            stdout.toString().prependIndent("\t")
+                        stdout.toString().prependIndent("\t")
                 }
             }
 
             if (stderr.size() > 0) {
                 logger.warn {
                     "Analyzing the project in '$projectDir' produced the following error output:\n" +
-                            stderr.toString().prependIndent("\t")
+                        stderr.toString().prependIndent("\t")
                 }
             }
 
@@ -252,7 +253,7 @@ class GradleInspector(
             val isSpringMetadataProject = with(id) {
                 listOf("boot", "cloud").any {
                     namespace == "org.springframework.$it"
-                            && (name.startsWith("spring-$it-starter") || name.startsWith("spring-$it-contract-spec"))
+                        && (name.startsWith("spring-$it-starter") || name.startsWith("spring-$it-contract-spec"))
                 }
             }
 
@@ -353,7 +354,10 @@ private fun Collection<OrtDependency>.toPackageRefs(
  * is retrieved remotely.
  */
 private fun createRemoteArtifact(
-    pomUrl: String?, classifier: String? = null, extension: String? = null, algorithm: String = "sha1"
+    pomUrl: String?,
+    classifier: String? = null,
+    extension: String? = null,
+    algorithm: String = "sha1"
 ): RemoteArtifact {
     val artifactBaseUrl = pomUrl?.removeSuffix(".pom") ?: return RemoteArtifact.EMPTY
 

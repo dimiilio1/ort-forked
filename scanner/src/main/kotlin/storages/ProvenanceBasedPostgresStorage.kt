@@ -90,15 +90,15 @@ class ProvenanceBasedPostgresStorage(
                     is ArtifactProvenance -> {
                         query.andWhere {
                             table.artifactUrl eq provenance.sourceArtifact.url and
-                                    (table.artifactHash eq provenance.sourceArtifact.hash.value)
+                                (table.artifactHash eq provenance.sourceArtifact.hash.value)
                         }
                     }
 
                     is RepositoryProvenance -> {
                         query.andWhere {
                             table.vcsType eq provenance.vcsInfo.type.toString() and
-                                    (table.vcsUrl eq provenance.vcsInfo.url) and
-                                    (table.vcsRevision eq provenance.resolvedRevision)
+                                (table.vcsUrl eq provenance.vcsInfo.url) and
+                                (table.vcsRevision eq provenance.resolvedRevision)
                         }
                     }
                 }
@@ -180,7 +180,7 @@ private class ProvenanceScanResults(tableName: String) : IntIdTable(tableName) {
     val scannerName = text("scanner_name")
     val scannerVersion = text("scanner_version")
     val scannerConfiguration = text("scanner_configuration")
-    val scanSummary = jsonb("scan_summary", ScanSummary::class)
+    val scanSummary = jsonb<ScanSummary>("scan_summary")
 
     init {
         // Indices to prevent duplicate entries.

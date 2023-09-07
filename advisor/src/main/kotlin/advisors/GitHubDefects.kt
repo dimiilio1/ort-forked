@@ -167,7 +167,7 @@ class GitHubDefects(name: String, config: GitHubDefectsConfiguration) : AdvicePr
                 ortIssues += createAndLogIssue(
                     providerName,
                     "Failed to load information about $itemType for package '${pkg.original.id.toCoordinates()}': " +
-                            exception.collectMessages(),
+                        exception.collectMessages(),
                     Severity.ERROR
                 )
             }.getOrNull().orEmpty()
@@ -229,10 +229,11 @@ class GitHubDefects(name: String, config: GitHubDefectsConfiguration) : AdvicePr
     /**
      * Return a filtered list of [Issue]s according to the label filters defined in the configuration.
      */
-    private fun List<GitHubIssue>.applyLabelFilters(): List<GitHubIssue> = filter { issue ->
-        val labels = issue.labels()
-        labelFilters.find { it.matches(labels) }?.including ?: false
-    }
+    private fun List<GitHubIssue>.applyLabelFilters(): List<GitHubIssue> =
+        filter { issue ->
+            val labels = issue.labels()
+            labelFilters.find { it.matches(labels) }?.including ?: false
+        }
 }
 
 /**

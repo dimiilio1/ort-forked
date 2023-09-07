@@ -135,7 +135,7 @@ private fun SpdxPackage.getRemoteArtifact(): RemoteArtifact? =
             if (downloadLocation.endsWith(".git")) {
                 SpdxDocumentFile.logger.warn {
                     "The download location $downloadLocation of SPDX package '$spdxId' looks like a Git repository " +
-                            "URL but it lacks the 'git+' prefix and thus will be treated as an artifact URL."
+                        "URL but it lacks the 'git+' prefix and thus will be treated as an artifact URL."
                 }
             }
 
@@ -208,7 +208,7 @@ private fun String?.wrapPresentInSet(): Set<String> {
 
         // Do not split an organization like "Acme, Inc." by comma.
         withoutPrefix(SpdxConstants.ORGANIZATION)?.let {
-            return setOf(it)
+            return setOf(it.trim())
         }
     }
 
@@ -241,14 +241,17 @@ private fun getLinkageForDependency(
  * [DEFAULT_SCOPE_NAME] so that the [source] depends on the [target].
  */
 private fun hasDefaultScopeLinkage(
-    source: String, target: String, relation: SpdxRelationship.Type, relationships: List<SpdxRelationship>
+    source: String,
+    target: String,
+    relation: SpdxRelationship.Type,
+    relationships: List<SpdxRelationship>
 ): Boolean {
     if (relation !in SPDX_LINKAGE_RELATIONSHIPS) return false
 
     val hasScopeRelationship = relationships.any {
         it.relationshipType in SPDX_SCOPE_RELATIONSHIPS
-                // Scope relationships are defined in "reverse" as a "dependency of".
-                && it.relatedSpdxElement == source && it.spdxElementId == target
+            // Scope relationships are defined in "reverse" as a "dependency of".
+            && it.relatedSpdxElement == source && it.spdxElementId == target
     }
 
     return !hasScopeRelationship
@@ -306,7 +309,7 @@ class SpdxDocumentFile(
         }
 
         val isBinaryArtifact = generatedFromRelations.any { it.spdxElementId == spdxId }
-                && generatedFromRelations.none { it.relatedSpdxElement == spdxId }
+            && generatedFromRelations.none { it.relatedSpdxElement == spdxId }
 
         val id = toIdentifier()
         val artifact = getRemoteArtifact()
@@ -489,7 +492,7 @@ class SpdxDocumentFile(
             if (discardedFiles.isNotEmpty()) {
                 logger.info {
                     "Discarded the following ${discardedFiles.size} non-project SPDX files: " +
-                            discardedFiles.joinToString { "'$it'" }
+                        discardedFiles.joinToString { "'$it'" }
                 }
             }
         }.toList()
@@ -512,7 +515,7 @@ class SpdxDocumentFile(
 
         logger.info {
             "File '$definitionFile' contains SPDX document '${spdxDocument.name}' which describes project " +
-                    "'${projectPackage.name}'."
+                "'${projectPackage.name}'."
         }
 
         SPDX_SCOPE_RELATIONSHIPS.mapNotNullTo(scopes) { type ->

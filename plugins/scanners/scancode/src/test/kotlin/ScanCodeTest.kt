@@ -41,7 +41,7 @@ import org.ossreviewtoolkit.utils.common.ProcessCapture
 class ScanCodeTest : WordSpec({
     val scanner = ScanCode("ScanCode", ScannerConfiguration())
 
-    "configuration()" should {
+    "configuration" should {
         "return the default values if the scanner configuration is empty" {
             scanner.configuration shouldBe "--copyright --license --info --strip-root --timeout 300 --json-pp"
         }
@@ -63,10 +63,12 @@ class ScanCodeTest : WordSpec({
         }
     }
 
-    "commandLineOptions" should {
+    "getCommandLineOptions()" should {
         "contain the default values if the scanner configuration is empty" {
-            scanner.commandLineOptions.joinToString(" ") shouldMatch
-                    "--copyright --license --info --strip-root --timeout 300 --processes \\d+"
+            scanner.getCommandLineOptions("31.2.4").joinToString(" ") shouldMatch
+                "--copyright --license --info --strip-root --timeout 300 --processes \\d+"
+            scanner.getCommandLineOptions("32.0.0").joinToString(" ") shouldMatch
+                "--copyright --license --info --strip-root --timeout 300 --processes \\d+ --license-references"
         }
 
         "contain the values from the scanner configuration" {
@@ -82,8 +84,8 @@ class ScanCodeTest : WordSpec({
                 )
             )
 
-            scannerWithConfig.commandLineOptions.joinToString(" ") shouldBe
-                    "--command --line --commandLineNonConfig"
+            scannerWithConfig.getCommandLineOptions("31.2.4").joinToString(" ") shouldBe
+                "--command --line --commandLineNonConfig"
         }
 
         "be handled correctly when containing multiple spaces" {
@@ -99,23 +101,19 @@ class ScanCodeTest : WordSpec({
                 )
             )
 
-            scannerWithConfig.commandLineOptions shouldBe listOf("--command", "--line", "-n", "-c")
+            scannerWithConfig.getCommandLineOptions("31.2.4") shouldBe listOf("--command", "--line", "-n", "-c")
         }
     }
 
-    "scanPath" should {
+    "scanPath()" should {
         "handle a ScanCode result with errors" {
             val path = tempdir("scan-code")
 
             val process = mockk<ProcessCapture>()
             every { process.isError } returns true
             every { process.stderr } returns "some error"
-            every { process.errorMessage } returns "some error message"
 
             val scannerSpy = spyk(scanner)
-            every { scannerSpy.name } returns "ScanCode"
-            every { scannerSpy.version } returns "30.1.0"
-            every { scannerSpy.configuration } returns ""
             every { scannerSpy.runScanCode(any(), any()) } answers {
                 val resultFile = File("src/test/assets/scancode-with-issues.json")
                 val targetFile = secondArg<File>()
@@ -133,7 +131,7 @@ class ScanCodeTest : WordSpec({
         }
     }
 
-    "transformVersion" should {
+    "transformVersion()" should {
         val scanCode = ScanCode(
             "ScanCode",
             ScannerConfiguration()

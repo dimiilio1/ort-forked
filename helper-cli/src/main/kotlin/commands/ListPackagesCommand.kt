@@ -58,19 +58,19 @@ internal class ListPackagesCommand : CliktCommand(
     private val type by option(
         "--package-type",
         help = "Filter the output by package type."
-    ).enum<PackageType>().split(",").default(enumValues<PackageType>().asList())
+    ).enum<PackageType>().split(",").default(PackageType.entries)
 
     private val offendingOnly by option(
         "--offending-only",
         help = "Only list packages causing at least one rule violation with an offending severity, see " +
-                "--offending-severities."
+            "--offending-severities."
     ).flag()
 
     private val offendingSeverities by option(
         "--offending-severities",
         help = "Set the severities to use for the filtering enabled by --offending-only, specified as " +
-                "comma-separated values."
-    ).enum<Severity>().split(",").default(enumValues<Severity>().asList())
+            "comma-separated values."
+    ).enum<Severity>().split(",").default(Severity.entries)
 
     override fun run() {
         val ortResult = readOrtResult(ortFile)

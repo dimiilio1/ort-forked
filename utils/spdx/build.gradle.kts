@@ -21,8 +21,9 @@ import de.undercouch.gradle.tasks.download.Download
 
 import groovy.json.JsonSlurper
 
+import java.net.Authenticator
+import java.net.PasswordAuthentication
 import java.net.URI
-import java.net.URL
 
 val spdxLicenseListVersion: String by project
 
@@ -82,6 +83,20 @@ dependencies {
     testImplementation(libs.kotestAssertionsJson)
 }
 
+if (Authenticator.getDefault() == null) {
+    Authenticator.setDefault(object : Authenticator() {
+        override fun getPasswordAuthentication(): PasswordAuthentication {
+            if (requestorType != RequestorType.PROXY) return super.getPasswordAuthentication()
+
+            val proxyUser = System.getProperty("$requestingProtocol.proxyUser")
+            val proxyPassword = System.getProperty("$requestingProtocol.proxyPassword")
+            if (proxyUser == null || proxyPassword == null) return super.getPasswordAuthentication()
+
+            return PasswordAuthentication(proxyUser, proxyPassword.toCharArray())
+        }
+    })
+}
+
 data class LicenseInfo(
     val id: String,
     val name: String,
@@ -90,7 +105,7 @@ data class LicenseInfo(
 )
 
 fun interface SpdxLicenseTextProvider {
-    fun getLicenseUrl(info: LicenseInfo): URL?
+    fun getLicenseUrl(info: LicenseInfo): URI?
 }
 
 class ScanCodeLicenseTextProvider : SpdxLicenseTextProvider {
@@ -112,18 +127,18 @@ class ScanCodeLicenseTextProvider : SpdxLicenseTextProvider {
         }.toMap()
     }
 
-    override fun getLicenseUrl(info: LicenseInfo): URL? {
+    override fun getLicenseUrl(info: LicenseInfo): URI? {
         val key = spdxIdToScanCodeKeyMap[info.id] ?: return null
-        return URI("$url/$key.LICENSE").toURL()
+        return URI("$url/$key.LICENSE")
     }
 }
 
 class SpdxLicenseListDataProvider : SpdxLicenseTextProvider {
     private val url = "https://raw.githubusercontent.com/spdx/license-list-data/v$spdxLicenseListVersion"
 
-    override fun getLicenseUrl(info: LicenseInfo): URL? {
+    override fun getLicenseUrl(info: LicenseInfo): URI {
         val prefix = "deprecated_".takeIf { info.isDeprecated && !info.isException }.orEmpty()
-        return URI("$url/text/$prefix${info.id}.txt").toURL()
+        return URI("$url/text/$prefix${info.id}.txt")
     }
 }
 
@@ -172,7 +187,11 @@ fun licenseToEnumEntry(info: LicenseInfo): String {
 }
 
 fun getLicenseInfo(
-    jsonUrl: String, description: String, listKeyName: String, idKeyName: String, isException: Boolean
+    jsonUrl: String,
+    description: String,
+    listKeyName: String,
+    idKeyName: String,
+    isException: Boolean
 ): List<LicenseInfo> {
     logger.quiet("Downloading SPDX $description list...")
 
@@ -192,7 +211,10 @@ fun getLicenseInfo(
 }
 
 fun Task.generateEnumClass(
-    className: String, description: String, info: List<LicenseInfo>, resourcePath: String
+    className: String,
+    description: String,
+    info: List<LicenseInfo>,
+    resourcePath: String
 ): List<LicenseInfo> {
     logger.quiet("Collected ${info.size} SPDX $description identifiers.")
 
@@ -300,7 +322,7 @@ fun Task.generateEnumClass(
         |        @JsonCreator(mode = JsonCreator.Mode.DELEGATING)
         |        @JvmStatic
         |        fun forId(id: String) =
-        |            values().find { id.equals(it.id, ignoreCase = true) || id.equals(it.fullName, ignoreCase = true) }
+        |            entries.find { id.equals(it.id, ignoreCase = true) || id.equals(it.fullName, ignoreCase = true) }
         |    }
         |
         |
@@ -359,7 +381,7 @@ val generateSpdxLicenseEnum by tasks.registering(Download::class) {
 
     src(licenseUrlMap.keys.sortedBy { it.toString().lowercase() })
     dest("src/main/resources/$licensesResourcePath")
-    eachFile { name = licenseUrlMap[sourceURL] }
+    eachFile { name = licenseUrlMap[sourceURL.toURI()] }
 
     doLast {
         generateEnumClass(
@@ -392,7 +414,7 @@ val generateSpdxLicenseExceptionEnum by tasks.registering(Download::class) {
 
     src(licenseExceptionUrlMap.keys.sortedBy { it.toString().lowercase() })
     dest("src/main/resources/$exceptionsResourcePath")
-    eachFile { name = licenseExceptionUrlMap[sourceURL] }
+    eachFile { name = licenseExceptionUrlMap[sourceURL.toURI()] }
 
     doLast {
         generateEnumClass(

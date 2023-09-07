@@ -27,6 +27,7 @@ import org.apache.logging.log4j.kotlin.Logging
 import org.ossreviewtoolkit.model.FileFormat
 import org.ossreviewtoolkit.model.PackageCuration
 import org.ossreviewtoolkit.model.readValue
+import org.ossreviewtoolkit.model.utils.PackageCurationProvider
 import org.ossreviewtoolkit.plugins.packagecurationproviders.api.PackageCurationProviderFactory
 import org.ossreviewtoolkit.plugins.packagecurationproviders.api.SimplePackageCurationProvider
 import org.ossreviewtoolkit.utils.common.getDuplicates
@@ -49,8 +50,7 @@ class FilePackageCurationProviderConfig(
 open class FilePackageCurationProviderFactory : PackageCurationProviderFactory<FilePackageCurationProviderConfig> {
     override val type = "File"
 
-    override fun create(config: FilePackageCurationProviderConfig) =
-        FilePackageCurationProvider(config)
+    override fun create(config: FilePackageCurationProviderConfig) = FilePackageCurationProvider(config)
 
     override fun parseConfig(config: Map<String, String>) =
         FilePackageCurationProviderConfig(

@@ -34,6 +34,7 @@ import kotlinx.coroutines.withContext
 import org.apache.logging.log4j.kotlin.Logging
 
 import org.ossreviewtoolkit.downloader.DownloadException
+import org.ossreviewtoolkit.model.FileList
 import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.Issue
 import org.ossreviewtoolkit.model.KnownProvenance
@@ -53,6 +54,11 @@ import org.ossreviewtoolkit.model.config.ScannerConfiguration
 import org.ossreviewtoolkit.model.config.createFileArchiver
 import org.ossreviewtoolkit.model.config.createStorage
 import org.ossreviewtoolkit.model.createAndLogIssue
+import org.ossreviewtoolkit.model.mapLicense
+import org.ossreviewtoolkit.model.utils.FileArchiver
+import org.ossreviewtoolkit.model.utils.ProvenanceFileStorage
+import org.ossreviewtoolkit.model.utils.getKnownProvenancesWithoutVcsPath
+import org.ossreviewtoolkit.model.utils.vcsPath
 import org.ossreviewtoolkit.scanner.provenance.NestedProvenance
 import org.ossreviewtoolkit.scanner.provenance.NestedProvenanceResolver
 import org.ossreviewtoolkit.scanner.provenance.NestedProvenanceScanResult
@@ -63,6 +69,7 @@ import org.ossreviewtoolkit.utils.common.collectMessages
 import org.ossreviewtoolkit.utils.common.safeDeleteRecursively
 import org.ossreviewtoolkit.utils.ort.Environment
 import org.ossreviewtoolkit.utils.ort.showStackTrace
+import org.ossreviewtoolkit.utils.spdx.toSpdx
 
 const val TOOL_NAME = "scanner"
 
@@ -75,7 +82,9 @@ class Scanner(
     val storageWriters: List<ScanStorageWriter>,
     val packageProvenanceResolver: PackageProvenanceResolver,
     val nestedProvenanceResolver: NestedProvenanceResolver,
-    val scannerWrappers: Map<PackageType, List<ScannerWrapper>>
+    val scannerWrappers: Map<PackageType, List<ScannerWrapper>>,
+    private val archiver: FileArchiver? = scannerConfig.archive.createFileArchiver(),
+    fileListStorage: ProvenanceFileStorage = scannerConfig.fileListStorage.createStorage()
 ) {
     private companion object : Logging
 
@@ -94,10 +103,8 @@ class Scanner(
         }
     }
 
-    private val archiver = scannerConfig.archive.createFileArchiver()
-
     private val fileListResolver = FileListResolver(
-        storage = scannerConfig.fileListStorage.createStorage(),
+        storage = fileListStorage,
         provenanceDownloader = provenanceDownloader
     )
 
@@ -144,14 +151,14 @@ class Scanner(
         val filteredScannerOptions = mutableMapOf<String, Options>()
 
         projectScannerWrappers.forEach { scannerWrapper ->
-            scannerConfig.options?.get(scannerWrapper.details.name)?.let { options ->
-                filteredScannerOptions[scannerWrapper.details.name] = scannerWrapper.filterSecretOptions(options)
+            scannerConfig.options?.get(scannerWrapper.name)?.let { options ->
+                filteredScannerOptions[scannerWrapper.name] = scannerWrapper.filterSecretOptions(options)
             }
         }
 
         packageScannerWrappers.forEach { scannerWrapper ->
-            scannerConfig.options?.get(scannerWrapper.details.name)?.let { options ->
-                filteredScannerOptions[scannerWrapper.details.name] = scannerWrapper.filterSecretOptions(options)
+            scannerConfig.options?.get(scannerWrapper.name)?.let { options ->
+                filteredScannerOptions[scannerWrapper.name] = scannerWrapper.filterSecretOptions(options)
             }
         }
 
@@ -163,19 +170,19 @@ class Scanner(
             environment = Environment(),
             config = filteredScannerConfig,
             provenances = projectResults.provenances + packageResults.provenances,
-            scanResults = (projectResults.scanResults + packageResults.scanResults).mapTo(mutableSetOf()) {
-                it.clearPackageVerificationCode()
-            }
+            scanResults = projectResults.scanResults + packageResults.scanResults,
+            files = projectResults.files + packageResults.files,
+            scanners = projectResults.scanners + packageResults.scanners
         )
 
         return ortResult.copy(scanner = scannerRun)
     }
 
     suspend fun scan(packages: Set<Package>, context: ScanContext): ScannerRun {
-        val scanners = scannerWrappers[context.packageType].orEmpty()
-        if (scanners.isEmpty()) return ScannerRun.EMPTY
+        val scannerWrappers = scannerWrappers[context.packageType]
+        if (scannerWrappers.isNullOrEmpty()) return ScannerRun.EMPTY
 
-        val controller = ScanController(packages, scanners, scannerConfig)
+        val controller = ScanController(packages, scannerWrappers, scannerConfig)
 
         resolvePackageProvenances(controller)
         resolveNestedProvenances(controller)
@@ -186,26 +193,63 @@ class Scanner(
         runProvenanceScanners(controller, context)
         runPathScanners(controller, context)
 
-        createMissingFileLists(controller)
+        createFileLists(controller)
         createMissingArchives(controller)
+
+        val provenances = packages.mapTo(mutableSetOf()) { pkg ->
+            val packageProvenance = controller.getPackageProvenance(pkg.id)
+
+            ProvenanceResolutionResult(
+                id = pkg.id,
+                packageProvenance = packageProvenance,
+                subRepositories = controller.getSubRepositories(pkg.id),
+                packageProvenanceResolutionIssue = controller.getPackageProvenanceResolutionIssue(pkg.id),
+                nestedProvenanceResolutionIssue = controller.getNestedProvenanceResolutionIssue(pkg.id)
+            ).filterByVcsPath()
+        }
+
+        val vcsPathsForProvenances = buildMap<KnownProvenance, MutableSet<String>> {
+            provenances.forEach { provenance ->
+                val packageVcsPath = provenance.packageProvenance?.vcsPath.orEmpty()
+
+                provenance.getKnownProvenancesWithoutVcsPath().forEach { (repositoryPath, provenance) ->
+                    getVcsPathForRepositoryOrNull(packageVcsPath, repositoryPath)?.let { vcsPath ->
+                        getOrPut(provenance) { mutableSetOf() } += vcsPath
+                    }
+                }
+            }
+        }
+
+        val scanResults = controller.getAllScanResults().map { scanResult ->
+            scanResult.copy(provenance = scanResult.provenance.alignRevisions())
+        }.mapNotNullTo(mutableSetOf()) { scanResult ->
+            vcsPathsForProvenances[scanResult.provenance]?.let {
+                scanResult.copy(summary = scanResult.summary.filterByPaths(it))
+            }
+        }
+
+        val files = controller.getAllFileLists().mapTo(mutableSetOf()) { (provenance, fileList) ->
+            FileList(
+                provenance = provenance.alignRevisions() as KnownProvenance,
+                files = fileList.files.mapTo(mutableSetOf()) { (path, sha1) ->
+                    FileList.Entry(path, sha1)
+                }
+            )
+        }.mapNotNullTo(mutableSetOf()) { fileList ->
+            vcsPathsForProvenances[fileList.provenance]?.let {
+                fileList.filterByVcsPaths(it)
+            }
+        }
+
+        val scannerNames = scannerWrappers.mapTo(mutableSetOf()) { it.name }
+        val scanners = packages.associateBy({ it.id }) { scannerNames }
 
         return ScannerRun.EMPTY.copy(
             config = scannerConfig,
-            provenances = packages.mapTo(mutableSetOf()) { pkg ->
-                ProvenanceResolutionResult(
-                    id = pkg.id,
-                    packageProvenance = controller.getPackageProvenance(pkg.id),
-                    subRepositories = controller.getSubRepositories(pkg.id),
-                    packageProvenanceResolutionIssue = controller.getPackageProvenanceResolutionIssue(pkg.id),
-                    nestedProvenanceResolutionIssue = controller.getNestedProvenanceResolutionIssue(pkg.id)
-                )
-            },
-            scanResults = controller.getAllScanResults().mapTo(mutableSetOf()) { scanResult ->
-                scanResult.copy(
-                    provenance = scanResult.provenance.alignRevisions(),
-                    summary = scanResult.summary.copy(packageVerificationCode = "")
-                )
-            }
+            provenances = provenances,
+            scanResults = scanResults,
+            files = files,
+            scanners = scanners
         )
     }
 
@@ -258,7 +302,7 @@ class Scanner(
                             Issue(
                                 source = TOOL_NAME,
                                 message = "Could not resolve nested provenance for package " +
-                                        "'${id.toCoordinates()}': ${it.collectMessages()}"
+                                    "'${id.toCoordinates()}': ${it.collectMessages()}"
                             )
                         )
                     }
@@ -283,17 +327,16 @@ class Scanner(
                     val hasNestedProvenance = controller.getNestedProvenance(pkg.id) != null
                     if (!hasNestedProvenance) {
                         logger.debug {
-                            "Skipping scan of '${pkg.id.toCoordinates()}' with package scanner " +
-                                    "'${scanner.details.name}' as no nested provenance for the package could be " +
-                                    "resolved."
+                            "Skipping scan of '${pkg.id.toCoordinates()}' with package scanner '${scanner.name}' as " +
+                                "no nested provenance for the package could be resolved."
                         }
                     }
 
                     val hasCompleteScanResult = controller.hasCompleteScanResult(scanner, pkg)
                     if (hasCompleteScanResult) {
                         logger.debug {
-                            "Skipping scan of '${pkg.id.toCoordinates()}' with package scanner " +
-                                    "'${scanner.details.name}' as stored results are available."
+                            "Skipping scan of '${pkg.id.toCoordinates()}' with package scanner '${scanner.name}' as " +
+                                "stored results are available."
                         }
                     }
 
@@ -302,7 +345,7 @@ class Scanner(
 
                 if (packagesWithIncompleteScanResult.isEmpty()) {
                     logger.info {
-                        "Skipping scan with package scanner '${scanner.details.name}' as all packages have results."
+                        "Skipping scan with package scanner '${scanner.name}' as all packages have results."
                     }
 
                     return@scanner
@@ -322,13 +365,12 @@ class Scanner(
                         val packageIds = packagesWithIncompleteScanResult.drop(1)
                             .joinToString("\n") { "\t${it.id.toCoordinates()}" }
                         "Scanning package '${referencePackage.id.toCoordinates()}' as reference for these packages " +
-                                "with the same provenance:\n$packageIds"
+                            "with the same provenance:\n$packageIds"
                     }
                 }
 
                 logger.info {
-                    "Scan of '${referencePackage.id.toCoordinates()}' with package scanner '${scanner.details.name} " +
-                            "started."
+                    "Scan of '${referencePackage.id.toCoordinates()}' with package scanner '${scanner.name} started."
                 }
 
                 // Filter the scan context to hide the excludes from scanner with scan criteria.
@@ -336,8 +378,7 @@ class Scanner(
                 val scanResult = scanner.scanPackage(referencePackage, filteredContext)
 
                 logger.info {
-                    "Scan of '${referencePackage.id.toCoordinates()}' with package scanner '${scanner.details.name}' " +
-                            "finished."
+                    "Scan of '${referencePackage.id.toCoordinates()}' with package scanner '${scanner.name}' finished."
                 }
 
                 packagesWithIncompleteScanResult.forEach processResults@{ pkg ->
@@ -366,7 +407,7 @@ class Scanner(
                 if (controller.hasScanResult(scanner, provenance)) {
                     logger.debug {
                         "Skipping $provenance scan (${index + 1} of ${provenances.size}) with provenance scanner " +
-                                "'${scanner.details.name}' as a result is already available."
+                            "'${scanner.name}' as a result is already available."
                     }
 
                     return@scanner
@@ -374,7 +415,7 @@ class Scanner(
 
                 logger.info {
                     "Scanning $provenance (${index + 1} of ${provenances.size}) with provenance scanner " +
-                            "'${scanner.details.name}'."
+                        "'${scanner.name}'."
                 }
 
                 // Filter the scan context to hide the excludes from scanner with scan criteria.
@@ -457,7 +498,7 @@ class Scanner(
     private fun readStoredResults(controller: ScanController) {
         logger.info {
             "Reading stored scan results for ${controller.getPackageProvenancesWithoutVcsPath().size} package(s) " +
-                    "with ${controller.getAllProvenances().size} provenance(s)."
+                "with ${controller.getAllProvenances().size} provenance(s)."
         }
 
         val readDuration = measureTime {
@@ -471,7 +512,7 @@ class Scanner(
         controller.scanners.forEach { scanner ->
             val results = controller.getScanResults(scanner)
             logger.info {
-                "\t${scanner.details.name}: Result(s) for ${results.size} of ${allKnownProvenances.size} provenance(s)."
+                "\t${scanner.name}: Result(s) for ${results.size} of ${allKnownProvenances.size} provenance(s)."
             }
         }
     }
@@ -497,7 +538,7 @@ class Scanner(
 
                         logger.warn {
                             "Could not read scan result for '${pkg.id.toCoordinates()}' from " +
-                                    "${reader.javaClass.simpleName}: ${e.collectMessages()}"
+                                "${reader.javaClass.simpleName}: ${e.collectMessages()}"
                         }
                     }
                 }
@@ -522,7 +563,7 @@ class Scanner(
 
                         logger.warn {
                             "Could not read scan result for $provenance from ${reader.javaClass.simpleName}: " +
-                                    e.collectMessages()
+                                e.collectMessages()
                         }
                     }
                 }
@@ -545,7 +586,6 @@ class Scanner(
             val summary = ScanSummary(
                 startTime = Instant.now(),
                 endTime = Instant.now(),
-                packageVerificationCode = "",
                 issues = listOf(issue)
             )
 
@@ -560,15 +600,25 @@ class Scanner(
 
         return try {
             scanners.associateWith { scanner ->
-                logger.info { "Scan of $provenance with path scanner '${scanner.details.name}' started." }
+                logger.info { "Scan of $provenance with path scanner '${scanner.name}' started." }
 
                 // Filter the scan context to hide the excludes from scanner with scan criteria.
                 val filteredContext = if (scanner.criteria == null) context else context.copy(excludes = null)
                 val summary = scanner.scanPath(downloadDir, filteredContext)
 
-                logger.info { "Scan of $provenance with path scanner '${scanner.details.name}' finished." }
+                logger.info { "Scan of $provenance with path scanner '${scanner.name}' finished." }
 
-                ScanResult(provenance, scanner.details, summary)
+                val summaryWithMappedLicenses = summary.copy(
+                    licenseFindings = summary.licenseFindings.mapTo(mutableSetOf()) {
+                        val licenseString = it.license.toString()
+                        it.copy(
+                            license = licenseString.mapLicense(scannerConfig.detectedLicenseMapping).toSpdx(),
+                            location = it.location.withRelativePath(downloadDir)
+                        )
+                    }
+                )
+
+                ScanResult(provenance, scanner.details, summaryWithMappedLicenses)
             }
         } finally {
             downloadDir.safeDeleteRecursively(force = true)
@@ -594,7 +644,7 @@ class Scanner(
 
                 logger.warn {
                     "Could not write scan result for $provenance to ${writer.javaClass.simpleName}: " +
-                            e.collectMessages()
+                        e.collectMessages()
                 }
             }
         }
@@ -609,28 +659,29 @@ class Scanner(
 
                 logger.warn {
                     "Could not write scan result for '${pkg.id.toCoordinates()}' to ${writer.javaClass.simpleName}: " +
-                            e.collectMessages()
+                        e.collectMessages()
                 }
             }
         }
     }
 
-    private suspend fun createMissingFileLists(controller: ScanController) {
+    private suspend fun createFileLists(controller: ScanController) {
         val idsByProvenance = controller.getIdsByProvenance()
-        val provenancesMissingFileLists = idsByProvenance.keys.filterNot { fileListResolver.has(it) }
+        val provenances = idsByProvenance.keys
 
-        logger.info { "Creating file lists for ${provenancesMissingFileLists.size} provenances." }
+        logger.info { "Creating file lists for ${provenances.size} provenances." }
 
         val duration = measureTime {
             withContext(Dispatchers.IO) {
-                provenancesMissingFileLists.mapIndexed { index, provenance ->
+                provenances.mapIndexed { index, provenance ->
                     async {
                         logger.info {
-                            "Creating file list for provenance $index of ${provenancesMissingFileLists.size}."
+                            "Creating file list for provenance $index of ${provenances.size}."
                         }
 
                         runCatching {
-                            fileListResolver.resolve(provenance)
+                            val fileList = fileListResolver.resolve(provenance)
+                            controller.putFileList(provenance, fileList)
                         }.onFailure {
                             idsByProvenance.getValue(provenance).forEach { id ->
                                 controller.addIssue(
@@ -638,7 +689,7 @@ class Scanner(
                                     Issue(
                                         source = "Downloader",
                                         message = "Could not create file list for " +
-                                                "'${id.toCoordinates()}': ${it.collectMessages()}"
+                                            "'${id.toCoordinates()}': ${it.collectMessages()}"
                                     )
                                 )
                             }
@@ -648,7 +699,7 @@ class Scanner(
             }
         }
 
-        logger.info { "Created file lists for ${provenancesMissingFileLists.size} provenances in $duration." }
+        logger.info { "Created file lists for ${provenances.size} provenances in $duration." }
     }
 
     private fun createMissingArchives(controller: ScanController) {
@@ -684,7 +735,7 @@ class Scanner(
                         Issue(
                             source = "Downloader",
                             message = "Could not create file archive for " +
-                                    "'${pkg.id.toCoordinates()}': ${it.collectMessages()}"
+                                "'${pkg.id.toCoordinates()}': ${it.collectMessages()}"
                         )
                     )
                 }
@@ -736,8 +787,7 @@ fun ScanResult.toNestedProvenanceScanResult(nestedProvenance: NestedProvenance):
 
     val provenances = nestedProvenance.getProvenances()
     val scanResultsByProvenance = provenances.associateWith { provenance ->
-        // TODO: Find a solution for the incorrect packageVerificationCode and for how to associate issues to the
-        //       correct scan result.
+        // TODO: Find a solution for how to associate issues to the correct scan result.
         listOf(
             copy(
                 provenance = provenance,
@@ -754,7 +804,7 @@ fun ScanResult.toNestedProvenanceScanResult(nestedProvenance: NestedProvenance):
 
 fun <T : Provenance> T.alignRevisions(): Provenance =
     if (this is RepositoryProvenance) {
-        this.copy(vcsInfo = vcsInfo.copy(revision = resolvedRevision))
+        copy(vcsInfo = vcsInfo.copy(revision = resolvedRevision))
     } else {
         this
     }
@@ -765,5 +815,37 @@ private fun ScanController.getSubRepositories(id: Identifier): Map<String, VcsIn
     return nestedProvenance.subRepositories.entries.associate { (path, provenance) -> path to provenance.vcsInfo }
 }
 
-private fun ScanResult.clearPackageVerificationCode(): ScanResult =
-    copy(summary = summary.copy(packageVerificationCode = ""))
+private fun ProvenanceResolutionResult.filterByVcsPath(): ProvenanceResolutionResult =
+    copy(
+        subRepositories = subRepositories.filter { (path, _) ->
+            File(path).startsWith(packageProvenance?.vcsPath.orEmpty())
+        }
+    )
+
+/**
+ * Return the VCS path applicable to a (sub-) repository which appears under [repositoryPath] in the source tree of
+ * a package residing in [vcsPath], or null if the subtrees for [repositoryPath] and [vcsPath] are disjoint.
+ */
+private fun getVcsPathForRepositoryOrNull(vcsPath: String, repositoryPath: String): String? {
+    val repoPathFile = File(repositoryPath)
+    val vcsPathFile = File(vcsPath)
+
+    return if (repoPathFile.startsWith(vcsPathFile)) {
+        ""
+    } else {
+        runCatching { vcsPathFile.toRelativeString(repoPathFile) }.getOrNull()
+    }
+}
+
+private fun FileList.filterByVcsPaths(paths: Collection<String>): FileList =
+    if (paths.any { it.isBlank() }) {
+        this
+    } else {
+        copy(
+            files = files.filterTo(mutableSetOf()) { file ->
+                paths.any { filterPath ->
+                    file.path.startsWith("$filterPath/")
+                }
+            }
+        )
+    }

@@ -19,7 +19,7 @@
 
 package org.ossreviewtoolkit.plugins.scanners.fossid
 
-import io.kotest.assertions.throwables.shouldThrow
+import io.kotest.assertions.async.shouldTimeout
 import io.kotest.core.spec.style.WordSpec
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldHaveSize
@@ -38,9 +38,9 @@ import io.mockk.unmockkObject
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicInteger
 
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
+import kotlin.time.Duration.Companion.milliseconds
+
+import kotlinx.coroutines.runInterruptible
 
 import org.ossreviewtoolkit.clients.fossid.EntityResponseBody
 import org.ossreviewtoolkit.clients.fossid.FossIdRestService
@@ -136,7 +136,7 @@ class FossIdTest : WordSpec({
         "return the version reported by FossIdServiceWithVersion" {
             val fossId = createFossId(createConfig())
 
-            fossId.details.version shouldBe FOSSID_VERSION
+            fossId.version shouldBe FOSSID_VERSION
         }
     }
 
@@ -219,9 +219,9 @@ class FossIdTest : WordSpec({
                 .expectDeleteScan(scanCode)
 
             coEvery { service.downloadFromGit(USER, API_KEY, scanCode) } returns
-                    EntityResponseBody(status = 1)
+                EntityResponseBody(status = 1)
             coEvery { service.checkDownloadStatus(USER, API_KEY, scanCode) } returns
-                    EntityResponseBody(status = 1, data = DownloadStatus.FAILED)
+                EntityResponseBody(status = 1, data = DownloadStatus.FAILED)
 
             val fossId = createFossId(config)
             fossId.scan(createPackage(createIdentifier(index = 1), vcsInfo))
@@ -329,8 +329,7 @@ class FossIdTest : WordSpec({
             summary.licenseFindings shouldContainExactlyInAnyOrder expectedLicenseFindings
         }
 
-        // TODO: Deprecation: Remove the pending files in issues. This is a breaking change.
-        "report pending files as issues" {
+        "create an issue if there are files pending identification" {
             val projectCode = projectCode(PROJECT)
             val scanCode = scanCode(PROJECT, null)
             val config = createConfig(deltaScans = false)
@@ -350,9 +349,14 @@ class FossIdTest : WordSpec({
 
             val summary = fossId.scan(createPackage(pkgId, vcsInfo)).summary
 
-            val expectedIssues = listOf(createPendingFile(4), createPendingFile(5)).map {
-                Issue(Instant.EPOCH, "FossId", "Pending identification for '$it'.", Severity.HINT)
-            }
+            val expectedIssues = listOf(
+                Issue(
+                    timestamp = Instant.EPOCH,
+                    source = "FossId",
+                    message = "This scan has 2 file(s) pending identification in FossID.",
+                    severity = Severity.HINT
+                )
+            )
 
             summary.issues.map { it.copy(timestamp = Instant.EPOCH) } shouldBe expectedIssues
         }
@@ -431,7 +435,7 @@ class FossIdTest : WordSpec({
                 .expectDownload(scanCode)
                 .mockFiles(scanCode)
             coEvery { service.createProject(USER, API_KEY, projectCode, projectCode) } returns
-                    MapResponseBody(status = 1, data = mapOf())
+                MapResponseBody(status = 1, data = mapOf())
 
             val fossId = createFossId(config)
 
@@ -560,18 +564,16 @@ class FossIdTest : WordSpec({
 
             val fossId = createFossId(config)
 
-            shouldThrow<TimeoutCancellationException> {
-                withTimeout(1000) {
-                    launch {
-                        fossId.scanPackage(
-                            createPackage(createIdentifier(index = 1), vcsInfo),
-                            ScanContext(
-                                labels = emptyMap(),
-                                packageType = PackageType.PACKAGE,
-                                Excludes()
-                            )
+            shouldTimeout(1000.milliseconds) {
+                runInterruptible {
+                    fossId.scanPackage(
+                        createPackage(createIdentifier(index = 1), vcsInfo),
+                        ScanContext(
+                            labels = emptyMap(),
+                            packageType = PackageType.PACKAGE,
+                            Excludes()
                         )
-                    }
+                    )
                 }
             }
 
@@ -1256,8 +1258,7 @@ private fun createVcsInfo(
     type: VcsType = VcsType.GIT,
     path: String = "",
     revision: String = REVISION
-): VcsInfo =
-    VcsInfo(type = type, path = path, revision = revision, url = "https://github.com/test/$projectName.git")
+): VcsInfo = VcsInfo(type = type, path = path, revision = revision, url = "https://github.com/test/$projectName.git")
 
 /**
  * Create a test [Identifier] with properties derived from the given [index].
@@ -1376,56 +1377,58 @@ private fun createPendingFile(index: Int): String = "/pending/file/$index"
 /**
  * Generate a FossID snippet based on the given [index].
  */
-private fun createSnippet(index: Int): Snippet = Snippet(
-    index,
-    "created$index",
-    index,
-    index,
-    index,
-    MatchType.PARTIAL,
-    "reason$index",
-    "author$index",
-    "artifact$index",
-    "version$index",
-    null,
-    "MIT",
-    null,
-    "releaseDate$index",
-    "mirror$index",
-    "file$index",
-    "fileLicense$index",
-    "url$index",
-    "hits$index",
-    index,
-    "updated$index",
-    "cpe$index",
-    "$index",
-    "matchField$index",
-    "classification$index",
-    "highlighting$index"
-)
+private fun createSnippet(index: Int): Snippet =
+    Snippet(
+        index,
+        "created$index",
+        index,
+        index,
+        index,
+        MatchType.PARTIAL,
+        "reason$index",
+        "author$index",
+        "artifact$index",
+        "version$index",
+        null,
+        "MIT",
+        null,
+        "releaseDate$index",
+        "mirror$index",
+        "file$index",
+        "fileLicense$index",
+        "url$index",
+        "hits$index",
+        index,
+        "updated$index",
+        "cpe$index",
+        "$index",
+        "matchField$index",
+        "classification$index",
+        "highlighting$index"
+    )
 
 /**
  * Generate a ORT snippet finding based on the given [index].
  */
-private fun createSnippetFindings(index: Int): Set<SnippetFinding> = (1..5).map { snippetIndex ->
-    SnippetFinding(
-        TextLocation("/pending/file/$index", TextLocation.UNKNOWN_LINE),
-        OrtSnippet(
-            snippetIndex.toFloat(),
-            TextLocation("file$snippetIndex", TextLocation.UNKNOWN_LINE),
-            ArtifactProvenance(RemoteArtifact("url$snippetIndex", Hash.NONE)),
-            "pkg:generic/author$snippetIndex/artifact$snippetIndex@version$snippetIndex",
-            SpdxExpression.Companion.parse("MIT"),
-            mapOf(
-                FossId.SNIPPET_DATA_ID to "$snippetIndex",
-                FossId.SNIPPET_DATA_RELEASE_DATE to "releaseDate$snippetIndex",
-                FossId.SNIPPET_DATA_MATCH_TYPE to MatchType.PARTIAL.toString(),
-                FossId.SNIPPET_DATA_MATCH_TYPE to MatchType.PARTIAL.toString()
+private fun createSnippetFindings(index: Int): Set<SnippetFinding> =
+    (1..5).map { snippetIndex ->
+        SnippetFinding(
+            TextLocation("/pending/file/$index", TextLocation.UNKNOWN_LINE),
+            OrtSnippet(
+                snippetIndex.toFloat(),
+                TextLocation("file$snippetIndex", TextLocation.UNKNOWN_LINE),
+                ArtifactProvenance(RemoteArtifact("url$snippetIndex", Hash.NONE)),
+                "pkg:generic/author$snippetIndex/artifact$snippetIndex@version$snippetIndex",
+                SpdxExpression.Companion.parse("MIT"),
+                mapOf(
+                    FossId.SNIPPET_DATA_ID to "$snippetIndex",
+                    FossId.SNIPPET_DATA_RELEASE_DATE to "releaseDate$snippetIndex",
+                    FossId.SNIPPET_DATA_MATCH_TYPE to MatchType.PARTIAL.toString(),
+                    FossId.SNIPPET_DATA_MATCH_TYPE to MatchType.PARTIAL.toString()
+                )
             )
         )
-    )
-}.toSet()
+    }.toSet()
 
 /**
  * Prepare this service mock to answer a request for a project with the given [projectCode]. Return a response with
@@ -1437,7 +1440,7 @@ private fun FossIdServiceWithVersion.expectProjectRequest(
     error: String? = null
 ): FossIdServiceWithVersion {
     coEvery { getProject(USER, API_KEY, projectCode) } returns
-            EntityResponseBody(status = status, error = error, data = mockk())
+        EntityResponseBody(status = status, error = error, data = mockk())
     return this
 }
 
@@ -1459,7 +1462,7 @@ private fun FossIdServiceWithVersion.expectCheckScanStatus(
  */
 private fun FossIdServiceWithVersion.expectListScans(projectCode: String, scans: List<Scan>): FossIdServiceWithVersion {
     coEvery { listScansForProject(USER, API_KEY, projectCode) } returns
-            PolymorphicResponseBody(status = 1, data = PolymorphicList(scans))
+        PolymorphicResponseBody(status = 1, data = PolymorphicList(scans))
     return this
 }
 
@@ -1467,10 +1470,11 @@ private fun FossIdServiceWithVersion.expectListScans(projectCode: String, scans:
  * Prepare this service mock to return the list of [rules] for the given [scanCode].
  */
 private fun FossIdServiceWithVersion.expectListIgnoreRules(
-    scanCode: String, rules: List<IgnoreRule>
+    scanCode: String,
+    rules: List<IgnoreRule>
 ): FossIdServiceWithVersion {
     coEvery { listIgnoreRules(USER, API_KEY, scanCode) } returns
-            PolymorphicResponseBody(status = 1, data = PolymorphicList(rules))
+        PolymorphicResponseBody(status = 1, data = PolymorphicList(rules))
     return this
 }
 
@@ -1496,9 +1500,9 @@ private fun FossIdServiceWithVersion.expectCreateIgnoreRule(
  */
 private fun FossIdServiceWithVersion.expectDownload(scanCode: String): FossIdServiceWithVersion {
     coEvery { downloadFromGit(USER, API_KEY, scanCode) } returns
-            EntityResponseBody(status = 1)
+        EntityResponseBody(status = 1)
     coEvery { checkDownloadStatus(USER, API_KEY, scanCode) } returns
-            EntityResponseBody(status = 1, data = DownloadStatus.FINISHED)
+        EntityResponseBody(status = 1, data = DownloadStatus.FINISHED)
     return this
 }
 
@@ -1549,22 +1553,22 @@ private fun FossIdServiceWithVersion.mockFiles(
     val matchedLines = MatchedLines(PolymorphicList(listOf(1, 2, 3, 21, 22, 36)), PolymorphicList(listOf(11, 12)))
 
     coEvery { listIdentifiedFiles(USER, API_KEY, scanCode) } returns
-            PolymorphicResponseBody(
-                status = 1, data = PolymorphicList(identifiedFiles)
-            )
+        PolymorphicResponseBody(
+            status = 1, data = PolymorphicList(identifiedFiles)
+        )
     coEvery { listMarkedAsIdentifiedFiles(USER, API_KEY, scanCode) } returns
-            PolymorphicResponseBody(
-                status = 1, data = PolymorphicList(markedFiles)
-            )
+        PolymorphicResponseBody(
+            status = 1, data = PolymorphicList(markedFiles)
+        )
     coEvery { listIgnoredFiles(USER, API_KEY, scanCode) } returns
-            PolymorphicResponseBody(status = 1, data = PolymorphicList(ignoredFiles))
+        PolymorphicResponseBody(status = 1, data = PolymorphicList(ignoredFiles))
     coEvery { listPendingFiles(USER, API_KEY, scanCode) } returns
-            PolymorphicResponseBody(status = 1, data = PolymorphicList(pendingFiles))
+        PolymorphicResponseBody(status = 1, data = PolymorphicList(pendingFiles))
     coEvery { listSnippets(USER, API_KEY, scanCode, any()) } returns
-            PolymorphicResponseBody(status = 1, data = PolymorphicList(snippets))
+        PolymorphicResponseBody(status = 1, data = PolymorphicList(snippets))
     if (matchedLinesFlag) {
         coEvery { listMatchedLines(USER, API_KEY, scanCode, any(), any()) } returns
-                EntityResponseBody(status = 1, data = matchedLines)
+            EntityResponseBody(status = 1, data = matchedLines)
     }
 
     return this

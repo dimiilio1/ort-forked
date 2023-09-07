@@ -22,29 +22,34 @@ package org.ossreviewtoolkit.plugins.reporters.spdx
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
 
-import org.ossreviewtoolkit.model.ArtifactProvenance
+import org.apache.logging.log4j.kotlin.Logging
+
 import org.ossreviewtoolkit.model.OrtResult
-import org.ossreviewtoolkit.model.RepositoryProvenance
+import org.ossreviewtoolkit.model.SourceCodeOrigin.ARTIFACT
+import org.ossreviewtoolkit.model.SourceCodeOrigin.VCS
 import org.ossreviewtoolkit.model.licenses.LicenseInfoResolver
 import org.ossreviewtoolkit.reporter.LicenseTextProvider
 import org.ossreviewtoolkit.utils.ort.Environment
-import org.ossreviewtoolkit.utils.ort.ORT_FULL_NAME
+import org.ossreviewtoolkit.utils.ort.ORT_NAME
 import org.ossreviewtoolkit.utils.spdx.SpdxConstants
 import org.ossreviewtoolkit.utils.spdx.SpdxLicense
 import org.ossreviewtoolkit.utils.spdx.model.SpdxCreationInfo
 import org.ossreviewtoolkit.utils.spdx.model.SpdxDocument
+import org.ossreviewtoolkit.utils.spdx.model.SpdxFile
 import org.ossreviewtoolkit.utils.spdx.model.SpdxPackage
 import org.ossreviewtoolkit.utils.spdx.model.SpdxRelationship
 
 /**
  * A class for mapping [OrtResult]s to [SpdxDocument]s.
  */
-internal object SpdxDocumentModelMapper {
+internal object SpdxDocumentModelMapper : Logging {
     data class SpdxDocumentParams(
         val documentName: String,
         val documentComment: String,
-        val creationInfoComment: String
+        val creationInfoComment: String,
+        val fileInformationEnabled: Boolean
     )
 
     fun map(
@@ -53,12 +58,17 @@ internal object SpdxDocumentModelMapper {
         licenseTextProvider: LicenseTextProvider,
         params: SpdxDocumentParams
     ): SpdxDocument {
+        val nextFileIndex = AtomicInteger(1)
         val packages = mutableListOf<SpdxPackage>()
         val relationships = mutableListOf<SpdxRelationship>()
 
         val projects = ortResult.getProjects(omitExcluded = true, includeSubProjects = false).sortedBy { it.id }
         val projectPackages = projects.map { project ->
-            val spdxProjectPackage = project.toPackage().toSpdxPackage(SpdxPackageType.PROJECT, licenseInfoResolver)
+            val spdxProjectPackage = project.toPackage().toSpdxPackage(
+                SpdxPackageType.PROJECT,
+                licenseInfoResolver,
+                ortResult
+            )
 
             ortResult.getDependencies(project.id, 1).mapTo(relationships) { dependency ->
                 SpdxRelationship(
@@ -71,9 +81,15 @@ internal object SpdxDocumentModelMapper {
             spdxProjectPackage
         }
 
+        val files = mutableListOf<SpdxFile>()
+
         ortResult.getPackages(omitExcluded = true).sortedBy { it.metadata.id }.forEach { curatedPackage ->
             val pkg = curatedPackage.metadata
-            val binaryPackage = pkg.toSpdxPackage(SpdxPackageType.BINARY_PACKAGE, licenseInfoResolver)
+            val binaryPackage = pkg.toSpdxPackage(
+                SpdxPackageType.BINARY_PACKAGE,
+                licenseInfoResolver,
+                ortResult
+            )
 
             ortResult.getDependencies(pkg.id, 1).mapTo(relationships) { dependency ->
                 SpdxRelationship(
@@ -86,18 +102,18 @@ internal object SpdxDocumentModelMapper {
             packages += binaryPackage
 
             if (pkg.vcsProcessed.url.isNotBlank()) {
-                val vcsScanResult = ortResult.getScanResultsForId(curatedPackage.metadata.id).find {
-                    it.provenance is RepositoryProvenance
+                val filesForPackage = if (params.fileInformationEnabled) {
+                    ortResult.getSpdxFiles(pkg.id, licenseInfoResolver, VCS, nextFileIndex)
+                } else {
+                    emptyList()
                 }
-                val provenance = vcsScanResult?.provenance as? RepositoryProvenance
 
                 // TODO: The copyright text contains copyrights from all scan results.
                 val vcsPackage = pkg.toSpdxPackage(
                     SpdxPackageType.VCS_PACKAGE,
                     licenseInfoResolver,
-                    vcsScanResult,
-                    provenance
-                )
+                    ortResult
+                ).copy(hasFiles = filesForPackage.map { it.spdxId })
 
                 val vcsPackageRelationShip = SpdxRelationship(
                     spdxElementId = binaryPackage.spdxId,
@@ -105,21 +121,24 @@ internal object SpdxDocumentModelMapper {
                     relatedSpdxElement = vcsPackage.spdxId
                 )
 
+                files += filesForPackage
                 packages += vcsPackage
                 relationships += vcsPackageRelationShip
             }
 
             if (pkg.sourceArtifact.url.isNotBlank()) {
-                val sourceArtifactScanResult = ortResult.getScanResultsForId(curatedPackage.metadata.id).find {
-                    it.provenance is ArtifactProvenance
+                val filesForPackage = if (params.fileInformationEnabled) {
+                    ortResult.getSpdxFiles(pkg.id, licenseInfoResolver, ARTIFACT, nextFileIndex)
+                } else {
+                    emptyList()
                 }
 
                 // TODO: The copyright text contains copyrights from all scan results.
                 val sourceArtifactPackage = pkg.toSpdxPackage(
                     SpdxPackageType.SOURCE_PACKAGE,
                     licenseInfoResolver,
-                    sourceArtifactScanResult
-                )
+                    ortResult
+                ).copy(hasFiles = filesForPackage.map { it.spdxId })
 
                 val sourceArtifactPackageRelationship = SpdxRelationship(
                     spdxElementId = binaryPackage.spdxId,
@@ -127,6 +146,7 @@ internal object SpdxDocumentModelMapper {
                     relatedSpdxElement = sourceArtifactPackage.spdxId
                 )
 
+                files += filesForPackage
                 packages += sourceArtifactPackage
                 relationships += sourceArtifactPackageRelationship
             }
@@ -137,14 +157,15 @@ internal object SpdxDocumentModelMapper {
             creationInfo = SpdxCreationInfo(
                 comment = params.creationInfoComment,
                 created = Instant.now().truncatedTo(ChronoUnit.SECONDS),
-                creators = listOf("${SpdxConstants.TOOL}$ORT_FULL_NAME - ${Environment.ORT_VERSION}"),
+                creators = listOf("${SpdxConstants.TOOL} $ORT_NAME-${Environment.ORT_VERSION}"),
                 licenseListVersion = SpdxLicense.LICENSE_LIST_VERSION.substringBefore("-")
             ),
             documentNamespace = "spdx://${UUID.randomUUID()}",
             documentDescribes = projectPackages.map { it.spdxId },
             name = params.documentName,
             packages = projectPackages + packages,
-            relationships = relationships.sortedBy { it.spdxElementId }
+            relationships = relationships.sortedBy { it.spdxElementId },
+            files = files
         ).addExtractedLicenseInfo(licenseTextProvider)
     }
 }

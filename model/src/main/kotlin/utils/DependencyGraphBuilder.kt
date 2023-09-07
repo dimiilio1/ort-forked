@@ -196,7 +196,7 @@ class DependencyGraphBuilder<D>(
     private fun checkReferences() {
         require(resolvedPackages.keys.containsAll(validPackageDependencies)) {
             "The following references do not actually refer to packages: " +
-                    "${validPackageDependencies - resolvedPackages.keys}."
+                "${validPackageDependencies - resolvedPackages.keys}."
         }
 
         val packageReferencesKeysWithMultipleDistinctPackageReferences = references.groupBy { it.key }.filter {
@@ -417,7 +417,9 @@ class DependencyGraphBuilder<D>(
      * The scope mapping records all the direct dependencies of scopes.
      */
     private fun updateScopeMapping(
-        scopeName: String, ref: DependencyReference?, transitive: Boolean
+        scopeName: String,
+        ref: DependencyReference?,
+        transitive: Boolean
     ): DependencyReference? {
         if (!transitive && ref != null) {
             val index = RootDependencyIndex(ref.pkg, ref.fragment)

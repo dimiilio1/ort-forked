@@ -245,8 +245,7 @@ data class OrtResult(
      * Return the label values corresponding to the given [key] split at the delimiter ',', or an empty set if the label
      * is absent.
      */
-    fun getLabelValues(key: String): Set<String> =
-        labels[key]?.split(',').orEmpty().mapTo(mutableSetOf()) { it.trim() }
+    fun getLabelValues(key: String): Set<String> = labels[key]?.split(',').orEmpty().mapTo(mutableSetOf()) { it.trim() }
 
     /**
      * Return the [LicenseFindingCuration]s associated with the given package [id].
@@ -263,10 +262,11 @@ data class OrtResult(
      * [OrtResult] with severities equal to or over [minSeverity].
      */
     @JsonIgnore
-    fun getOpenIssues(minSeverity: Severity = Severity.WARNING) = getIssues()
-        .mapNotNull { (id, issues) -> issues.takeUnless { isExcluded(id) } }
-        .flatten()
-        .filter { issue -> issue.severity >= minSeverity && getResolutions().issues.none { it.matches(issue) } }
+    fun getOpenIssues(minSeverity: Severity = Severity.WARNING) =
+        getIssues()
+            .mapNotNull { (id, issues) -> issues.takeUnless { isExcluded(id) } }
+            .flatten()
+            .filter { issue -> issue.severity >= minSeverity && getResolutions().issues.none { it.matches(issue) } }
 
     /**
      * Return all projects and packages that are likely to belong to one of the organizations of the given [names]. If
@@ -412,11 +412,21 @@ data class OrtResult(
     fun getScanResults(): Map<Identifier, List<ScanResult>> = scanner?.getAllScanResults().orEmpty()
 
     /**
+     * Return the [FileList] for the given [id].
+     */
+    fun getFileListForId(id: Identifier): FileList? = scanner?.getFileList(id)
+
+    /**
+     * Return the [FileList] associated with the respective identifier.
+     */
+    @JsonIgnore
+    fun getFileLists(): Map<Identifier, FileList> = scanner?.getAllFileLists().orEmpty()
+
+    /**
      * Return an uncurated [Package] which represents either a [Package] if the given [id] corresponds to a [Package],
      * a [Project] if the given [id] corresponds to a [Project] or `null` otherwise.
      */
-    fun getUncuratedPackageOrProject(id: Identifier): Package? =
-        packages[id]?.pkg ?: getProject(id)?.toPackage()
+    fun getUncuratedPackageOrProject(id: Identifier): Package? = packages[id]?.pkg ?: getProject(id)?.toPackage()
 
     /**
      * Return all uncurated [Package]s contained in this [OrtResult] or only the non-excluded ones if [omitExcluded] is
@@ -528,7 +538,7 @@ data class OrtResult(
                     if (it.provider.id != REPOSITORY_CONFIGURATION_PROVIDER_ID) {
                         it
                     } else {
-                        it.copy(curations = config.curations.packages.toSet())
+                        it.copy(curations = config.curations.packages)
                     }
                 }
             )

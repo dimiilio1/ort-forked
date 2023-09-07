@@ -82,14 +82,6 @@ file("plugins").walk().maxDepth(3).filter {
     }
 }
 
-val buildCacheRetentionDays: String by settings
-
-buildCache {
-    local {
-        removeUnusedEntriesAfterDays = buildCacheRetentionDays.toInt()
-    }
-}
-
 pluginManagement {
     repositories {
         mavenCentral()
@@ -99,5 +91,5 @@ pluginManagement {
 
 plugins {
     // Gradle cannot access the version catalog from here, so hard-code the dependency.
-    id("org.gradle.toolchains.foojay-resolver-convention").version("0.5.0")
+    id("org.gradle.toolchains.foojay-resolver-convention").version("0.7.0")
 }

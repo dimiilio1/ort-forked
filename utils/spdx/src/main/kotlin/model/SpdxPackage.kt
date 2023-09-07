@@ -23,6 +23,7 @@ import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonProperty
 
 import org.ossreviewtoolkit.utils.spdx.SpdxConstants
+import org.ossreviewtoolkit.utils.spdx.SpdxExpression.Strictness.ALLOW_LICENSEREF_EXCEPTIONS
 import org.ossreviewtoolkit.utils.spdx.isSpdxExpressionOrNotPresent
 
 /**
@@ -66,7 +67,7 @@ data class SpdxPackage(
      * A text relating to a copyright notice, even if not complete. To represent a not present value
      * [SpdxConstants.NONE] or [SpdxConstants.NOASSERTION] must be used.
      */
-    val copyrightText: String,
+    val copyrightText: String = SpdxConstants.NOASSERTION,
 
     /**
      * A more detailed description of the package as opposed to [summary], which may be an extract from the package.
@@ -218,10 +219,10 @@ data class SpdxPackage(
 
         // TODO: The check for [licenseInfoFromFiles] can be made more strict, but the SPDX specification is not exact
         //       enough yet to do this safely.
-        licenseInfoFromFiles.filterNot { it.isSpdxExpressionOrNotPresent() }.let {
+        licenseInfoFromFiles.filterNot { it.isSpdxExpressionOrNotPresent(ALLOW_LICENSEREF_EXCEPTIONS) }.let {
             require(it.isEmpty()) {
                 "The entries in licenseInfoFromFiles must each be either an SpdxExpression, 'NONE' or 'NOASSERTION', " +
-                        "but found ${it.joinToString()}."
+                    "but found ${it.joinToString()}."
             }
         }
     }

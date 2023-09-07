@@ -19,6 +19,10 @@
 
 package org.ossreviewtoolkit.scanner.storages
 
+import com.fasterxml.jackson.databind.JsonNode
+
+import java.time.Instant
+
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 
@@ -34,39 +38,33 @@ import org.ossreviewtoolkit.model.ArtifactProvenance
 import org.ossreviewtoolkit.model.Hash
 import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.Package
+import org.ossreviewtoolkit.model.Provenance
 import org.ossreviewtoolkit.model.RemoteArtifact
 import org.ossreviewtoolkit.model.RepositoryProvenance
 import org.ossreviewtoolkit.model.ScanResult
+import org.ossreviewtoolkit.model.ScannerDetails
 import org.ossreviewtoolkit.model.UnknownProvenance
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
 import org.ossreviewtoolkit.model.config.ClearlyDefinedStorageConfiguration
+import org.ossreviewtoolkit.model.config.DownloaderConfiguration
+import org.ossreviewtoolkit.model.config.ScannerConfiguration
 import org.ossreviewtoolkit.model.jsonMapper
 import org.ossreviewtoolkit.model.utils.toClearlyDefinedCoordinates
 import org.ossreviewtoolkit.model.utils.toClearlyDefinedSourceLocation
+import org.ossreviewtoolkit.scanner.CommandLinePathScannerWrapper
 import org.ossreviewtoolkit.scanner.ScanResultsStorage
 import org.ossreviewtoolkit.scanner.ScanStorageException
 import org.ossreviewtoolkit.scanner.ScannerCriteria
-import org.ossreviewtoolkit.scanner.scanners.scancode.generateScannerDetails
-import org.ossreviewtoolkit.scanner.scanners.scancode.generateSummary
+import org.ossreviewtoolkit.scanner.ScannerWrapper
+import org.ossreviewtoolkit.scanner.storages.utils.getScanCodeDetails
+import org.ossreviewtoolkit.utils.common.AlphaNumericComparator
 import org.ossreviewtoolkit.utils.common.collectMessages
+import org.ossreviewtoolkit.utils.common.withoutPrefix
 import org.ossreviewtoolkit.utils.ort.OkHttpClientHelper
 import org.ossreviewtoolkit.utils.ort.showStackTrace
-import org.ossreviewtoolkit.utils.spdx.SpdxConstants
 
 import retrofit2.HttpException
-
-/** The name used by ClearlyDefined for the ScanCode tool. */
-private const val TOOL_SCAN_CODE = "scancode"
-
-/**
- * Given a list of [tools], return the version of ScanCode that was used to scan the package with the given
- * [coordinates], or return null if no such tool entry is found.
- */
-private fun findScanCodeVersion(tools: List<String>, coordinates: Coordinates): String? {
-    val toolUrl = "$coordinates/$TOOL_SCAN_CODE/"
-    return tools.find { it.startsWith(toolUrl) }?.substring(toolUrl.length)
-}
 
 /**
  * A storage implementation that tries to download ScanCode results from ClearlyDefined.
@@ -106,10 +104,12 @@ class ClearlyDefinedStorage(
      */
     private suspend fun readFromClearlyDefined(pkg: Package): Result<List<ScanResult>> {
         val coordinates = pkg.toClearlyDefinedSourceLocation()?.toCoordinates() ?: pkg.toClearlyDefinedCoordinates()
-            ?: return Result.failure(ScanStorageException("Unable to create ClearlyDefined coordinates for $pkg."))
+            ?: return Result.failure(
+                ScanStorageException("Unable to create ClearlyDefined coordinates for '${pkg.id.toCoordinates()}'.")
+            )
 
         return runCatching {
-            logger.debug { "Looking up ClearlyDefined scan results for $coordinates." }
+            logger.debug { "Looking up ClearlyDefined scan results for '$coordinates'." }
 
             val tools = service.harvestTools(
                 coordinates.type,
@@ -119,19 +119,59 @@ class ClearlyDefinedStorage(
                 coordinates.revision.orEmpty()
             )
 
-            val version = findScanCodeVersion(tools, coordinates)
-            if (version != null) {
-                loadScanCodeResults(coordinates, version)
-            } else {
-                logger.debug { "$coordinates was not scanned with any version of ScanCode." }
+            val toolVersionsByName = tools.mapNotNull { it.withoutPrefix("$coordinates/") }
+                .groupBy({ it.substringBefore('/') }, { it.substringAfter('/') })
+                .mapValues { (_, versions) -> versions.sortedWith(AlphaNumericComparator) }
 
-                emptyList()
+            val supportedScanners = toolVersionsByName.mapNotNull { (name, versions) ->
+                // For the ClearlyDefined tool names see https://github.com/clearlydefined/service#tool-name-registry.
+                ScannerWrapper.ALL[name]?.let { factory ->
+                    val scanner = factory.create(ScannerConfiguration(), DownloaderConfiguration())
+                    (scanner as? CommandLinePathScannerWrapper)?.let { cliScanner -> cliScanner to versions.last() }
+                }.also {
+                    if (it == null) logger.debug { "Unsupported tool '$name' for coordinates '$coordinates'." }
+                }
+            }
+
+            supportedScanners.mapNotNull { (cliScanner, version) ->
+                val startTime = Instant.now()
+                val name = cliScanner.name.lowercase()
+                val data = loadToolData(coordinates, name, version)
+                val provenance = getProvenance(coordinates)
+                val endTime = Instant.now()
+
+                when (cliScanner.name) {
+                    "ScanCode" -> {
+                        data["content"]?.let { result ->
+                            val details = getScanCodeDetails(cliScanner.name, result)
+                            val summary = cliScanner.createSummary(result.toString(), startTime, endTime)
+
+                            ScanResult(provenance, details, summary)
+                        }
+                    }
+
+                    "Licensee" -> {
+                        data["licensee"]?.let { result ->
+                            val details = ScannerDetails(
+                                name = name,
+                                version = result["version"].textValue(),
+                                configuration = result["parameters"].joinToString(" ")
+                            )
+                            val output = result["output"]["content"].toString()
+                            val summary = cliScanner.createSummary(output, startTime, endTime)
+
+                            ScanResult(provenance, details, summary)
+                        }
+                    }
+
+                    else -> null
+                }
             }
         }.recoverCatching { e ->
             e.showStackTrace()
 
             val message = "Error when reading results for '${pkg.id.toCoordinates()}' from ClearlyDefined: " +
-                    e.collectMessages()
+                e.collectMessages()
 
             logger.error { message }
 
@@ -146,56 +186,54 @@ class ClearlyDefinedStorage(
     }
 
     /**
-     * Load the ScanCode results file for the package with the given [coordinates] from ClearlyDefined.
-     * The results have been produced by ScanCode in the given [version].
+     * Load the data produced by the tool of the given [name] and [version] for the package with the given [coordinates]
+     * and return it as a [JsonNode].
      */
-    private suspend fun loadScanCodeResults(coordinates: Coordinates, version: String): List<ScanResult> {
-        val toolResponse = service.harvestToolData(
+    private suspend fun loadToolData(coordinates: Coordinates, name: String, version: String): JsonNode {
+        val toolData = service.harvestToolData(
             coordinates.type,
             coordinates.provider,
             coordinates.namespace ?: "-",
             coordinates.name,
             coordinates.revision.orEmpty(),
-            TOOL_SCAN_CODE,
+            name,
             version
         )
 
-        return toolResponse.use {
-            jsonMapper.readTree(it.byteStream())["content"]?.let { result ->
-                val definitions = service.getDefinitions(listOf(coordinates))
-                val described = definitions.getValue(coordinates).described
-                val sourceLocation = described.sourceLocation
+        return toolData.use { jsonMapper.readTree(it.byteStream()) }
+    }
 
-                val provenance = when {
-                    sourceLocation == null -> UnknownProvenance
+    /**
+     * Return the [Provenance] from where the package with the given [coordinates] was harvested.
+     */
+    private suspend fun getProvenance(coordinates: Coordinates): Provenance {
+        val definitions = service.getDefinitions(listOf(coordinates))
+        val described = definitions.getValue(coordinates).described
+        val sourceLocation = described.sourceLocation
 
-                    sourceLocation.type == ComponentType.GIT -> {
-                        RepositoryProvenance(
-                            vcsInfo = VcsInfo(
-                                type = VcsType.GIT,
-                                url = sourceLocation.url.orEmpty(),
-                                revision = sourceLocation.revision,
-                                path = sourceLocation.path.orEmpty()
-                            ),
-                            resolvedRevision = sourceLocation.revision
-                        )
-                    }
+        return when {
+            sourceLocation == null -> UnknownProvenance
 
-                    else -> {
-                        ArtifactProvenance(
-                            sourceArtifact = RemoteArtifact(
-                                url = sourceLocation.url.orEmpty(),
-                                hash = Hash.create(described.hashes?.sha1.orEmpty())
-                            )
-                        )
-                    }
-                }
+            sourceLocation.type == ComponentType.GIT -> {
+                RepositoryProvenance(
+                    vcsInfo = VcsInfo(
+                        type = VcsType.GIT,
+                        url = sourceLocation.url.orEmpty(),
+                        revision = sourceLocation.revision,
+                        path = sourceLocation.path.orEmpty()
+                    ),
+                    resolvedRevision = sourceLocation.revision
+                )
+            }
 
-                val summary = generateSummary(SpdxConstants.NONE, result)
-                val details = generateScannerDetails(result)
-
-                listOf(ScanResult(provenance, details, summary))
-            }.orEmpty()
+            else -> {
+                ArtifactProvenance(
+                    sourceArtifact = RemoteArtifact(
+                        url = sourceLocation.url.orEmpty(),
+                        hash = Hash.create(described.hashes?.sha1.orEmpty())
+                    )
+                )
+            }
         }
     }
 }

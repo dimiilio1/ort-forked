@@ -32,6 +32,7 @@ import java.io.File
 
 import kotlin.reflect.KClass
 
+import org.ossreviewtoolkit.analyzer.PackageManagerResult
 import org.ossreviewtoolkit.model.AnalyzerResult
 import org.ossreviewtoolkit.model.AnalyzerRun
 import org.ossreviewtoolkit.model.EvaluatorRun
@@ -44,9 +45,9 @@ import org.ossreviewtoolkit.utils.common.expandTilde
 
 internal class RewriteTestAssetsCommand : CliktCommand(
     help = "Searches all test assets directories in the given ORT sources directory for recognized serialized files " +
-            "and tries to de-serialize and serialize the file. The command can be used to update the test assets " +
-            "after making changes to the corresponding model classes or serializer configuration, e.g. after " +
-            "annotating a property to not be serialized if empty."
+        "and tries to de-serialize and serialize the file. The command can be used to update the test assets " +
+        "after making changes to the corresponding model classes or serializer configuration, e.g. after " +
+        "annotating a property to not be serialized if empty."
 ) {
     private val ortSourcesDir by option(
         "--ort-sources-dir", "-i",
@@ -96,9 +97,10 @@ private val TARGET_CLASSES = setOf(
     AnalyzerRun::class,
     EvaluatorRun::class,
     OrtResult::class,
-    ScannerRun::class,
+    ProjectAnalyzerResult::class,
+    PackageManagerResult::class,
     ScanResult::class,
-    ProjectAnalyzerResult::class
+    ScannerRun::class
 )
 
 // Paths to nodes in the tree of JsonNodes, whose subtree shall not be changed. Explicitly ignoring these subtrees is

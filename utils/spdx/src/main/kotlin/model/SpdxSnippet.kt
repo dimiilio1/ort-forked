@@ -55,7 +55,7 @@ data class SpdxSnippet(
      * respectively. Ideally this text is extracted from the actual snippet. To represent a not present value
      * [SpdxConstants.NONE] or [SpdxConstants.NOASSERTION] must be used.
      */
-    val copyrightText: String,
+    val copyrightText: String = SpdxConstants.NOASSERTION,
 
     /**
      * Any relevant background references or analysis that went in to arriving at the concluded License for the file.
@@ -106,7 +106,7 @@ data class SpdxSnippet(
         licenseInfoInSnippets.filterNot { it.isSpdxExpressionOrNotPresent() }.let { invalidEntries ->
             require(invalidEntries.isEmpty()) {
                 "The entries in licenseInfoInSnippets must each be either an SpdxExpression, 'NONE' or " +
-                        "'NOASSERTION', but found ${invalidEntries.joinToString()}."
+                    "'NOASSERTION', but found ${invalidEntries.joinToString()}."
             }
         }
 

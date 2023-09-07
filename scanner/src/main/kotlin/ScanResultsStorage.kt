@@ -64,7 +64,7 @@ abstract class ScanResultsStorage : PackageBasedScanStorage {
         result.onSuccess { results ->
             logger.info {
                 "Read ${results.size} scan result(s) for '${id.toCoordinates()}' from ${javaClass.simpleName} in " +
-                        "$duration."
+                    "$duration."
             }
         }
 
@@ -85,7 +85,7 @@ abstract class ScanResultsStorage : PackageBasedScanStorage {
         result.onSuccess { results ->
             logger.info {
                 "Read ${results.size} scan result(s) for '${pkg.id.toCoordinates()}' from ${javaClass.simpleName} in " +
-                        "$duration."
+                    "$duration."
             }
         }
 
@@ -160,7 +160,7 @@ abstract class ScanResultsStorage : PackageBasedScanStorage {
                 if (scanResults.isEmpty()) {
                     logger.debug {
                         "No stored scan results found for $pkg. The following entries with non-matching provenance " +
-                                "have been ignored: ${scanResults.map { it.provenance }}"
+                            "have been ignored: ${scanResults.map { it.provenance }}"
                     }
                 } else {
                     // Only keep scan results from compatible scanners.
@@ -168,7 +168,7 @@ abstract class ScanResultsStorage : PackageBasedScanStorage {
                     if (scanResults.isEmpty()) {
                         logger.debug {
                             "No stored scan results found for $scannerCriteria. The following entries with " +
-                                    "incompatible scanners have been ignored: ${scanResults.map { it.scanner }}"
+                                "incompatible scanners have been ignored: ${scanResults.map { it.scanner }}"
                         }
                     }
                 }
@@ -213,8 +213,7 @@ abstract class ScanResultsStorage : PackageBasedScanStorage {
         pkg: Package,
         nestedProvenance: NestedProvenance,
         scannerCriteria: ScannerCriteria
-    ): List<NestedProvenanceScanResult> =
-        read(pkg, scannerCriteria).toNestedProvenanceScanResult(nestedProvenance)
+    ): List<NestedProvenanceScanResult> = read(pkg, scannerCriteria).toNestedProvenanceScanResult(nestedProvenance)
 
     private fun Result<List<ScanResult>>.toNestedProvenanceScanResult(nestedProvenance: NestedProvenance) =
         map { scanResults ->

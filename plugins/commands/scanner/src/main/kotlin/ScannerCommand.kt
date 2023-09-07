@@ -21,6 +21,7 @@ package org.ossreviewtoolkit.plugins.commands.scanner
 
 import com.github.ajalt.clikt.core.BadParameterValue
 import com.github.ajalt.clikt.core.ProgramResult
+import com.github.ajalt.clikt.core.terminal
 import com.github.ajalt.clikt.parameters.groups.mutuallyExclusiveOptions
 import com.github.ajalt.clikt.parameters.groups.required
 import com.github.ajalt.clikt.parameters.groups.single
@@ -56,6 +57,7 @@ import org.ossreviewtoolkit.plugins.commands.api.utils.configurationGroup
 import org.ossreviewtoolkit.plugins.commands.api.utils.outputGroup
 import org.ossreviewtoolkit.plugins.commands.api.utils.readOrtResult
 import org.ossreviewtoolkit.plugins.commands.api.utils.writeOrtResult
+import org.ossreviewtoolkit.plugins.scanners.scancode.ScanCode
 import org.ossreviewtoolkit.scanner.ScanStorages
 import org.ossreviewtoolkit.scanner.Scanner
 import org.ossreviewtoolkit.scanner.ScannerWrapper
@@ -63,7 +65,6 @@ import org.ossreviewtoolkit.scanner.ScannerWrapperFactory
 import org.ossreviewtoolkit.scanner.provenance.DefaultNestedProvenanceResolver
 import org.ossreviewtoolkit.scanner.provenance.DefaultPackageProvenanceResolver
 import org.ossreviewtoolkit.scanner.provenance.DefaultProvenanceDownloader
-import org.ossreviewtoolkit.scanner.scanners.scancode.ScanCode
 import org.ossreviewtoolkit.scanner.utils.DefaultWorkingTreeCache
 import org.ossreviewtoolkit.utils.common.expandTilde
 import org.ossreviewtoolkit.utils.common.safeMkdirs
@@ -80,7 +81,7 @@ class ScannerCommand : OrtCommand(
         option(
             "--ort-file", "-i",
             help = "An ORT result file with an analyzer result to use. Source code is downloaded automatically if " +
-                    "needed. Must not be used together with '--input-path'."
+                "needed. Must not be used together with '--input-path'."
         ).convert { it.expandTilde() }
             .file(mustExist = true, canBeFile = true, canBeDir = false, mustBeWritable = false, mustBeReadable = true)
             .convert { it.absoluteFile.normalize() },
@@ -110,7 +111,7 @@ class ScannerCommand : OrtCommand(
     private val labels by option(
         "--label", "-l",
         help = "Set a label in the ORT result, overwriting any existing label of the same name. Can be used multiple " +
-                "times. For example: --label distribution=external"
+            "times. For example: --label distribution=external"
     ).associate()
 
     private val scanners by option(
@@ -121,14 +122,14 @@ class ScannerCommand : OrtCommand(
     private val projectScanners by option(
         "--project-scanners",
         help = "A comma-separated list of scanners to use for scanning the source code of projects. By default, " +
-                "projects and packages are scanned with the same scanners as specified by '--scanners'.\n" +
-                "Possible values are: ${ScannerWrapper.ALL.keys}"
+            "projects and packages are scanned with the same scanners as specified by '--scanners'.\n" +
+            "Possible values are: ${ScannerWrapper.ALL.keys}"
     ).convertToScannerWrapperFactories()
 
     private val packageTypes by option(
         "--package-types",
         help = "A comma-separated list of the package types from the ORT file's analyzer result to limit scans to."
-    ).enum<PackageType>().split(",").default(enumValues<PackageType>().asList())
+    ).enum<PackageType>().split(",").default(PackageType.entries)
 
     private val skipExcluded by option(
         "--skip-excluded",
@@ -170,7 +171,7 @@ class ScannerCommand : OrtCommand(
             .partition { resolutionProvider.isResolved(it) }
         val severityStats = SeverityStats.createFromIssues(resolvedIssues, unresolvedIssues)
 
-        severityStats.print().conclude(ortConfig.severeIssueThreshold, 2)
+        severityStats.print(terminal).conclude(ortConfig.severeIssueThreshold, 2)
     }
 
     private fun runScanners(
@@ -187,14 +188,14 @@ class ScannerCommand : OrtCommand(
 
         if (projectScannerWrappers.isNotEmpty()) {
             println("Scanning projects with:")
-            println(projectScannerWrappers.joinToString { "\t${it.details.name} (version ${it.details.version})" })
+            println(projectScannerWrappers.joinToString { "\t${it.name} (version ${it.version})" })
         } else {
             println("Projects will not be scanned.")
         }
 
         if (packageScannerWrappers.isNotEmpty()) {
             println("Scanning packages with:")
-            println(packageScannerWrappers.joinToString { "\t${it.details.name} (version ${it.details.version})" })
+            println(packageScannerWrappers.joinToString { "\t${it.name} (version ${it.version})" })
         } else {
             println("Packages will not be scanned.")
         }

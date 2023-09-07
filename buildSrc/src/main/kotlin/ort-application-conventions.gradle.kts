@@ -41,32 +41,43 @@ application {
 }
 
 graalvmNative {
-    toolchainDetection.set(true)
+    toolchainDetection = true
 
     // For options see https://graalvm.github.io/native-build-tools/latest/gradle-plugin.html.
     binaries {
         named("main") {
-            imageName.set(application.applicationName)
+            imageName = application.applicationName
 
             val initializeAtBuildTime = listOf(
                 "ch.qos.logback.classic.Level",
                 "ch.qos.logback.classic.Logger",
+                "ch.qos.logback.classic.LoggerContext",
                 "ch.qos.logback.classic.PatternLayout",
                 "ch.qos.logback.core.CoreConstants",
                 "ch.qos.logback.core.status.InfoStatus",
                 "ch.qos.logback.core.status.StatusBase",
                 "ch.qos.logback.core.util.Loader",
                 "ch.qos.logback.core.util.StatusPrinter",
+                "org.apache.sshd.common.file.root.RootedFileSystemProvider",
                 "org.apache.sshd.sftp.client.fs.SftpFileSystemProvider",
-                "org.slf4j.LoggerFactory"
+                "org.slf4j.LoggerFactory",
+                "org.slf4j.helpers.NOPLoggerFactory",
+                "org.slf4j.helpers.NOP_FallbackServiceProvider",
+                "org.slf4j.helpers.SubstituteLoggerFactory",
+                "org.slf4j.helpers.SubstituteServiceProvider"
             ).joinToString(separator = ",", prefix = "--initialize-at-build-time=")
 
-            buildArgs.add(initializeAtBuildTime)
+            buildArgs.addAll(
+                initializeAtBuildTime,
+                "--report-unsupported-elements-at-runtime",
+                "--parallelism=8",
+                "-J-Xmx16g"
+            )
         }
     }
 
     metadataRepository {
-        enabled.set(true)
+        enabled = true
     }
 }
 

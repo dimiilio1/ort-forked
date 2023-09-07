@@ -20,6 +20,8 @@
 package org.ossreviewtoolkit.plugins.commands.api.utils
 
 import com.github.ajalt.clikt.core.ProgramResult
+import com.github.ajalt.mordant.rendering.Theme
+import com.github.ajalt.mordant.terminal.Terminal
 
 import org.ossreviewtoolkit.model.Issue
 import org.ossreviewtoolkit.model.RuleViolation
@@ -39,10 +41,7 @@ sealed class SeverityStats(
         SeverityStats(resolvedCounts, unresolvedCounts)
 
     companion object {
-        fun createFromIssues(
-            resolvedIssues: Collection<Issue>,
-            unresolvedIssues: Collection<Issue>
-        ) =
+        fun createFromIssues(resolvedIssues: Collection<Issue>, unresolvedIssues: Collection<Issue>) =
             IssueSeverityStats(
                 resolvedCounts = resolvedIssues.groupingBy { it.severity }.eachCount(),
                 unresolvedCounts = unresolvedIssues.groupingBy { it.severity }.eachCount()
@@ -51,11 +50,10 @@ sealed class SeverityStats(
         fun createFromRuleViolations(
             resolvedRuleViolations: Collection<RuleViolation>,
             unresolvedRuleViolations: Collection<RuleViolation>
-        ) =
-            RuleViolationsSeverityStats(
-                resolvedCounts = resolvedRuleViolations.groupingBy { it.severity }.eachCount(),
-                unresolvedCounts = unresolvedRuleViolations.groupingBy { it.severity }.eachCount()
-            )
+        ) = RuleViolationsSeverityStats(
+            resolvedCounts = resolvedRuleViolations.groupingBy { it.severity }.eachCount(),
+            unresolvedCounts = unresolvedRuleViolations.groupingBy { it.severity }.eachCount()
+        )
     }
 
     /**
@@ -67,7 +65,7 @@ sealed class SeverityStats(
     /**
      * Print the stats to stdout.
      */
-    fun print(): SeverityStats {
+    fun print(t: Terminal): SeverityStats {
         fun p(count: Int, thing: String) = if (count == 1) "$count $thing" else "$count ${thing}s"
 
         val thing = when (this) {
@@ -75,17 +73,21 @@ sealed class SeverityStats(
             is RuleViolationsSeverityStats -> "rule violations"
         }
 
-        val resolved = Severity.values().sortedArrayDescending().map {
-            p(resolvedCounts.getOrDefault(it, 0), it.name.lowercase())
+        val resolved = Severity.entries.toTypedArray().sortedArrayDescending().map {
+            val count = resolvedCounts.getOrDefault(it, 0)
+            val text = p(count, it.name.lowercase())
+            Theme.Default.success(text)
         }
 
-        println("Resolved $thing: ${resolved.joinToString()}.")
+        t.println("${Theme.Default.info("Resolved $thing:")} ${resolved.joinToString()}.")
 
-        val unresolved = Severity.values().sortedArrayDescending().map {
-            p(unresolvedCounts.getOrDefault(it, 0), it.name.lowercase())
+        val unresolved = Severity.entries.toTypedArray().sortedArrayDescending().map {
+            val count = unresolvedCounts.getOrDefault(it, 0)
+            val text = p(count, it.name.lowercase())
+            if (count == 0) Theme.Default.success(text) else Theme.Default.danger(text)
         }
 
-        println("Unresolved $thing: ${unresolved.joinToString()}.")
+        t.println("${Theme.Default.warning("Unresolved $thing:")} ${unresolved.joinToString()}.")
 
         return this
     }
@@ -107,7 +109,7 @@ sealed class SeverityStats(
 
             println(
                 "There $be $severeCount unresolved $thing with a severity equal to or greater than the $threshold " +
-                        "threshold."
+                    "threshold."
             )
 
             throw ProgramResult(severeStatusCode)

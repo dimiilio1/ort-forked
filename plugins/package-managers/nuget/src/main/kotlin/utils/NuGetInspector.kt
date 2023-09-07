@@ -40,6 +40,7 @@ import org.ossreviewtoolkit.model.Severity
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
 import org.ossreviewtoolkit.model.fromYaml
+import org.ossreviewtoolkit.model.utils.toPurl
 import org.ossreviewtoolkit.utils.common.CommandLineTool
 import org.ossreviewtoolkit.utils.common.safeDeleteRecursively
 import org.ossreviewtoolkit.utils.ort.DeclaredLicenseProcessor
@@ -192,7 +193,7 @@ private fun List<NuGetInspector.PackageData>.toPackageReferences(): Set<PackageR
             id = Identifier(type = TYPE, namespace = "", name = data.name, version = data.version.orEmpty()),
             dependencies = data.dependencies.toPackageReferences(),
             issues = data.errors.map { Issue(source = TYPE, message = it, severity = Severity.ERROR) }
-                    + data.warnings.map { Issue(source = TYPE, message = it, severity = Severity.WARNING) }
+                + data.warnings.map { Issue(source = TYPE, message = it, severity = Severity.WARNING) }
         )
     }
 
@@ -200,9 +201,10 @@ internal fun Collection<NuGetInspector.PackageData>.toOrtPackages(): Set<Package
     groupBy { "${it.name}:${it.version}" }.mapTo(mutableSetOf()) { (_, packages) ->
         val pkg = packages.first()
 
-        fun NuGetInspector.PackageData.getHash(): Hash = Hash.create(
-            (sha512 ?: sha256 ?: sha1 ?: md5 ?: "").lowercase()
-        )
+        fun NuGetInspector.PackageData.getHash(): Hash =
+            Hash.create(
+                (sha512 ?: sha256 ?: sha1 ?: md5 ?: "").lowercase()
+            )
 
         val id = Identifier(
             type = TYPE,
@@ -235,7 +237,7 @@ internal fun Collection<NuGetInspector.PackageData>.toOrtPackages(): Set<Package
 
         Package(
             id = id,
-            purl = pkg.purl,
+            purl = pkg.purl.takeUnless { it.isEmpty() } ?: id.toPurl(),
             authors = pkg.parties.toAuthors(),
             declaredLicenses = declaredLicenses,
             declaredLicensesProcessed = DeclaredLicenseProcessor.process(declaredLicenses),

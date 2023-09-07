@@ -47,13 +47,14 @@ private val VULNERABILITY_FOR_PACKAGE_BY_INVALID_COMMIT_REQUEST = Vulnerabilitie
     commit = "6879efc2c1596d11a6a6ad296f80063b558d5e0c"
 )
 
-private fun Vulnerability.patchIgnorableFields() = copy(
-    modified = Instant.EPOCH,
-    databaseSpecific = emptyJsonObject.takeIf { databaseSpecific != null },
-    affected = affected.mapTo(mutableSetOf()) { affected ->
-        affected.copy(ecosystemSpecific = emptyJsonObject.takeIf { affected.ecosystemSpecific != null })
-    }
-)
+private fun Vulnerability.patchIgnorableFields() =
+    copy(
+        modified = Instant.EPOCH,
+        databaseSpecific = emptyJsonObject.takeIf { databaseSpecific != null },
+        affected = affected.mapTo(mutableSetOf()) { affected ->
+            affected.copy(ecosystemSpecific = emptyJsonObject.takeIf { affected.ecosystemSpecific != null })
+        }
+    )
 
 private val emptyJsonObject = JsonObject(emptyMap())
 

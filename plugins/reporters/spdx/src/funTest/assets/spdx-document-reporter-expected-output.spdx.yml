@@ -5,7 +5,7 @@ creationInfo:
   comment: "some creation info comment"
   created: "<REPLACE_CREATION_DATE_AND_TIME>"
   creators:
-  - "Tool: OSS Review Toolkit - <REPLACE_ORT_VERSION>"
+  - "Tool: ort-<REPLACE_ORT_VERSION>"
   licenseListVersion: "<REPLACE_LICENSE_LIST_VERSION>"
 name: "some document name"
 dataLicense: "CC0-1.0"
@@ -73,7 +73,9 @@ packages:
   - referenceCategory: "PACKAGE_MANAGER"
     referenceType: "purl"
     referenceLocator: "pkg:maven/first-package-group/first-package@0.0.1"
-  filesAnalyzed: false
+  filesAnalyzed: true
+  hasFiles:
+  - "SPDXRef-File-1"
   homepage: "first package's homepage URL"
   licenseConcluded: "NOASSERTION"
   licenseDeclared: "BSD-3-Clause AND (MIT OR GPL-2.0-only)"
@@ -81,6 +83,8 @@ packages:
   - "Apache-2.0"
   - "BSD-2-Clause"
   name: "first-package"
+  packageVerificationCode:
+    packageVerificationCodeValue: "3700a1e8575c082653af662ac024337faf78990f"
   summary: "A package with all supported attributes set, with a VCS URL containing\
     \ a user name, and with two scan results for the VCS containing copyright findings\
     \ matched to a license finding."
@@ -163,13 +167,18 @@ packages:
   - referenceCategory: "PACKAGE_MANAGER"
     referenceType: "purl"
     referenceLocator: "pkg:maven/seventh-package-group/seventh-package@0.0.1"
-  filesAnalyzed: false
+  filesAnalyzed: true
+  hasFiles:
+  - "SPDXRef-File-2"
+  - "SPDXRef-File-3"
   homepage: "NONE"
   licenseConcluded: "NOASSERTION"
   licenseDeclared: "NOASSERTION"
   licenseInfoFromFiles:
   - "GPL-3.0-only"
   name: "seventh-package"
+  packageVerificationCode:
+    packageVerificationCodeValue: "e14acc46fad3a38a1ef2830067619812b51cb4bc"
   summary: "A package with a source artifact scan result."
   versionInfo: "0.0.1"
 - SPDXID: "SPDXRef-Package-Maven-sixth-package-group-sixth-package-0.0.1"
@@ -200,6 +209,36 @@ packages:
   name: "third-package"
   summary: "A package with only unmapped declared license."
   versionInfo: "0.0.1"
+files:
+- SPDXID: "SPDXRef-File-1"
+  checksums:
+  - algorithm: "SHA1"
+    checksumValue: "8c38f605503f2a48ef7b6220ad06aa0f3387484b"
+  copyrightText: "Copyright 2020 Some copyright holder in VCS\nCopyright 2020 Some\
+    \ copyright holder in source artifact\nCopyright 2020 Some other copyright holder\
+    \ in source artifact"
+  fileName: "project-path/some/file"
+  licenseConcluded: "NOASSERTION"
+  licenseInfoInFiles:
+  - "NONE"
+- SPDXID: "SPDXRef-File-2"
+  checksums:
+  - algorithm: "SHA1"
+    checksumValue: "0398ccd0f49298b10a3d76a47800d2ebecd49859"
+  copyrightText: "NONE"
+  fileName: "LICENSE"
+  licenseConcluded: "NOASSERTION"
+  licenseInfoInFiles:
+  - "GPL-3.0-only"
+- SPDXID: "SPDXRef-File-3"
+  checksums:
+  - algorithm: "SHA1"
+    checksumValue: "4552f707bdf537911c9943cec56a0bf11bd8468d"
+  copyrightText: "Copyright 2020 Some copyright holder in source artifact"
+  fileName: "some/file"
+  licenseConcluded: "NOASSERTION"
+  licenseInfoInFiles:
+  - "NONE"
 relationships:
 - spdxElementId: "SPDXRef-Package-Maven-first-package-group-first-package-0.0.1"
   relationshipType: "GENERATED_FROM"

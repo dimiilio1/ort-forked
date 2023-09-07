@@ -22,6 +22,9 @@ package org.ossreviewtoolkit.plugins.scanners.licensee
 import java.io.File
 import java.time.Instant
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNamingStrategy
+
 import org.apache.logging.log4j.kotlin.Logging
 
 import org.ossreviewtoolkit.model.Issue
@@ -31,18 +34,20 @@ import org.ossreviewtoolkit.model.Severity
 import org.ossreviewtoolkit.model.TextLocation
 import org.ossreviewtoolkit.model.config.DownloaderConfiguration
 import org.ossreviewtoolkit.model.config.ScannerConfiguration
-import org.ossreviewtoolkit.model.jsonMapper
-import org.ossreviewtoolkit.model.mapLicense
 import org.ossreviewtoolkit.scanner.AbstractScannerWrapperFactory
 import org.ossreviewtoolkit.scanner.CommandLinePathScannerWrapper
 import org.ossreviewtoolkit.scanner.ScanContext
 import org.ossreviewtoolkit.scanner.ScanException
 import org.ossreviewtoolkit.scanner.ScannerCriteria
 import org.ossreviewtoolkit.utils.common.Os
-import org.ossreviewtoolkit.utils.spdx.calculatePackageVerificationCode
+
+private val JSON = Json {
+    ignoreUnknownKeys = true
+    namingStrategy = JsonNamingStrategy.SnakeCase
+}
 
 class Licensee internal constructor(
-    private val name: String,
+    name: String,
     private val scannerConfig: ScannerConfiguration
 ) : CommandLinePathScannerWrapper(name) {
     companion object : Logging {
@@ -54,56 +59,44 @@ class Licensee internal constructor(
             Licensee(type, scannerConfig)
     }
 
-    override val criteria by lazy { ScannerCriteria.fromConfig(details, scannerConfig) }
     override val configuration = CONFIGURATION_OPTIONS.joinToString(" ")
+
+    override val criteria by lazy { ScannerCriteria.fromConfig(details, scannerConfig) }
 
     override fun command(workingDir: File?) =
         listOfNotNull(workingDir, if (Os.isWindows) "licensee.bat" else "licensee").joinToString(File.separator)
 
     override fun getVersionArguments() = "version"
 
-    override fun scanPath(path: File, context: ScanContext): ScanSummary {
-        val startTime = Instant.now()
-
+    override fun runScanner(path: File, context: ScanContext): String {
         val process = run(
             "detect",
             *CONFIGURATION_OPTIONS.toTypedArray(),
             path.absolutePath
         )
 
-        val endTime = Instant.now()
-
         return with(process) {
             if (stderr.isNotBlank()) logger.debug { stderr }
             if (isError) throw ScanException(errorMessage)
 
-            generateSummary(startTime, endTime, path, stdout)
+            stdout
         }
     }
 
-    private fun generateSummary(startTime: Instant, endTime: Instant, scanPath: File, result: String): ScanSummary {
-        val licenseFindings = mutableSetOf<LicenseFinding>()
+    override fun createSummary(result: String, startTime: Instant, endTime: Instant): ScanSummary {
+        val results = JSON.decodeFromString<LicenseeResult>(result)
 
-        val json = jsonMapper.readTree(result)
-        val matchedFiles = json["matched_files"]
-
-        matchedFiles.mapTo(licenseFindings) {
-            val filePath = File(it["filename"].textValue())
+        val licenseFindings = results.matchedFiles.mapTo(mutableSetOf()) {
             LicenseFinding(
-                license = it["matched_license"].textValue().mapLicense(scannerConfig.detectedLicenseMapping),
-                location = TextLocation(
-                    // The path is already relative.
-                    filePath.path,
-                    TextLocation.UNKNOWN_LINE
-                ),
-                score = it["matcher"]["confidence"].floatValue()
+                license = it.matchedLicense,
+                location = TextLocation(it.filename, TextLocation.UNKNOWN_LINE),
+                score = it.matcher.confidence
             )
         }
 
         return ScanSummary(
             startTime = startTime,
             endTime = endTime,
-            packageVerificationCode = calculatePackageVerificationCode(scanPath),
             licenseFindings = licenseFindings,
             issues = listOf(
                 Issue(

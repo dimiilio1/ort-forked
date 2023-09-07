@@ -21,6 +21,7 @@ package org.ossreviewtoolkit.scanner.utils
 
 import com.fasterxml.jackson.module.kotlin.readValue
 
+import java.io.ByteArrayInputStream
 import java.io.File
 
 import org.ossreviewtoolkit.model.HashAlgorithm
@@ -33,6 +34,7 @@ import org.ossreviewtoolkit.scanner.FileList.FileEntry
 import org.ossreviewtoolkit.scanner.provenance.ProvenanceDownloader
 import org.ossreviewtoolkit.utils.common.FileMatcher
 import org.ossreviewtoolkit.utils.common.VCS_DIRECTORIES
+import org.ossreviewtoolkit.utils.common.isSymbolicLink
 
 internal class FileListResolver(
     private val storage: ProvenanceFileStorage,
@@ -50,7 +52,8 @@ internal class FileListResolver(
 }
 
 private fun ProvenanceFileStorage.putFileList(provenance: KnownProvenance, fileList: FileList) {
-    putData(provenance, fileList.toYaml().byteInputStream())
+    val byteArray = fileList.toYaml().toByteArray()
+    putData(provenance, ByteArrayInputStream(byteArray), byteArray.size.toLong())
 }
 
 private fun ProvenanceFileStorage.getFileList(provenance: KnownProvenance): FileList? {
@@ -64,9 +67,9 @@ private val IGNORED_DIRECTORY_MATCHER by lazy {
 
 private fun createFileList(dir: File): FileList {
     val files = dir.walk().onEnter {
-        !IGNORED_DIRECTORY_MATCHER.matches(it.relativeTo(dir).invariantSeparatorsPath)
+        !IGNORED_DIRECTORY_MATCHER.matches(it.relativeTo(dir).invariantSeparatorsPath) && !it.isSymbolicLink()
     }.filter {
-        it.isFile
+        it.isFile && !it.isSymbolicLink()
     }.mapTo(mutableSetOf()) {
         FileEntry(path = it.relativeTo(dir).invariantSeparatorsPath, sha1 = HashAlgorithm.SHA1.calculate(it))
     }

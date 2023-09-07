@@ -92,6 +92,18 @@ class SpdxDocumentReporterFunTest : WordSpec({
                 custom = fromJson<SpdxDocument>(jsonSpdxDocument).getCustomReplacements()
             )
         }
+
+        "omit file information if corresponding option is disabled" {
+            val jsonSpdxDocument = generateReport(
+                ortResult,
+                FileFormat.JSON,
+                SpdxDocumentReporter.OPTION_FILE_INFORMATION_ENABLED to "false"
+            )
+
+            val document = fromJson<SpdxDocument>(jsonSpdxDocument)
+
+            document.files should beEmpty()
+        }
     }
 
     "Reporting to YAML" should {
@@ -108,7 +120,11 @@ class SpdxDocumentReporterFunTest : WordSpec({
     }
 })
 
-private fun TestConfiguration.generateReport(ortResult: OrtResult, format: FileFormat): String {
+private fun TestConfiguration.generateReport(
+    ortResult: OrtResult,
+    format: FileFormat,
+    vararg extraReporterOptions: Pair<String, String>
+): String {
     val input = ReporterInput(ortResult)
 
     val outputDir = tempdir()
@@ -118,18 +134,19 @@ private fun TestConfiguration.generateReport(ortResult: OrtResult, format: FileF
         SpdxDocumentReporter.OPTION_DOCUMENT_COMMENT to "some document comment",
         SpdxDocumentReporter.OPTION_DOCUMENT_NAME to "some document name",
         SpdxDocumentReporter.OPTION_OUTPUT_FILE_FORMATS to format.toString()
-    )
+    ) + extraReporterOptions
 
     return SpdxDocumentReporter().generateReport(input, outputDir, reportOptions).single().readText()
         .normalizeLineBreaks()
 }
 
-private fun SpdxDocument.getCustomReplacements() = mapOf(
-    "<REPLACE_LICENSE_LIST_VERSION>" to SpdxLicense.LICENSE_LIST_VERSION.substringBefore("-"),
-    "<REPLACE_ORT_VERSION>" to Environment.ORT_VERSION,
-    "<REPLACE_CREATION_DATE_AND_TIME>" to creationInfo.created.toString(),
-    "<REPLACE_DOCUMENT_NAMESPACE>" to documentNamespace
-)
+private fun SpdxDocument.getCustomReplacements() =
+    mapOf(
+        "<REPLACE_LICENSE_LIST_VERSION>" to SpdxLicense.LICENSE_LIST_VERSION.substringBefore("-"),
+        "<REPLACE_ORT_VERSION>" to Environment.ORT_VERSION,
+        "<REPLACE_CREATION_DATE_AND_TIME>" to creationInfo.created.toString(),
+        "<REPLACE_DOCUMENT_NAMESPACE>" to documentNamespace
+    )
 
 private val analyzedVcs = VcsInfo(
     type = VcsType.GIT,
@@ -208,8 +225,8 @@ private val ortResult = OrtResult(
                     concludedLicense = "BSD-2-Clause AND BSD-3-Clause AND MIT".toSpdx(),
                     declaredLicenses = setOf("BSD-3-Clause", "MIT OR GPL-2.0-only"),
                     description = "A package with all supported attributes set, with a VCS URL containing a user " +
-                            "name, and with two scan results for the VCS containing copyright findings matched to a " +
-                            "license finding.",
+                        "name, and with two scan results for the VCS containing copyright findings matched to a " +
+                        "license finding.",
                     homepageUrl = "first package's homepage URL",
                     sourceArtifact = RemoteArtifact(
                         url = "https://some-host/first-package-sources.jar",
@@ -255,7 +272,7 @@ private val ortResult = OrtResult(
                     declaredLicenses = setOf("LicenseRef-scancode-philips-proprietary-notice-2000"),
                     concludedLicense = "LicenseRef-scancode-purdue-bsd".toSpdx(),
                     description = "A package used only from the excluded 'test' scope, with non-SPDX license IDs in " +
-                            "the declared and concluded license.",
+                        "the declared and concluded license.",
                     homepageUrl = "",
                     sourceArtifact = RemoteArtifact.EMPTY,
                     vcs = VcsInfo.EMPTY
@@ -299,7 +316,6 @@ private val ortResult = OrtResult(
                 ),
                 scanner = ScannerDetails.EMPTY.copy(name = "scanner1"),
                 summary = ScanSummary.EMPTY.copy(
-                    packageVerificationCode = "0000000000000000000000000000000000000000",
                     licenseFindings = setOf(
                         LicenseFinding(
                             license = "Apache-2.0",
@@ -330,7 +346,6 @@ private val ortResult = OrtResult(
                 ),
                 scanner = ScannerDetails.EMPTY.copy(name = "scanner2"),
                 summary = ScanSummary.EMPTY.copy(
-                    packageVerificationCode = "0000000000000000000000000000000000000000",
                     licenseFindings = setOf(
                         LicenseFinding(
                             license = "BSD-2-Clause",

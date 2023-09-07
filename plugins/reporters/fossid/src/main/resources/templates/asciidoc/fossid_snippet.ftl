@@ -26,18 +26,24 @@
 :toc:
 
 = FossID Snippets
-List of all the packages with their files and snippets.
-[#list ortResult.scanResults as package, scanResults]
+List of all the provenances with their files and snippets.
+[#list ortResult.scanner.scanResults as scanResult]
 
-== Package '${package.toCoordinates()}'
+[#if scanResult.scanner.name != "FossId"] [#continue] [/#if]
 
-[#list scanResults as scanResult]
+[#if scanResult.provenance.vcsInfo??]
+    [#assign url = scanResult.provenance.vcsInfo.url]
+[#else]
+    [#assign url = scanResult.provenance.sourceArtifact.url]
+[/#if]
+== Provenance '${url}'
+
 [#assign summary = scanResult.summary]
 
 Scan start time : ${summary.startTime} +
 End time : ${summary.startTime} +
 [#if scanResult.provenance.vcsInfo??]
-    [#assign gitRepoUrl = scanResult.provenance.vcsInfo.url]
+    [#assign gitRepoUrl = url]
     [#assign gitRevision = scanResult.provenance.vcsInfo.revision]
     Git repo URL: ${gitRepoUrl} +
     Git revision: ${gitRevision}
@@ -65,14 +71,14 @@ License(s):
 [/#list]
 
 [width=100%]
-[cols="1,1,3,1,3,3,1,1"]
+[cols="1,3,1,3,3,1,1"]
 |===
-| ID | Match | pURL | License | File | URL | Score | Release Date
+| Match | pURL | License | File | URL | Score | Release Date
 
 [#list snippetFindings as snippetFinding ]
 [#assign snippet = snippetFinding.snippet]
 [#assign matchType = snippet.additionalData["matchType"]]
-[#if matchType == "PARTIAL"].2+[/#if]| ${snippet.additionalData["id"]} | ${matchType} | ${snippet.purl!""}
+| ${matchType} | ${snippet.purl!""}
 | ${snippet.licenses!""} | ${snippet.location.path!""} | ${snippet.provenance.sourceArtifact.url!""}[URL]
 | ${snippet.score!""} | ${snippet.additionalData["releaseDate"]}
 [#if matchType == "PARTIAL"]
@@ -83,5 +89,4 @@ License(s):
 |===
 [/#list]
 
-[/#list]
 [/#list]

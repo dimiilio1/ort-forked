@@ -49,6 +49,7 @@ import org.ossreviewtoolkit.model.utils.RootLicenseMatcher
 import org.ossreviewtoolkit.reporter.ReporterInput
 import org.ossreviewtoolkit.reporter.StatisticsCalculator.getStatistics
 import org.ossreviewtoolkit.utils.ort.ProcessedDeclaredLicense
+import org.ossreviewtoolkit.utils.spdx.calculatePackageVerificationCode
 
 /**
  * Maps the [reporter input][input] to an [EvaluatedModel].
@@ -426,7 +427,9 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
             scanner = result.scanner,
             startTime = result.summary.startTime,
             endTime = result.summary.endTime,
-            packageVerificationCode = result.summary.packageVerificationCode,
+            packageVerificationCode = input.ortResult.getFileListForId(pkg.id)?.let { fileList ->
+                calculatePackageVerificationCode(fileList.files.map { it.sha1 }.asSequence())
+            }.orEmpty(),
             issues = issues
         )
 
@@ -445,11 +448,7 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
         return actualScanResult
     }
 
-    private fun addDependencyTree(
-        project: Project,
-        pkg: EvaluatedPackage,
-        deduplicateDependencyTree: Boolean
-    ) {
+    private fun addDependencyTree(project: Project, pkg: EvaluatedPackage, deduplicateDependencyTree: Boolean) {
         val visitedNodes = mutableMapOf<Any, DependencyTreeNode>()
 
         fun createDependencyNode(
@@ -457,16 +456,15 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
             linkage: PackageLinkage,
             issues: List<EvaluatedIssue>,
             children: List<DependencyTreeNode> = emptyList()
-        ) =
-            DependencyTreeNode(
-                linkage = linkage,
-                pkg = dependency,
-                scope = null,
-                children = children,
-                pathExcludes = emptyList(),
-                scopeExcludes = emptyList(),
-                issues = issues
-            )
+        ) = DependencyTreeNode(
+            linkage = linkage,
+            pkg = dependency,
+            scope = null,
+            children = children,
+            pathExcludes = emptyList(),
+            scopeExcludes = emptyList(),
+            issues = issues
+        )
 
         fun DependencyNode.toEvaluatedTreeNode(
             scope: EvaluatedScope,
@@ -504,7 +502,7 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
                         } else {
                             node.toEvaluatedTreeNode(scope, path + dependency)
                         }
-                }.toList()
+                    }.toList()
             }
 
             return createDependencyNode(dependency, linkage, issues, children)
@@ -723,8 +721,7 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
      * contained in the list. This is important to make sure that there is only one instance of equal items used in the
      * model, because when Jackson generates IDs each instance gets a new ID, no matter if they are equal or not.
      */
-    private fun <T> MutableList<T>.addIfRequired(value: T): T =
-        find { it == value } ?: value.also { add(it) }
+    private fun <T> MutableList<T>.addIfRequired(value: T): T = find { it == value } ?: value.also { add(it) }
 
     /**
      * Similar to [addIfRequired], but for multiple input values.

@@ -49,7 +49,7 @@ class FossIdLicenseMappingTest : WordSpec({
             val sampleFile = createMarkAsIdentifiedFile("invalid license")
             val issues = mutableListOf<Issue>()
 
-            val findings = listOf(sampleFile).mapSummary(emptyMap(), issues, emptyMap())
+            val findings = listOf(sampleFile).mapSummary(emptyMap(), issues)
 
             issues should haveSize(1)
             issues.first() shouldNotBeNull {
@@ -93,7 +93,7 @@ class FossIdLicenseMappingTest : WordSpec({
             issues should haveSize(1)
             issues.first() shouldNotBeNull {
                 message shouldStartWith
-                        "Failed to map license 'invalid license' as an SPDX expression."
+                    "Failed to map license 'invalid license' as an SPDX expression."
                 severity shouldBe Severity.HINT
             }
             findings should haveSize(1)

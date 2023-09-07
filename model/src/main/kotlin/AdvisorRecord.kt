@@ -58,11 +58,12 @@ data class AdvisorRecord(
         fun resultsWithIssues(
             minSeverity: Severity = Severity.HINT,
             capability: AdvisorCapability? = null
-        ): AdvisorResultFilter = { result ->
-            (capability == null || capability in result.advisor.capabilities) && result.summary.issues.any {
-                it.severity >= minSeverity
+        ): AdvisorResultFilter =
+            { result ->
+                (capability == null || capability in result.advisor.capabilities) && result.summary.issues.any {
+                    it.severity >= minSeverity
+                }
             }
-        }
     }
 
     @JsonIgnore

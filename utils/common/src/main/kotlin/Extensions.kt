@@ -50,7 +50,7 @@ fun <T, K> Collection<T>.getDuplicates(keySelector: (T) -> K): Map<K, List<T>> =
 fun <T> Collection<T>.getDuplicates(): Set<T> = getDuplicates { it }.keys
 
 /**
- * Collapse consecutive [values] to a list of pairs that each denote a range. A single value is represented as a
+ * Collapse consecutive values to a list of pairs that each denote a range. A single value is represented as a
  * range whose first and last elements are equal.
  */
 fun Collection<Int>.collapseToRanges(): List<Pair<Int, Int>> {
@@ -75,9 +75,10 @@ fun Collection<Int>.collapseToRanges(): List<Pair<Int, Int>> {
 /**
  * Return a string of common-separated ranges as denoted by the list of pairs.
  */
-fun Collection<Pair<Int, Int>>.prettyPrintRanges(): String = joinToString { (startValue, endValue) ->
-    if (startValue == endValue) startValue.toString() else "$startValue-$endValue"
-}
+fun Collection<Pair<Int, Int>>.prettyPrintRanges(): String =
+    joinToString { (startValue, endValue) ->
+        if (startValue == endValue) startValue.toString() else "$startValue-$endValue"
+    }
 
 /**
  * Format this [Double] as a string with the provided number of [decimalPlaces].

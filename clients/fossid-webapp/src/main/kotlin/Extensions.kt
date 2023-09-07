@@ -49,12 +49,12 @@ fun <B : EntityResponseBody<T>, T> B?.checkResponse(operation: String, withDataC
     requireNotNull(this)
 
     require(error == null) {
-        "Could not '$operation'. Additional information : $error"
+        "Could not '$operation'. Additional information: $error"
     }
 
     if (withDataCheck) {
         requireNotNull(data) {
-            "No Payload received for '$operation'. Additional information: $error"
+            "No Payload received for '$operation'."
         }
     }
 
@@ -120,20 +120,19 @@ suspend fun FossIdRestService.createProject(
     projectCode: String,
     projectName: String,
     comment: String = "Created by ORT"
-) =
-    createProject(
-        PostRequestBody(
-            "create",
-            PROJECT_GROUP,
-            user,
-            apiKey,
-            mapOf(
-                "project_code" to projectCode,
-                "project_name" to projectName,
-                "comment" to comment
-            )
+) = createProject(
+    PostRequestBody(
+        "create",
+        PROJECT_GROUP,
+        user,
+        apiKey,
+        mapOf(
+            "project_code" to projectCode,
+            "project_name" to projectName,
+            "comment" to comment
         )
     )
+)
 
 /**
  * Create a new scan of [gitRepoUrl]/[gitBranch] for the given [projectCode].
@@ -206,7 +205,7 @@ suspend fun FossIdRestService.deleteScan(user: String, apiKey: String, scanCode:
                 "scan_code" to scanCode,
                 "delete_identifications" to "1"
             )
-         )
+        )
     )
 
 /**
@@ -371,21 +370,20 @@ suspend fun FossIdRestService.createIgnoreRule(
     type: RuleType,
     value: String,
     scope: RuleScope
-) =
-    createIgnoreRule(
-        PostRequestBody(
-            "ignore_rules_add",
-            SCAN_GROUP,
-            user,
-            apiKey,
-            mapOf(
-                "scan_code" to scanCode,
-                "type" to type.name.lowercase(),
-                "value" to value,
-                "apply_to" to scope.name.lowercase()
-            )
+) = createIgnoreRule(
+    PostRequestBody(
+        "ignore_rules_add",
+        SCAN_GROUP,
+        user,
+        apiKey,
+        mapOf(
+            "scan_code" to scanCode,
+            "type" to type.name.lowercase(),
+            "value" to value,
+            "apply_to" to scope.name.lowercase()
         )
     )
+)
 
 /**
  * Ask the FossID server to generate a [reportType] report containing [selectionType]. The report will be generated in
@@ -448,6 +446,56 @@ suspend fun FossIdRestService.generateReport(
             )
         )
     }
+}
+
+/**
+ * Mark the given file with [path] as identified for the given [scanCode].
+ *
+ * The HTTP request is sent with [user] and [apiKey] as credentials.
+ */
+suspend fun FossIdRestService.markAsIdentified(
+    user: String,
+    apiKey: String,
+    scanCode: String,
+    path: String,
+    isDirectory: Boolean
+): EntityResponseBody<Nothing> {
+    val base64Path = base64Encoder.encodeToString(path.toByteArray())
+    val directoryFlag = if (isDirectory) "1" else "0"
+    return markAsIdentified(
+        PostRequestBody(
+            "mark_as_identified",
+            FILES_AND_FOLDERS_GROUP,
+            user,
+            apiKey,
+            mapOf("scan_code" to scanCode, "path" to base64Path, "is_directory" to directoryFlag)
+        )
+    )
+}
+
+/**
+ * Unmark the given file with [path] as identified for the given [scanCode].
+ *
+ * The HTTP request is sent with [user] and [apiKey] as credentials.
+ */
+suspend fun FossIdRestService.unmarkAsIdentified(
+    user: String,
+    apiKey: String,
+    scanCode: String,
+    path: String,
+    isDirectory: Boolean
+): EntityResponseBody<Nothing> {
+    val base64Path = base64Encoder.encodeToString(path.toByteArray())
+    val directoryFlag = if (isDirectory) "1" else "0"
+    return unmarkAsIdentified(
+        PostRequestBody(
+            "unmark_as_identified",
+            FILES_AND_FOLDERS_GROUP,
+            user,
+            apiKey,
+            mapOf("scan_code" to scanCode, "path" to base64Path, "is_directory" to directoryFlag)
+        )
+    )
 }
 
 /**

@@ -22,6 +22,7 @@ package org.ossreviewtoolkit.model.utils
 import java.time.Instant
 
 import org.ossreviewtoolkit.model.CopyrightFinding
+import org.ossreviewtoolkit.model.KnownProvenance
 import org.ossreviewtoolkit.model.LicenseFinding
 import org.ossreviewtoolkit.model.OrtResult
 import org.ossreviewtoolkit.model.ScanResult
@@ -29,19 +30,17 @@ import org.ossreviewtoolkit.model.ScanSummary
 import org.ossreviewtoolkit.model.SnippetFinding
 
 /**
- * Merge the nested [ScanResult]s into one [ScanResult] per used scanner. The given [scanResultsByPath] must contain at
- * least one scan result associated with the empty string which defines the package provenance and is used as provenance
- * for the result. All other entries in [scanResultsByPath] hold the scan results for each respective (recursive)
- * sub-repository of the main repository. This maps the given [scanResultsByPath] to the format currently used by
- * [OrtResult]. When merging multiple [ScanSummary]s for a particular scanner the earliest start time and lasted end
- * time will be used as the new values for the respective scanner. Because the [ScanSummary] does not contain the
- * checksums of the individual files, no package verification code can be calculated.
+ * Merge the nested [ScanResult]s into one [ScanResult] per used scanner. The entry for the empty string in
+ * [scanResultsByPath] holds the scan results for the root provenance of the package. All further entries in
+ * [scanResultsByPath] hold the scan results corresponding to the path the (sub-)repository appears in the source tree.
+ * This maps the given [scanResultsByPath] to the format currently used by [OrtResult]. When merging multiple
+ * [ScanSummary]s for a particular scanner the earliest start time and lasted end time will be used as the new values
+ * for the respective scanner. The given [packageProvenance] is used as provenance for all returned merged scan results.
  */
-fun mergeScanResultsByScanner(scanResultsByPath: Map<String, List<ScanResult>>): List<ScanResult> {
-    val rootProvenance = scanResultsByPath.getValue("").map { it.provenance }.distinct().also {
-        require(it.size == 1) { "There must be exactly one unique provenance associated with the empty path." }
-    }.first()
-
+fun mergeScanResultsByScanner(
+    scanResultsByPath: Map<String, List<ScanResult>>,
+    packageProvenance: KnownProvenance
+): List<ScanResult> {
     val allScanners = scanResultsByPath.values.flatMapTo(mutableSetOf()) { results -> results.map { it.scanner } }
 
     return allScanners.map { scanner ->
@@ -60,21 +59,29 @@ fun mergeScanResultsByScanner(scanResultsByPath: Map<String, List<ScanResult>>):
         val snippetFindings = scanResultsForScannerByPath.mergeSnippetFindings()
 
         ScanResult(
-            provenance = rootProvenance,
+            provenance = packageProvenance,
             scanner = scanner,
             summary = ScanSummary(
                 startTime = startTime,
                 endTime = endTime,
-                packageVerificationCode = "",
                 licenseFindings = licenseFindings,
                 copyrightFindings = copyrightFindings,
                 snippetFindings = snippetFindings,
                 issues = issues
             ),
-            additionalData = scanResultsForScanner.map { it.additionalData }.reduce { acc, map -> acc + map }
+            additionalData = scanResultsForScanner.map { it.additionalData }.mergeAdditionalData()
         )
     }
 }
+
+/**
+ * Merge a list of [ScanResult.additionalData] by keeping all keys and concatenating values to a string separated by
+ * commas.
+ */
+private fun List<Map<String, String>>.mergeAdditionalData(): Map<String, String> =
+    flatMap { it.entries }
+        .groupBy({ it.key }) { it.value }
+        .mapValues { it.value.joinToString(",") }
 
 private fun Map<String, List<ScanResult>>.mergeLicenseFindings(): Set<LicenseFinding> {
     val findingsByPath = mapValues { (_, scanResults) ->

@@ -44,6 +44,10 @@ dependencies {
 
     funTestApi(testFixtures(project(":scanner")))
 
+    funTestImplementation(platform(project(":plugins:scanners")))
+
+    testImplementation(platform(project(":plugins:scanners")))
+
     testImplementation(libs.bundles.kotlinxSerialization)
     testImplementation(libs.mockk)
     testImplementation(libs.retrofitConverterKotlinxSerialization)
@@ -58,7 +62,7 @@ tasks.named<KotlinCompile>("compileTestKotlin") {
         "-opt-in=kotlinx.serialization.ExperimentalSerializationApi"
     )
 
-    kotlinOptions {
-        freeCompilerArgs = freeCompilerArgs + customCompilerArgs
+    compilerOptions {
+        freeCompilerArgs.addAll(customCompilerArgs)
     }
 }

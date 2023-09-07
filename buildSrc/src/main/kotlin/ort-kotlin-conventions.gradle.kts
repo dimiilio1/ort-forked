@@ -33,6 +33,7 @@ import org.gradle.kotlin.dsl.project
 import org.gradle.kotlin.dsl.register
 import org.gradle.kotlin.dsl.withType
 
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.plugin.KotlinCompilation
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
@@ -43,6 +44,7 @@ plugins {
     // Apply core plugins.
     jacoco
     `maven-publish`
+    signing
 
     // Apply precompiled plugins.
     id("ort-base-conventions")
@@ -69,7 +71,7 @@ testing {
         register<JvmTestSuite>("funTest") {
             sources {
                 kotlin {
-                    testType.set(TestSuiteType.FUNCTIONAL_TEST)
+                    testType = TestSuiteType.FUNCTIONAL_TEST
                 }
             }
         }
@@ -116,35 +118,35 @@ detekt {
     basePath = rootDir.path
 }
 
-// See https://kotlinlang.org/docs/compiler-reference.html#jvm-target-version.
 val javaVersion = JavaVersion.current()
-val maxKotlinJvmTarget = javaVersion.majorVersion.toInt().coerceAtMost(19)
+val maxKotlinJvmTarget = runCatching { JvmTarget.fromTarget(javaVersion.majorVersion) }
+    .getOrDefault(JvmTarget.entries.max())
 
 val mergeDetektReportsTaskName = "mergeDetektReports"
 val mergeDetektReports = if (rootProject.tasks.findByName(mergeDetektReportsTaskName) != null) {
     rootProject.tasks.named<ReportMergeTask>(mergeDetektReportsTaskName)
 } else {
     rootProject.tasks.register<ReportMergeTask>(mergeDetektReportsTaskName) {
-        output.set(rootProject.buildDir.resolve("reports/detekt/merged.sarif"))
+        output = rootProject.layout.buildDirectory.dir("reports/detekt/merged.sarif").get().asFile
     }
 }
 
 tasks.withType<Detekt> detekt@{
-    jvmTarget = maxKotlinJvmTarget.toString()
+    jvmTarget = maxKotlinJvmTarget.target
 
     dependsOn(":detekt-rules:assemble")
 
     reports {
-        html.required.set(false)
+        html.required = false
 
         // TODO: Enable this once https://github.com/detekt/detekt/issues/5034 is resolved and use the merged
         //       Markdown file as a GitHub Action job summary, see
         //       https://github.blog/2022-05-09-supercharging-github-actions-with-job-summaries/.
-        md.required.set(false)
+        md.required = false
 
-        sarif.required.set(true)
-        txt.required.set(false)
-        xml.required.set(false)
+        sarif.required = true
+        txt.required = false
+        xml.required = false
     }
 
     mergeDetektReports.configure {
@@ -156,8 +158,8 @@ tasks.withType<Detekt> detekt@{
 
 tasks.withType<JavaCompile>().configureEach {
     // Align this with Kotlin to avoid errors, see https://youtrack.jetbrains.com/issue/KT-48745.
-    sourceCompatibility = maxKotlinJvmTarget.toString()
-    targetCompatibility = maxKotlinJvmTarget.toString()
+    sourceCompatibility = maxKotlinJvmTarget.target
+    targetCompatibility = maxKotlinJvmTarget.target
 }
 
 tasks.withType<KotlinCompile>().configureEach {
@@ -167,16 +169,15 @@ tasks.withType<KotlinCompile>().configureEach {
         "-opt-in=kotlin.time.ExperimentalTime"
     )
 
-    kotlinOptions {
+    compilerOptions {
         allWarningsAsErrors = true
-        apiVersion = "1.8"
-        freeCompilerArgs = freeCompilerArgs + customCompilerArgs
-        jvmTarget = maxKotlinJvmTarget.toString()
+        freeCompilerArgs.addAll(customCompilerArgs)
+        jvmTarget = maxKotlinJvmTarget
     }
 }
 
 val sourcesJar by tasks.registering(Jar::class) {
-    archiveClassifier.set("sources")
+    archiveClassifier = "sources"
     from(sourceSets.main.get().allSource)
 }
 
@@ -186,7 +187,7 @@ tasks.register<Jar>("docsHtmlJar") {
 
     dependsOn(tasks.dokkatooGeneratePublicationHtml)
     from(tasks.dokkatooGeneratePublicationHtml.flatMap { it.outputDirectory })
-    archiveClassifier.set("htmldoc")
+    archiveClassifier = "htmldoc"
 }
 
 val docsJavadocJar by tasks.registering(Jar::class) {
@@ -195,7 +196,7 @@ val docsJavadocJar by tasks.registering(Jar::class) {
 
     dependsOn(tasks.dokkatooGeneratePublicationJavadoc)
     from(tasks.dokkatooGeneratePublicationJavadoc.flatMap { it.outputDirectory })
-    archiveClassifier.set("javadoc")
+    archiveClassifier = "javadoc"
 }
 
 tasks.withType<Test>().configureEach {
@@ -225,7 +226,7 @@ tasks.withType<Test>().configureEach {
         )
     }
 
-    val testSystemProperties = mutableListOf("gradle.build.dir" to project.buildDir.path)
+    val testSystemProperties = mutableListOf("gradle.build.dir" to project.layout.buildDirectory.get().asFile.path)
 
     listOf(
         "java.io.tmpdir",
@@ -253,7 +254,7 @@ tasks.named("check") {
 tasks.named<JacocoReport>("jacocoTestReport") {
     reports {
         // Enable XML in addition to HTML for CI integration.
-        xml.required.set(true)
+        xml.required = true
     }
 }
 
@@ -266,7 +267,7 @@ tasks.register<JacocoReport>("jacocoFunTestReport") {
 
     reports {
         // Enable XML in addition to HTML for CI integration.
-        xml.required.set(true)
+        xml.required = true
     }
 }
 
@@ -279,7 +280,11 @@ tasks.register("jacocoReport") {
 
 configure<PublishingExtension> {
     publications {
-        create<MavenPublication>(name) {
+        val publicationName = name.replace(Regex("([a-z])-([a-z])")) {
+            "${it.groupValues[1]}${it.groupValues[2].uppercase()}"
+        }
+
+        create<MavenPublication>(publicationName) {
             fun getGroupId(parent: Project?): String =
                 if (parent == null) "" else "${getGroupId(parent.parent)}.${parent.name.replace("-", "")}"
 
@@ -292,18 +297,46 @@ configure<PublishingExtension> {
             pom {
                 licenses {
                     license {
-                        name.set("Apache-2.0")
-                        url.set("https://www.apache.org/licenses/LICENSE-2.0")
+                        name = "Apache-2.0"
+                        url = "https://www.apache.org/licenses/LICENSE-2.0"
                     }
                 }
 
                 scm {
-                    connection.set("scm:git:https://github.com/oss-review-toolkit/ort.git")
-                    developerConnection.set("scm:git:git@github.com:oss-review-toolkit/ort.git")
-                    tag.set(version.toString())
-                    url.set("https://github.com/oss-review-toolkit/ort")
+                    connection = "scm:git:https://github.com/oss-review-toolkit/ort.git"
+                    developerConnection = "scm:git:git@github.com:oss-review-toolkit/ort.git"
+                    tag = version.toString()
+                    url = "https://github.com/oss-review-toolkit/ort"
                 }
             }
         }
     }
+
+    repositories {
+        maven {
+            name = "OSSRH"
+
+            val releasesRepoUrl = "https://oss.sonatype.org/service/local/staging/deploy/maven2"
+            val snapshotsRepoUrl = "https://oss.sonatype.org/content/repositories/snapshots"
+            url = uri(if (version.toString().endsWith("-SNAPSHOT")) snapshotsRepoUrl else releasesRepoUrl)
+
+            credentials {
+                username = System.getenv("OSSRH_USER") ?: return@credentials
+                password = System.getenv("OSSRH_PASSWORD") ?: return@credentials
+            }
+        }
+    }
+}
+
+signing {
+    val signingKey = System.getenv("SIGNING_KEY") ?: return@signing
+    val signingPassword = System.getenv("SIGNING_PASSWORD") ?: return@signing
+    useInMemoryPgpKeys(signingKey, signingPassword)
+
+    setRequired {
+        // Do not require signing for `PublishToMavenLocal` tasks only.
+        gradle.taskGraph.allTasks.any { it is PublishToMavenRepository }
+    }
+
+    sign(publishing.publications)
 }

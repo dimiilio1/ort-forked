@@ -22,6 +22,8 @@ package org.ossreviewtoolkit.plugins.scanners.boyterlc
 import java.io.File
 import java.time.Instant
 
+import kotlinx.serialization.json.Json
+
 import org.apache.logging.log4j.kotlin.Logging
 
 import org.ossreviewtoolkit.model.Issue
@@ -31,8 +33,6 @@ import org.ossreviewtoolkit.model.Severity
 import org.ossreviewtoolkit.model.TextLocation
 import org.ossreviewtoolkit.model.config.DownloaderConfiguration
 import org.ossreviewtoolkit.model.config.ScannerConfiguration
-import org.ossreviewtoolkit.model.mapLicense
-import org.ossreviewtoolkit.model.readTree
 import org.ossreviewtoolkit.scanner.AbstractScannerWrapperFactory
 import org.ossreviewtoolkit.scanner.CommandLinePathScannerWrapper
 import org.ossreviewtoolkit.scanner.ScanContext
@@ -41,10 +41,11 @@ import org.ossreviewtoolkit.scanner.ScannerCriteria
 import org.ossreviewtoolkit.utils.common.Os
 import org.ossreviewtoolkit.utils.common.safeDeleteRecursively
 import org.ossreviewtoolkit.utils.ort.createOrtTempDir
-import org.ossreviewtoolkit.utils.spdx.calculatePackageVerificationCode
+
+private val JSON = Json { ignoreUnknownKeys = true }
 
 class BoyterLc internal constructor(
-    private val name: String,
+    name: String,
     private val scannerConfig: ScannerConfiguration
 ) : CommandLinePathScannerWrapper(name) {
     companion object : Logging {
@@ -59,8 +60,9 @@ class BoyterLc internal constructor(
             BoyterLc(type, scannerConfig)
     }
 
-    override val criteria by lazy { ScannerCriteria.fromConfig(details, scannerConfig) }
     override val configuration = CONFIGURATION_OPTIONS.joinToString(" ")
+
+    override val criteria by lazy { ScannerCriteria.fromConfig(details, scannerConfig) }
 
     override fun command(workingDir: File?) =
         listOfNotNull(workingDir, if (Os.isWindows) "lc.exe" else "lc").joinToString(File.separator)
@@ -70,9 +72,7 @@ class BoyterLc internal constructor(
         // licensechecker version 1.1.1
         output.removePrefix("licensechecker version ")
 
-    override fun scanPath(path: File, context: ScanContext): ScanSummary {
-        val startTime = Instant.now()
-
+    override fun runScanner(path: File, context: ScanContext): String {
         val resultFile = createOrtTempDir().resolve("result.json")
         val process = run(
             *CONFIGURATION_OPTIONS.toTypedArray(),
@@ -80,33 +80,24 @@ class BoyterLc internal constructor(
             path.absolutePath
         )
 
-        val endTime = Instant.now()
-
         return with(process) {
             if (stderr.isNotBlank()) logger.debug { stderr }
             if (isError) throw ScanException(errorMessage)
 
-            generateSummary(startTime, endTime, path, resultFile).also {
-                resultFile.parentFile.safeDeleteRecursively(force = true)
-            }
+            resultFile.readText().also { resultFile.parentFile.safeDeleteRecursively(force = true) }
         }
     }
 
-    private fun generateSummary(startTime: Instant, endTime: Instant, scanPath: File, resultFile: File): ScanSummary {
-        val licenseFindings = mutableSetOf<LicenseFinding>()
-        val result = resultFile.readTree()
+    override fun createSummary(result: String, startTime: Instant, endTime: Instant): ScanSummary {
+        val results = JSON.decodeFromString<List<BoyterLcResult>>(result)
 
-        result.flatMapTo(licenseFindings) { file ->
-            val filePath = File(file["Directory"].textValue(), file["Filename"].textValue())
-            file["LicenseGuesses"].map {
+        val licenseFindings = results.flatMapTo(mutableSetOf()) {
+            val filePath = File(it.directory, it.filename)
+            it.licenseGuesses.map { guess ->
                 LicenseFinding(
-                    license = it["LicenseId"].textValue().mapLicense(scannerConfig.detectedLicenseMapping),
-                    location = TextLocation(
-                        // Turn absolute paths in the native result into relative paths to not expose any information.
-                        relativizePath(scanPath, filePath),
-                        TextLocation.UNKNOWN_LINE
-                    ),
-                    score = it["Percentage"].floatValue()
+                    license = guess.licenseId,
+                    location = TextLocation(filePath.invariantSeparatorsPath, TextLocation.UNKNOWN_LINE),
+                    score = guess.percentage
                 )
             }
         }
@@ -114,7 +105,6 @@ class BoyterLc internal constructor(
         return ScanSummary(
             startTime = startTime,
             endTime = endTime,
-            packageVerificationCode = calculatePackageVerificationCode(scanPath),
             licenseFindings = licenseFindings,
             issues = listOf(
                 Issue(

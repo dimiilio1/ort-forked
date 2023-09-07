@@ -21,8 +21,14 @@ package org.ossreviewtoolkit.plugins.reporters.spdx
 
 import java.io.File
 
+import org.apache.logging.log4j.kotlin.Logging
+
 import org.ossreviewtoolkit.reporter.Reporter
 import org.ossreviewtoolkit.reporter.ReporterInput
+import org.ossreviewtoolkit.utils.spdx.SpdxCompoundExpression
+import org.ossreviewtoolkit.utils.spdx.SpdxConstants.LICENSE_REF_PREFIX
+import org.ossreviewtoolkit.utils.spdx.SpdxExpression
+import org.ossreviewtoolkit.utils.spdx.SpdxLicenseWithExceptionExpression
 import org.ossreviewtoolkit.utils.spdx.SpdxModelMapper.FileFormat
 import org.ossreviewtoolkit.utils.spdx.model.SpdxDocument
 
@@ -38,26 +44,25 @@ import org.ossreviewtoolkit.utils.spdx.model.SpdxDocument
  * - *document.comment*: Add the corresponding value as metadata to the [SpdxDocument].
  * - *document.name*: The name of the generated [SpdxDocument], defaults to "Unnamed document".
  * - *output.file.formats*: The list of [FileFormat]s to generate, defaults to [FileFormat.YAML].
+ * - *file.information.enabled*: Toggle whether the output document should contain information on file granularity
+ *                               about files containing findings.
  */
 class SpdxDocumentReporter : Reporter {
-    companion object {
+    companion object : Logging {
         const val REPORT_BASE_FILENAME = "bom.spdx"
 
         const val OPTION_CREATION_INFO_COMMENT = "creationInfo.comment"
         const val OPTION_DOCUMENT_COMMENT = "document.comment"
         const val OPTION_DOCUMENT_NAME = "document.name"
         const val OPTION_OUTPUT_FILE_FORMATS = "output.file.formats"
+        const val OPTION_FILE_INFORMATION_ENABLED = "file.information.enabled"
 
         private const val DOCUMENT_NAME_DEFAULT_VALUE = "Unnamed document"
     }
 
     override val type = "SpdxDocument"
 
-    override fun generateReport(
-        input: ReporterInput,
-        outputDir: File,
-        options: Map<String, String>
-    ): List<File> {
+    override fun generateReport(input: ReporterInput, outputDir: File, options: Map<String, String>): List<File> {
         val outputFileFormats = options[OPTION_OUTPUT_FILE_FORMATS]
             ?.split(',')
             ?.mapTo(mutableSetOf()) { FileFormat.valueOf(it.uppercase()) }
@@ -66,7 +71,8 @@ class SpdxDocumentReporter : Reporter {
         val params = SpdxDocumentModelMapper.SpdxDocumentParams(
             documentName = options.getOrDefault(OPTION_DOCUMENT_NAME, DOCUMENT_NAME_DEFAULT_VALUE),
             documentComment = options.getOrDefault(OPTION_DOCUMENT_COMMENT, ""),
-            creationInfoComment = options.getOrDefault(OPTION_CREATION_INFO_COMMENT, "")
+            creationInfoComment = options.getOrDefault(OPTION_CREATION_INFO_COMMENT, ""),
+            fileInformationEnabled = options.getOrDefault(OPTION_FILE_INFORMATION_ENABLED, "true").toBoolean()
         )
 
         val spdxDocument = SpdxDocumentModelMapper.map(
@@ -76,6 +82,16 @@ class SpdxDocumentReporter : Reporter {
             params
         )
 
+        val licenseRefExceptions = spdxDocument.getLicenseRefExceptions()
+        if (licenseRefExceptions.isNotEmpty()) {
+            logger.warn {
+                "The SPDX document contains the following ${licenseRefExceptions.size} LicenseRef- exceptions " +
+                    "used by a WITH operator, which does not conform with SPDX specification version 2: \n" +
+                    "finding ${licenseRefExceptions.joinToString("\n")}\n You may be able to use "
+                "license curations to fix up these exceptions into valid SPDX v2 license expressions."
+            }
+        }
+
         return outputFileFormats.map { fileFormat ->
             val serializedDocument = fileFormat.mapper.writeValueAsString(spdxDocument)
 
@@ -83,5 +99,31 @@ class SpdxDocumentReporter : Reporter {
                 bufferedWriter().use { it.write(serializedDocument) }
             }
         }
+    }
+}
+
+private fun SpdxDocument.getLicenseRefExceptions(): Set<String> {
+    val licenses = buildSet {
+        files.flatMapTo(this) { it.licenseInfoInFiles }
+        packages.flatMapTo(this) { it.licenseInfoFromFiles }
+    }
+
+    return buildSet {
+        licenses.forEach { license ->
+            SpdxExpression.parse(license, SpdxExpression.Strictness.ALLOW_ANY).getLicenseRefExceptions(this)
+        }
+    }
+}
+
+private fun SpdxExpression.getLicenseRefExceptions(result: MutableSet<String>) {
+    when (this) {
+        is SpdxCompoundExpression -> {
+            left.getLicenseRefExceptions(result)
+            right.getLicenseRefExceptions(result)
+        }
+        is SpdxLicenseWithExceptionExpression -> if (isPresent() && exception.startsWith(LICENSE_REF_PREFIX)) {
+            result.add(exception)
+        }
+        else -> { }
     }
 }

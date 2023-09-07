@@ -21,6 +21,7 @@ package org.ossreviewtoolkit.plugins.commands.advisor
 
 import com.github.ajalt.clikt.core.BadParameterValue
 import com.github.ajalt.clikt.core.ProgramResult
+import com.github.ajalt.clikt.core.terminal
 import com.github.ajalt.clikt.parameters.options.associate
 import com.github.ajalt.clikt.parameters.options.convert
 import com.github.ajalt.clikt.parameters.options.default
@@ -85,7 +86,7 @@ class AdvisorCommand : OrtCommand(
     private val labels by option(
         "--label", "-l",
         help = "Set a label in the ORT result, overwriting any existing label of the same name. Can be used multiple " +
-                "times. For example: --label distribution=external"
+            "times. For example: --label distribution=external"
     ).associate()
 
     private val resolutionsFile by option(
@@ -149,7 +150,7 @@ class AdvisorCommand : OrtCommand(
 
             println(
                 "$vulnerablePackageCount of $totalPackageCount package(s) (not counting excluded ones) are " +
-                        "vulnerable, with $vulnerabilityCount vulnerabilities in total."
+                    "vulnerable, with $vulnerabilityCount vulnerabilities in total."
             )
         }
 
@@ -158,6 +159,6 @@ class AdvisorCommand : OrtCommand(
             .partition { resolutionProvider.isResolved(it) }
         val severityStats = SeverityStats.createFromIssues(resolvedIssues, unresolvedIssues)
 
-        severityStats.print().conclude(ortConfig.severeIssueThreshold, 2)
+        severityStats.print(terminal).conclude(ortConfig.severeIssueThreshold, 2)
     }
 }

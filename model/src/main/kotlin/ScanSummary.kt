@@ -38,7 +38,7 @@ import org.ossreviewtoolkit.utils.spdx.SpdxExpression
 /**
  * A short summary of the scan results.
  */
-@JsonIgnoreProperties("file_count")
+@JsonIgnoreProperties("file_count", "package_verification_code")
 data class ScanSummary(
     /**
      * The time when the scan started.
@@ -49,13 +49,6 @@ data class ScanSummary(
      * The time when the scan finished.
      */
     val endTime: Instant,
-
-    /**
-     * The [SPDX package verification code](https://spdx.dev/spdx_specification_2_0_html#h.2p2csry), calculated from all
-     * files in the package. Note that if the scanner is configured to ignore certain files they will still be included
-     * in the calculation of this code.
-     */
-    val packageVerificationCode: String,
 
     /**
      * The detected license findings.
@@ -83,8 +76,7 @@ data class ScanSummary(
 
     /**
      * The list of issues that occurred during the scan. This property is not serialized if the list is empty to reduce
-     * the size of the result file. If there are no issues at all, [ScannerRun.hasIssues] already contains that
-     * information.
+     * the size of the result file.
      */
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
     val issues: List<Issue> = emptyList()
@@ -96,32 +88,41 @@ data class ScanSummary(
         @JvmField
         val EMPTY = ScanSummary(
             startTime = Instant.EPOCH,
-            endTime = Instant.EPOCH,
-            packageVerificationCode = ""
+            endTime = Instant.EPOCH
         )
     }
 
     @get:JsonIgnore
-    val licenses: Set<SpdxExpression> = licenseFindings.mapTo(mutableSetOf()) { it.license }
+    val licenses: Set<SpdxExpression> by lazy { licenseFindings.mapTo(mutableSetOf()) { it.license } }
 
     /**
      * Filter all detected licenses and copyrights from this [ScanSummary] which are underneath [path]. Findings which
      * [RootLicenseMatcher] assigns as root license files for [path] are also kept.
      */
-    fun filterByPath(path: String): ScanSummary {
-        if (path.isBlank()) return this
+    fun filterByPath(path: String): ScanSummary = filterByPaths(listOf(path))
+
+    /**
+     * Filter all detected licenses and copyrights from this [ScanSummary] which are underneath the given [paths].
+     * Findings which [RootLicenseMatcher] assigns as root license files for path in [paths] are also kept.
+     */
+    fun filterByPaths(paths: Collection<String>): ScanSummary {
+        if (paths.any { it.isBlank() }) return this
 
         val rootLicenseMatcher = RootLicenseMatcher(LicenseFilePatterns.getInstance())
         val applicableLicenseFiles = rootLicenseMatcher.getApplicableRootLicenseFindingsForDirectories(
             licenseFindings = licenseFindings,
-            directories = listOf(path)
+            directories = paths
         ).values.flatten().mapTo(mutableSetOf()) { it.location.path }
 
-        fun TextLocation.matchesPath() = this.path.startsWith("$path/") || this.path in applicableLicenseFiles
+        fun TextLocation.matchesPaths() =
+            paths.any { filterPath ->
+                this.path.startsWith("$filterPath/") || this.path in applicableLicenseFiles
+            }
 
         return copy(
-            licenseFindings = licenseFindings.filterTo(mutableSetOf()) { it.location.matchesPath() },
-            copyrightFindings = copyrightFindings.filterTo(mutableSetOf()) { it.location.matchesPath() }
+            licenseFindings = licenseFindings.filterTo(mutableSetOf()) { it.location.matchesPaths() },
+            copyrightFindings = copyrightFindings.filterTo(mutableSetOf()) { it.location.matchesPaths() },
+            snippetFindings = snippetFindings.filterTo(mutableSetOf()) { it.sourceLocation.matchesPaths() }
         )
     }
 
@@ -134,7 +135,8 @@ data class ScanSummary(
 
         return copy(
             licenseFindings = licenseFindings.filterTo(mutableSetOf()) { !matcher.matches(it.location.path) },
-            copyrightFindings = copyrightFindings.filterTo(mutableSetOf()) { !matcher.matches(it.location.path) }
+            copyrightFindings = copyrightFindings.filterTo(mutableSetOf()) { !matcher.matches(it.location.path) },
+            snippetFindings = snippetFindings.filterTo(mutableSetOf()) { !matcher.matches(it.sourceLocation.path) }
         )
     }
 }

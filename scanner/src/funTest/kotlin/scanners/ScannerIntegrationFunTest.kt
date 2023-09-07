@@ -34,7 +34,6 @@ import org.ossreviewtoolkit.model.PackageReference
 import org.ossreviewtoolkit.model.PackageType
 import org.ossreviewtoolkit.model.Project
 import org.ossreviewtoolkit.model.ScanSummary
-import org.ossreviewtoolkit.model.ScannerDetails
 import org.ossreviewtoolkit.model.Scope
 import org.ossreviewtoolkit.model.TextLocation
 import org.ossreviewtoolkit.model.VcsInfo
@@ -46,6 +45,7 @@ import org.ossreviewtoolkit.scanner.PathScannerWrapper
 import org.ossreviewtoolkit.scanner.ScanContext
 import org.ossreviewtoolkit.scanner.Scanner
 import org.ossreviewtoolkit.scanner.ScannerCriteria
+import org.ossreviewtoolkit.scanner.ScannerWrapper
 import org.ossreviewtoolkit.scanner.provenance.DefaultNestedProvenanceResolver
 import org.ossreviewtoolkit.scanner.provenance.DefaultPackageProvenanceResolver
 import org.ossreviewtoolkit.scanner.provenance.DefaultProvenanceDownloader
@@ -59,31 +59,49 @@ import org.ossreviewtoolkit.utils.test.matchExpectedResult
 import org.ossreviewtoolkit.utils.test.patchActualResult
 
 class ScannerIntegrationFunTest : WordSpec({
-    "scan()" should {
-        "return the expected ORT result for a given analyzer result" {
-            val analyzerResult = createAnalyzerResult()
-            val expectedResultFile = getAssetFile("scanner-integration-expected-ort-result.yml")
+    "Scanning all packages corresponding to a single VCS" should {
+        val analyzerResult = createAnalyzerResult(pkg0, pkg1, pkg2, pkg3, pkg4)
+        val ortResult = createScanner().scan(analyzerResult, skipExcluded = false, emptyMap())
 
-            val result = createScanner().scan(analyzerResult, skipExcluded = false, emptyMap())
+        "return the expected ORT result" {
+            val expectedResultFile = getAssetFile("scanner-integration-all-pkgs-expected-ort-result.yml")
 
-            patchActualResult(result.toYaml(), patchStartAndEndTime = true) should
-                    matchExpectedResult(expectedResultFile)
+            patchActualResult(ortResult.toYaml(), patchStartAndEndTime = true) should
+                matchExpectedResult(expectedResultFile)
         }
 
-        "return the expected (merged) scan results for a given analyzer result" {
-            val analyzerResult = createAnalyzerResult()
+        "return the expected (merged) scan results" {
             val expectedResultFile = getAssetFile("scanner-integration-expected-scan-results.yml")
 
-            val scanResults = createScanner().scan(analyzerResult, skipExcluded = false, emptyMap())
-                .getScanResults().toSortedMap()
+            val scanResults = ortResult.getScanResults().toSortedMap()
 
             patchActualResult(scanResults.toYaml(), patchStartAndEndTime = true) should
-                    matchExpectedResult(expectedResultFile)
+                matchExpectedResult(expectedResultFile)
+        }
+
+        "return the expected (merged) file lists" {
+            val expectedResultFile = getAssetFile("scanner-integration-expected-file-lists.yml")
+
+            val fileLists = ortResult.getFileLists().toSortedMap()
+
+            fileLists.toYaml() should matchExpectedResult(expectedResultFile)
+        }
+    }
+
+    "Scanning a subset of the packages corresponding to a single VCS" should {
+        "return the expected ORT result" {
+            val analyzerResult = createAnalyzerResult(pkg1, pkg3)
+            val expectedResultFile = getAssetFile("scanner-integration-subset-pkgs-expected-ort-result.yml")
+
+            val ortResult = createScanner().scan(analyzerResult, skipExcluded = false, emptyMap())
+
+            patchActualResult(ortResult.toYaml(), patchStartAndEndTime = true) should
+                matchExpectedResult(expectedResultFile)
         }
     }
 })
 
-private fun createScanner(): Scanner {
+internal fun createScanner(scannerWrappers: Map<PackageType, List<ScannerWrapper>>? = null): Scanner {
     val downloaderConfiguration = DownloaderConfiguration()
     val workingTreeCache = DefaultWorkingTreeCache()
     val provenanceDownloader = DefaultProvenanceDownloader(downloaderConfiguration, workingTreeCache)
@@ -101,16 +119,14 @@ private fun createScanner(): Scanner {
         storageWriters = emptyList(),
         packageProvenanceResolver = packageProvenanceResolver,
         nestedProvenanceResolver = nestedProvenanceResolver,
-        scannerWrappers = mapOf(
+        scannerWrappers = scannerWrappers ?: mapOf(
             PackageType.PROJECT to listOf(dummyScanner),
             PackageType.PACKAGE to listOf(dummyScanner)
         )
     )
 }
 
-private fun createAnalyzerResult(): OrtResult {
-    val packages = setOf(pkg1, pkg2, pkg3)
-
+private fun createAnalyzerResult(vararg packages: Package): OrtResult {
     val scope = Scope(
         name = "deps",
         dependencies = packages.mapTo(mutableSetOf()) { PackageReference(it.id) }
@@ -131,8 +147,8 @@ private fun createAnalyzerResult(): OrtResult {
     return OrtResult.EMPTY.copy(analyzer = analyzerRun)
 }
 
-private fun createId(name: String): Identifier =
-    Identifier("Dummy::$name:1.0.0")
+private fun createId(name: String): Identifier = Identifier("Dummy::$name:1.0.0")
+
 private fun createPackage(name: String, vcs: VcsInfo): Package =
     Package.EMPTY.copy(
         id = createId(name),
@@ -140,38 +156,65 @@ private fun createPackage(name: String, vcs: VcsInfo): Package =
         vcsProcessed = vcs.normalize()
     )
 
+// A package with an empty VCS path.
+private val pkg0 = createPackage(
+    name = "pkg0",
+    vcs = VcsInfo(
+        type = VcsType.GIT,
+        url = "https://github.com/oss-review-toolkit/ort-test-data-scanner.git",
+        revision = "97d57bb4795bc41f496e1a8e2c7751cefc7da7ec",
+        path = ""
+    )
+)
+
+// A package within a VCS path.
 private val pkg1 = createPackage(
     name = "pkg1",
     vcs = VcsInfo(
         type = VcsType.GIT,
         url = "https://github.com/oss-review-toolkit/ort-test-data-scanner.git",
-        revision = "f6d8b9b73d8dedbe5cf1212b797e09e4f8ea290c",
+        revision = "97d57bb4795bc41f496e1a8e2c7751cefc7da7ec",
         path = "pkg1"
     )
 )
 
+// A package within a VCS path.
 private val pkg2 = createPackage(
     name = "pkg2",
     vcs = VcsInfo(
         type = VcsType.GIT,
         url = "https://github.com/oss-review-toolkit/ort-test-data-scanner.git",
-        revision = "f6d8b9b73d8dedbe5cf1212b797e09e4f8ea290c",
+        revision = "97d57bb4795bc41f496e1a8e2c7751cefc7da7ec",
         path = "pkg2"
     )
 )
 
+// A package within a VCS path, containing sub-repository.
 private val pkg3 = createPackage(
     name = "pkg3",
     vcs = VcsInfo(
         type = VcsType.GIT,
         url = "https://github.com/oss-review-toolkit/ort-test-data-scanner.git",
-        revision = "f6d8b9b73d8dedbe5cf1212b797e09e4f8ea290c",
+        revision = "97d57bb4795bc41f496e1a8e2c7751cefc7da7ec",
         path = "pkg3"
     )
 )
 
-private class DummyScanner : PathScannerWrapper {
-    override val details = ScannerDetails(name = "Dummy", version = "1.0.0", configuration = "")
+// A package within a VCS path, containing sub-repository.
+private val pkg4 = createPackage(
+    name = "pkg4",
+    vcs = VcsInfo(
+        type = VcsType.GIT,
+        url = "https://github.com/oss-review-toolkit/ort-test-data-scanner.git",
+        revision = "97d57bb4795bc41f496e1a8e2c7751cefc7da7ec",
+        path = "pkg4"
+    )
+)
+
+internal class DummyScanner(override val name: String = "Dummy") : PathScannerWrapper {
+    override val version = "1.0.0"
+    override val configuration = ""
+
     override val criteria = ScannerCriteria.forDetails(details)
 
     override fun scanPath(path: File, context: ScanContext): ScanSummary {

@@ -96,35 +96,36 @@ class OpossumReporter : Reporter {
         val excludeFromNotice: Boolean = false,
         val uuid: UUID = UUID.randomUUID()
     ) {
-        fun toJson(): Map<*, *> = sortedMapOf(
-            uuid.toString() to sortedMapOf(
-                "source" to sortedMapOf(
-                    "name" to source,
-                    "documentConfidence" to 80
-                ),
-                "attributionConfidence" to 80,
-                "packageType" to id?.getPurlType(),
-                "packageNamespace" to id?.namespace,
-                "packageName" to id?.name,
-                "packageVersion" to id?.version,
-                "copyright" to copyright,
-                "licenseName" to license?.toString(),
-                "url" to url,
-                "preSelected" to preselected,
-                "followUp" to "FOLLOW_UP".takeIf { followUp },
-                "excludeFromNotice" to excludeFromNotice,
-                "comment" to comment
+        fun toJson(): Map<*, *> =
+            sortedMapOf(
+                uuid.toString() to sortedMapOf(
+                    "source" to sortedMapOf(
+                        "name" to source,
+                        "documentConfidence" to 80
+                    ),
+                    "attributionConfidence" to 80,
+                    "packageType" to id?.getPurlType(),
+                    "packageNamespace" to id?.namespace,
+                    "packageName" to id?.name,
+                    "packageVersion" to id?.version,
+                    "copyright" to copyright,
+                    "licenseName" to license?.toString(),
+                    "url" to url,
+                    "preSelected" to preselected,
+                    "followUp" to "FOLLOW_UP".takeIf { followUp },
+                    "excludeFromNotice" to excludeFromNotice,
+                    "comment" to comment
+                )
             )
-        )
 
         fun matches(other: OpossumSignal): Boolean =
             source == other.source
-                    && id == other.id
-                    && url == other.url
-                    && license == other.license
-                    && copyright == other.copyright
-                    && comment == other.comment
-                    && preselected == other.preselected
+                && id == other.id
+                && url == other.url
+                && license == other.license
+                && copyright == other.copyright
+                && comment == other.comment
+                && preselected == other.preselected
     }
 
     internal data class OpossumResources(
@@ -176,11 +177,12 @@ class OpossumReporter : Reporter {
         val fullName: String?,
         val defaultText: String?
     ) : Comparable<OpossumFrequentLicense> {
-        fun toJson(): Map<*, *> = sortedMapOf(
-            "shortName" to shortName,
-            "fullName" to fullName,
-            "defaultText" to defaultText
-        )
+        fun toJson(): Map<*, *> =
+            sortedMapOf(
+                "shortName" to shortName,
+                "fullName" to fullName,
+                "defaultText" to defaultText
+            )
 
         override fun compareTo(other: OpossumFrequentLicense) =
             compareValuesBy(
@@ -306,12 +308,7 @@ class OpossumReporter : Reporter {
             )
         }
 
-        private fun addDependency(
-            dependency: DependencyNode,
-            ortResult: OrtResult,
-            relRoot: String,
-            level: Int = 1
-        ) {
+        private fun addDependency(dependency: DependencyNode, ortResult: OrtResult, relRoot: String, level: Int = 1) {
             val dependencyId = dependency.id
 
             logger.debug { "$relRoot - ${dependencyId.toCoordinates()} - Dependency" }
@@ -344,11 +341,7 @@ class OpossumReporter : Reporter {
             }
         }
 
-        fun addProject(
-            project: Project,
-            ortResult: OrtResult,
-            relRoot: String = "/"
-        ) {
+        fun addProject(project: Project, ortResult: OrtResult, relRoot: String = "/") {
             val projectId = project.id
             val definitionFilePath = resolvePath(relRoot, project.definitionFilePath)
             logger.debug { "$definitionFilePath - $projectId - Project" }
@@ -505,15 +498,12 @@ class OpossumReporter : Reporter {
         jsonFile.delete()
     }
 
-    internal fun generateOpossumInput(
-        ortResult: OrtResult,
-        maxDepth: Int = Int.MAX_VALUE
-    ): OpossumInput {
+    internal fun generateOpossumInput(ortResult: OrtResult, maxDepth: Int = Int.MAX_VALUE): OpossumInput {
         val opossumInput = OpossumInput()
 
         opossumInput.addBaseUrl("/", ortResult.repository.vcs)
 
-        SpdxLicense.values().forEach {
+        SpdxLicense.entries.forEach {
             val licenseText = getLicenseText(it.id)
             opossumInput.frequentLicenses += OpossumFrequentLicense(it.id, it.fullName, licenseText)
         }
@@ -545,11 +535,7 @@ class OpossumReporter : Reporter {
         return opossumInput
     }
 
-    override fun generateReport(
-        input: ReporterInput,
-        outputDir: File,
-        options: Map<String, String>
-    ): List<File> {
+    override fun generateReport(input: ReporterInput, outputDir: File, options: Map<String, String>): List<File> {
         val maxDepth = options.getOrDefault(OPTION_SCANNER_MAX_DEPTH, "3").toInt()
         val opossumInput = generateOpossumInput(input.ortResult, maxDepth)
         val outputFile = outputDir.resolve("report.opossum")

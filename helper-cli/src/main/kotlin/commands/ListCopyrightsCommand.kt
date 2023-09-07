@@ -32,7 +32,7 @@ import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.config.CopyrightGarbage
 import org.ossreviewtoolkit.model.config.orEmpty
 import org.ossreviewtoolkit.model.readValue
-import org.ossreviewtoolkit.model.utils.DirectoryPackageConfigurationProvider
+import org.ossreviewtoolkit.plugins.packageconfigurationproviders.dir.DirPackageConfigurationProvider
 import org.ossreviewtoolkit.utils.common.expandTilde
 
 internal class ListCopyrightsCommand : CliktCommand(
@@ -71,14 +71,14 @@ internal class ListCopyrightsCommand : CliktCommand(
     private val packageConfigurationsDir by option(
         "--package-configurations-dir",
         help = "A directory that is searched recursively for package configuration files. Each file must only " +
-                "contain a single package configuration."
+            "contain a single package configuration."
     ).convert { it.expandTilde() }
         .file(mustExist = true, canBeFile = false, canBeDir = true, mustBeWritable = false, mustBeReadable = true)
 
     override fun run() {
         val ortResult = readOrtResult(ortFile)
         val copyrightGarbage = copyrightGarbageFile?.readValue<CopyrightGarbage>().orEmpty()
-        val packageConfigurationProvider = DirectoryPackageConfigurationProvider(packageConfigurationsDir)
+        val packageConfigurationProvider = DirPackageConfigurationProvider(packageConfigurationsDir)
 
         val copyrightStatements = ortResult.processAllCopyrightStatements(
             copyrightGarbage = copyrightGarbage.items,

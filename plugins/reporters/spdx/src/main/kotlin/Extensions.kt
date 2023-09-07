@@ -21,15 +21,26 @@
 
 package org.ossreviewtoolkit.plugins.reporters.spdx
 
+import java.util.concurrent.atomic.AtomicInteger
+
+import org.ossreviewtoolkit.model.ArtifactProvenance
 import org.ossreviewtoolkit.model.Hash
 import org.ossreviewtoolkit.model.Identifier
+import org.ossreviewtoolkit.model.LicenseFinding
+import org.ossreviewtoolkit.model.OrtResult
 import org.ossreviewtoolkit.model.Package
+import org.ossreviewtoolkit.model.Provenance
 import org.ossreviewtoolkit.model.RepositoryProvenance
 import org.ossreviewtoolkit.model.ScanResult
+import org.ossreviewtoolkit.model.SourceCodeOrigin
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
+import org.ossreviewtoolkit.model.licenses.Findings
 import org.ossreviewtoolkit.model.licenses.LicenseInfoResolver
 import org.ossreviewtoolkit.model.licenses.LicenseView
+import org.ossreviewtoolkit.model.licenses.ResolvedLicenseInfo
+import org.ossreviewtoolkit.model.utils.FindingCurationMatcher
+import org.ossreviewtoolkit.model.utils.prependedPath
 import org.ossreviewtoolkit.reporter.LicenseTextProvider
 import org.ossreviewtoolkit.utils.common.replaceCredentialsInUri
 import org.ossreviewtoolkit.utils.ort.ProcessedDeclaredLicense
@@ -37,10 +48,12 @@ import org.ossreviewtoolkit.utils.spdx.SpdxConstants
 import org.ossreviewtoolkit.utils.spdx.SpdxExpression
 import org.ossreviewtoolkit.utils.spdx.SpdxLicense
 import org.ossreviewtoolkit.utils.spdx.SpdxLicenseException
+import org.ossreviewtoolkit.utils.spdx.calculatePackageVerificationCode
 import org.ossreviewtoolkit.utils.spdx.model.SpdxChecksum
 import org.ossreviewtoolkit.utils.spdx.model.SpdxDocument
 import org.ossreviewtoolkit.utils.spdx.model.SpdxExternalReference
 import org.ossreviewtoolkit.utils.spdx.model.SpdxExtractedLicenseInfo
+import org.ossreviewtoolkit.utils.spdx.model.SpdxFile
 import org.ossreviewtoolkit.utils.spdx.model.SpdxPackage
 import org.ossreviewtoolkit.utils.spdx.model.SpdxPackageVerificationCode
 import org.ossreviewtoolkit.utils.spdx.toSpdx
@@ -51,7 +64,7 @@ import org.ossreviewtoolkit.utils.spdx.toSpdxId
  */
 private fun Hash.toSpdxChecksum(): SpdxChecksum? =
     // The SPDX checksum algorithm names are simple and assumed to be part of ORT's HashAlgorithm aliases.
-    SpdxChecksum.Algorithm.values().find { it.name in algorithm.aliases }?.let {
+    SpdxChecksum.Algorithm.entries.find { it.name in algorithm.aliases }?.let {
         SpdxChecksum(
             algorithm = it,
             checksumValue = value
@@ -119,17 +132,19 @@ internal enum class SpdxPackageType(val infix: String, val suffix: String = "") 
 
 /**
  * Convert this ORT package to an SPDX package. As an ORT package can hold more metadata about its associated artifacts
- * and origin than an SPDX package, the [type] is used to specify which kind of SPDX package should be created from
- * respective ORT package metadata. [licenseInfoResolver] is used for license and copyright information, and the
- * optional [scanResult] and [provenance] are used for [type]-specific information.
+ * and origin than an SPDX package, the [type] is used to specify which kind of SPDX package should be created from the
+ * respective ORT package metadata. [licenseInfoResolver] is used to obtain license and copyright information and
+ * [ortResult] is used to obtain data which is not contained in this [Package] instance.
  */
 internal fun Package.toSpdxPackage(
     type: SpdxPackageType,
     licenseInfoResolver: LicenseInfoResolver,
-    scanResult: ScanResult? = null,
-    provenance: RepositoryProvenance? = null
+    ortResult: OrtResult
 ): SpdxPackage {
-    val packageVerificationCode = scanResult.toSpdxPackageVerificationCode()
+    val packageVerificationCode = ortResult.getPackageVerificationCode(id, type)?.let {
+        SpdxPackageVerificationCode(packageVerificationCodeValue = it)
+    }
+
     return SpdxPackage(
         spdxId = id.toSpdxId(type.infix, type.suffix),
         checksums = when (type) {
@@ -142,7 +157,7 @@ internal fun Package.toSpdxPackage(
             SpdxPackageType.PROJECT -> SpdxConstants.NONE
             SpdxPackageType.BINARY_PACKAGE -> binaryArtifact.url.nullOrBlankToSpdxNone()
             SpdxPackageType.SOURCE_PACKAGE -> sourceArtifact.url.nullOrBlankToSpdxNone()
-            SpdxPackageType.VCS_PACKAGE -> vcsProcessed.toSpdxDownloadLocation(provenance?.resolvedRevision)
+            SpdxPackageType.VCS_PACKAGE -> vcsProcessed.toSpdxDownloadLocation(ortResult.getResolvedRevision(id))
         },
         externalRefs = if (type == SpdxPackageType.PROJECT) emptyList() else toSpdxExternalReferences(),
         filesAnalyzed = packageVerificationCode != null,
@@ -171,6 +186,21 @@ internal fun Package.toSpdxPackage(
     )
 }
 
+private fun OrtResult.getVcsScanResult(id: Identifier): ScanResult? =
+    getScanResultsForId(id).firstOrNull { it.provenance is RepositoryProvenance }
+
+private fun OrtResult.getResolvedRevision(id: Identifier): String? =
+    (getVcsScanResult(id)?.provenance as RepositoryProvenance?)?.resolvedRevision
+
+private fun OrtResult.getPackageVerificationCode(id: Identifier, type: SpdxPackageType): String? =
+    when (type) {
+        SpdxPackageType.VCS_PACKAGE -> getFileListForId(id).takeIf { it?.provenance is RepositoryProvenance }
+        SpdxPackageType.SOURCE_PACKAGE -> getFileListForId(id).takeIf { it?.provenance is ArtifactProvenance }
+        else -> null
+    }?.let { fileList ->
+        calculatePackageVerificationCode(fileList.files.map { it.sha1 }.asSequence())
+    }
+
 /**
  * Convert processed declared licenses to SPDX. Unmapped licenses are represented as `NOASSERTION`.
  */
@@ -188,14 +218,6 @@ private fun ProcessedDeclaredLicense.toSpdxDeclaredLicense(): String =
         }
 
         else -> spdxExpression.nullOrBlankToSpdxNoassertionOrNone()
-    }
-
-/**
- * Wrap a scan summary's package verification code in a [SpdxPackageVerificationCode].
- */
-internal fun ScanResult?.toSpdxPackageVerificationCode(): SpdxPackageVerificationCode? =
-    this?.summary?.packageVerificationCode?.takeUnless { it.isEmpty() }?.let {
-        SpdxPackageVerificationCode(packageVerificationCodeValue = it)
     }
 
 /**
@@ -256,3 +278,152 @@ internal fun VcsInfo.toSpdxDownloadLocation(resolvedRevision: String?): String {
         if (path.isNotBlank()) append("#$path")
     }
 }
+
+/**
+ * Return the [SpdxFile]s for the package denoted by [id]. The result contains exactly those file residing in the
+ * artifact or repository corresponding to [sourceCodeOrigin], which do contain at least one license or copyright
+ * finding. The given [nextFileIndex] is incremented by one for each returned file, and it's respective value is used as
+ * a part of the generated SPDX ID of the files.
+ */
+internal fun OrtResult.getSpdxFiles(
+    id: Identifier,
+    licenseInfoResolver: LicenseInfoResolver,
+    sourceCodeOrigin: SourceCodeOrigin,
+    nextFileIndex: AtomicInteger
+): List<SpdxFile> =
+    getFileFindings(id, licenseInfoResolver, sourceCodeOrigin).orEmpty().sortedBy { it.path }.map { fileFindings ->
+        SpdxFile(
+            spdxId = "${SpdxConstants.REF_PREFIX}File-${nextFileIndex.getAndIncrement()}",
+            checksums = listOf(
+                SpdxChecksum(algorithm = SpdxChecksum.Algorithm.SHA1, checksumValue = fileFindings.sha1)
+            ),
+            filename = fileFindings.path,
+            licenseConcluded = SpdxConstants.NOASSERTION,
+            licenseInfoInFiles = fileFindings.licenses.takeIf { it.isNotEmpty() }?.map { it.toString() }
+                ?: listOf(SpdxConstants.NONE),
+            copyrightText = fileFindings.copyrights.sorted().joinToString("\n").takeUnless {
+                it.isBlank()
+            } ?: SpdxConstants.NONE
+        )
+    }
+
+/**
+ * This class holds license and copyright findings as well as the sha1 checksum corresponding to a file located under
+ * [path].
+ */
+private data class FileFindings(
+    val path: String,
+    val sha1: String,
+    val licenses: Set<SpdxExpression>,
+    val copyrights: Set<String>
+)
+
+/**
+ * Return the [FileFindings] for the package denoted by [id]. The result contains exactly one entry for each file which
+ * has at least one finding and no entry for files without any findings.
+ */
+private fun OrtResult.getFileFindings(
+    id: Identifier,
+    licenseInfoResolver: LicenseInfoResolver,
+    sourceCodeOrigin: SourceCodeOrigin
+): Set<FileFindings>? {
+    val resolvedLicenseInfo = licenseInfoResolver.resolveLicenseInfo(id)
+
+    val licensesByFilePath = resolvedLicenseInfo.getLicensesByFilePath(sourceCodeOrigin) ?: return null
+    val copyrightsByFilePath = resolvedLicenseInfo.getCopyrightsByFilePath(sourceCodeOrigin) ?: return null
+    val sha1ByFilepath = getFileListForId(id)?.takeIf { it.provenance.matches(sourceCodeOrigin) }?.files?.associateBy(
+        { it.path }, { it.sha1 }
+    ) ?: return null
+
+    val findingPaths = copyrightsByFilePath.keys + licensesByFilePath.keys
+
+    return findingPaths.mapNotNullTo(mutableSetOf()) { path ->
+        FileFindings(
+            path = path,
+            // The sha1 is not available in case path is not within the VCS path.
+            sha1 = sha1ByFilepath[path] ?: return@mapNotNullTo null,
+            licenses = licensesByFilePath[path].orEmpty(),
+            copyrights = copyrightsByFilePath[path].orEmpty()
+        )
+    }
+}
+
+/**
+ * Return the file paths corresponding to all non-excluded, curated copyright statements for the specified
+ * [sourceCodeOrigin] associated with the copyright findings under the respective path, or `null` if the
+ * [sourceCodeOrigin] hasn't been scanned.
+ */
+private fun ResolvedLicenseInfo.getCopyrightsByFilePath(sourceCodeOrigin: SourceCodeOrigin): Map<String, Set<String>>? {
+    if (licenseInfo.detectedLicenseInfo.findings.none { it.provenance.matches(sourceCodeOrigin) }) return null
+
+    val result = mutableMapOf<String, MutableSet<String>>()
+
+    licenses.forEach { resolvedLicense ->
+        resolvedLicense.locations.forEach { location ->
+            if (location.provenance.matches(sourceCodeOrigin) && location.matchingPathExcludes.isEmpty()) {
+                location.copyrights.forEach { copyrightFinding ->
+                    if (copyrightFinding.matchingPathExcludes.isEmpty()) {
+                        result.getOrPut(copyrightFinding.location.path) { mutableSetOf() } += copyrightFinding.statement
+                    }
+                }
+            }
+        }
+    }
+
+    unmatchedCopyrights.forEach { (provenance, copyrightFindings) ->
+        if (provenance.matches(sourceCodeOrigin)) {
+            copyrightFindings.forEach { copyrightFinding ->
+                if (copyrightFinding.matchingPathExcludes.isEmpty()) {
+                    result.getOrPut(copyrightFinding.location.path) { mutableSetOf() } += copyrightFinding.statement
+                }
+            }
+        }
+    }
+
+    return result
+}
+
+/**
+ * Return the file paths corresponding to all non-excluded, curated license findings for the specified
+ * [sourceCodeOrigin] associated with the licenses detected under the respective path, or `null` ff the
+ * [sourceCodeOrigin] hasn't been scanned.
+ */
+private fun ResolvedLicenseInfo.getLicensesByFilePath(
+    sourceCodeOrigin: SourceCodeOrigin
+): Map<String, Set<SpdxExpression>>? {
+    // TODO: Consider refactoring ResolvedLicenseInfo, so that it is possible to obtain the information needed
+    //       without relying on findings, which in turn requires re-applying curations and filtering by path excludes.
+    val findingsForSourceCodeOrigin = licenseInfo.detectedLicenseInfo.findings.filter {
+        it.provenance.matches(sourceCodeOrigin)
+    }.takeUnless { it.isEmpty() } ?: return null
+
+    return findingsForSourceCodeOrigin
+        .flatMap { it.getLicensesByFilePath().toList() }
+        .groupBy({ it.first }, { it.second })
+        .mapValues { it.value.flatten().toSet() }
+}
+
+/**
+ * Return the file paths corresponding to all non-excluded, curated license findings associated with the licenses
+ * detected under the respective path.
+ */
+private fun Findings.getLicensesByFilePath(): Map<String, Set<SpdxExpression>> {
+    fun LicenseFinding.path() = location.prependedPath(relativeFindingsPath)
+
+    return licenses
+        .filter { licenseFinding -> pathExcludes.none { it.matches(licenseFinding.path()) } }
+        .let { licenseFindings -> FindingCurationMatcher().applyAll(licenseFindings, licenseFindingCurations) }
+        .mapNotNull { curationResult -> curationResult.curatedFinding }
+        .groupBy({ licenseFinding -> licenseFinding.path() }, { licenseFinding -> licenseFinding.license })
+        .mapValues { (_, licenses) -> licenses.toSet() }
+}
+
+/**
+ * Return true if and only if this provenance is of the type specified by [sourceCodeOrigin].
+ */
+private fun Provenance.matches(sourceCodeOrigin: SourceCodeOrigin): Boolean =
+    when (sourceCodeOrigin) {
+        SourceCodeOrigin.VCS -> this is RepositoryProvenance
+        SourceCodeOrigin.ARTIFACT -> this is ArtifactProvenance
+        else -> false
+    }

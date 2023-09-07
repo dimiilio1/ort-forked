@@ -36,36 +36,47 @@ ort:
     patentFilenames: ['patents']
     rootLicenseFilenames: ['readme*']
 
+  # Package configurations have to be unique by ID and provenance. Ensure that different providers do not provide
+  # configurations for the same package, see https://github.com/oss-review-toolkit/ort/issues/6972 for details.
+  packageConfigurationProviders:
+  - type: DefaultDir
+  - type: Dir
+    id: SomeConfigDir
+    config:
+      path: '/some-path/'
+      mustExist: true
+  - type: OrtConfig
+
   # Providers are listed from highest to lower priority. Technically, they are applied in reverse order: The provider
-  # with the highest priority is applied last, so it can overwrite any previously applied curations.
+  # with the highest priority is applied last, so it can override any previously applied curations.
   packageCurationProviders:
-    - type: DefaultFile
-    - type: DefaultDir
-    - type: File
-      id: SomeCurationsFile
-      config:
-        path: '/some-path/curations.yml'
-        mustExist: true
-    - type: File
-      id: SomeCurationsDir
-      config:
-        path: '/some-path/curations-dir'
-        mustExist: false
-    - type: OrtConfig
-      enabled: '${USE_ORT_CONFIG_CURATIONS:-true}'
-    - type: ClearlyDefined
-      config:
-        serverUrl: 'https://api.clearlydefined.io'
-        minTotalLicenseScore: 80
-    - type: SW360
-      config:
-        restUrl: 'https://your-sw360-rest-url'
-        authUrl: 'https://your-authentication-url'
-        username: username
-        password: password
-        clientId: clientId
-        clientPassword: clientPassword
-        token: token
+  - type: DefaultFile
+  - type: DefaultDir
+  - type: File
+    id: SomeCurationsFile
+    config:
+      path: '/some-path/curations.yml'
+      mustExist: true
+  - type: File
+    id: SomeCurationsDir
+    config:
+      path: '/some-path/curations-dir'
+      mustExist: false
+  - type: OrtConfig
+    enabled: '${USE_ORT_CONFIG_CURATIONS:-true}'
+  - type: ClearlyDefined
+    config:
+      serverUrl: 'https://api.clearlydefined.io'
+      minTotalLicenseScore: 80
+  - type: SW360
+    config:
+      restUrl: 'https://your-sw360-rest-url'
+      authUrl: 'https://your-authentication-url'
+      username: username
+      password: password
+      clientId: clientId
+      clientPassword: clientPassword
+      token: token
 
   severeIssueThreshold: ERROR
   severeRuleViolationThreshold: ERROR
@@ -199,8 +210,6 @@ ort:
 
         # Command line options that do not affect the ScanCode output.
         commandLineNonConfig: '--processes 4'
-
-        parseLicenseExpressions: true
 
         # Criteria for matching stored scan results. These can be configured for any scanner that uses semantic
         # versioning. Note that the 'maxVersion' is exclusive and not part of the range of accepted versions.

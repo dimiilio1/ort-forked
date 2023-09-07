@@ -55,7 +55,6 @@ import org.ossreviewtoolkit.model.config.PackageManagerConfiguration
 import org.ossreviewtoolkit.model.config.RepositoryConfiguration
 import org.ossreviewtoolkit.model.createAndLogIssue
 import org.ossreviewtoolkit.model.utils.DependencyGraphBuilder
-import org.ossreviewtoolkit.plugins.packagemanagers.gradle.utils.GradleDependencyHandler
 import org.ossreviewtoolkit.utils.common.Os
 import org.ossreviewtoolkit.utils.common.splitOnWhitespace
 import org.ossreviewtoolkit.utils.common.temporaryProperties
@@ -222,14 +221,14 @@ class Gradle(
                 if (stdout.size() > 0) {
                     logger.debug {
                         "Analyzing the project in '$projectDir' produced the following standard output:\n" +
-                                stdout.toString().prependIndent("\t")
+                            stdout.toString().prependIndent("\t")
                     }
                 }
 
                 if (stderr.size() > 0) {
                     logger.warn {
                         "Analyzing the project in '$projectDir' produced the following error output:\n" +
-                                stderr.toString().prependIndent("\t")
+                            stderr.toString().prependIndent("\t")
                     }
                 }
 

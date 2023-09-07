@@ -31,10 +31,10 @@ import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.LicenseFinding
 import org.ossreviewtoolkit.model.ScanResult
 import org.ossreviewtoolkit.model.config.OrtConfiguration
-import org.ossreviewtoolkit.model.utils.DirectoryPackageConfigurationProvider
 import org.ossreviewtoolkit.model.utils.FindingCurationMatcher
 import org.ossreviewtoolkit.model.utils.RootLicenseMatcher
 import org.ossreviewtoolkit.model.yamlMapper
+import org.ossreviewtoolkit.plugins.packageconfigurationproviders.dir.DirPackageConfigurationProvider
 import org.ossreviewtoolkit.scanner.ScanStorages
 import org.ossreviewtoolkit.utils.common.expandTilde
 import org.ossreviewtoolkit.utils.ort.ORT_CONFIG_FILENAME
@@ -56,7 +56,7 @@ internal class GetPackageLicensesCommand : CliktCommand(
     private val configArguments by option(
         "-P",
         help = "Override a key-value pair in the configuration file. For example: " +
-                "-P ort.scanner.storages.postgres.connection.schema=testSchema"
+            "-P ort.scanner.storages.postgres.connection.schema=testSchema"
     ).associate()
 
     private val packageId by option(
@@ -68,13 +68,13 @@ internal class GetPackageLicensesCommand : CliktCommand(
     private val packageConfigurationsDir by option(
         "--package-configurations-dir",
         help = "A directory that is searched recursively for package configuration files. Each file must only " +
-                "contain a single package configuration."
+            "contain a single package configuration."
     ).file(mustExist = true, canBeFile = false, canBeDir = true, mustBeWritable = false, mustBeReadable = true)
         .convert { it.expandTilde() }
 
     override fun run() {
         val scanResults = getStoredScanResults(packageId)
-        val packageConfigurationProvider = DirectoryPackageConfigurationProvider(packageConfigurationsDir)
+        val packageConfigurationProvider = DirPackageConfigurationProvider(packageConfigurationsDir)
 
         val result = scanResults.firstOrNull()?.let { scanResult ->
             val packageConfigurations =

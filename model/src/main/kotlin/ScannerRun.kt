@@ -22,14 +22,22 @@ package org.ossreviewtoolkit.model
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.databind.annotation.JsonSerialize
 
+import java.io.File
 import java.time.Instant
 
+import kotlin.time.measureTimedValue
+
+import org.apache.logging.log4j.kotlin.Logging
+
 import org.ossreviewtoolkit.model.config.ScannerConfiguration
+import org.ossreviewtoolkit.model.utils.FileListSortedSetConverter
 import org.ossreviewtoolkit.model.utils.ProvenanceResolutionResultSortedSetConverter
 import org.ossreviewtoolkit.model.utils.ScanResultSortedSetConverter
-import org.ossreviewtoolkit.model.utils.alignRevisions
-import org.ossreviewtoolkit.model.utils.clearVcsPath
+import org.ossreviewtoolkit.model.utils.ScannersMapConverter
+import org.ossreviewtoolkit.model.utils.getKnownProvenancesWithoutVcsPath
 import org.ossreviewtoolkit.model.utils.mergeScanResultsByScanner
+import org.ossreviewtoolkit.model.utils.prependPath
+import org.ossreviewtoolkit.model.utils.vcsPath
 import org.ossreviewtoolkit.utils.common.getDuplicates
 import org.ossreviewtoolkit.utils.ort.Environment
 
@@ -67,9 +75,21 @@ data class ScannerRun(
      * The scan results for each resolved provenance.
      */
     @JsonSerialize(converter = ScanResultSortedSetConverter::class)
-    val scanResults: Set<ScanResult>
+    val scanResults: Set<ScanResult>,
+
+    /**
+     * The names of the scanners which have been used to scan the package.
+     */
+    @JsonSerialize(converter = ScannersMapConverter::class)
+    val scanners: Map<Identifier, Set<String>>,
+
+    /**
+     * The list of files for each resolved provenance.
+     */
+    @JsonSerialize(converter = FileListSortedSetConverter::class)
+    val files: Set<FileList>
 ) {
-    companion object {
+    companion object : Logging {
         /**
          * A constant for a [ScannerRun] where all properties are empty.
          */
@@ -80,7 +100,9 @@ data class ScannerRun(
             environment = Environment(),
             config = ScannerConfiguration(),
             provenances = emptySet(),
-            scanResults = emptySet()
+            scanResults = emptySet(),
+            files = emptySet(),
+            scanners = emptyMap()
         )
     }
 
@@ -99,16 +121,12 @@ data class ScannerRun(
                     "The revision and resolved revision of a scan result are not equal, which is not allowed."
                 }
             }
-
-            require(scanResult.summary.packageVerificationCode.isEmpty()) {
-                "Found a scan result with a non-empty package verification code, which is not allowed."
-            }
         }
 
         provenances.getDuplicates { it.id }.keys.let { idsForDuplicateProvenanceResolutionResults ->
             require(idsForDuplicateProvenanceResolutionResults.isEmpty()) {
                 "Found multiple provenance resolution results for the following ids: " +
-                        "${idsForDuplicateProvenanceResolutionResults.joinToString { it.toCoordinates() }}."
+                    "${idsForDuplicateProvenanceResolutionResults.joinToString { it.toCoordinates() }}."
             }
         }
 
@@ -120,7 +138,27 @@ data class ScannerRun(
         (scannedProvenances - resolvedProvenances).let {
             require(it.isEmpty()) {
                 "Found scan results which do not correspond to any resolved provenances, which is not allowed: \n" +
-                        it.toYaml()
+                    it.toYaml()
+            }
+        }
+
+        val fileListProvenances = files.mapTo(mutableSetOf()) { it.provenance }
+        (fileListProvenances - resolvedProvenances).let {
+            require(it.isEmpty()) {
+                "Found a file lists which do not correspond to any resolved provenances, which is not allowed: \n" +
+                    it.toYaml()
+            }
+        }
+
+        files.forEach { fileList ->
+            (fileList.provenance as? RepositoryProvenance)?.let {
+                require(it.vcsInfo.path.isEmpty()) {
+                    "Found a file list with a non-empty VCS path, which is not allowed."
+                }
+
+                require(it.vcsInfo.revision == it.resolvedRevision) {
+                    "The revision and resolved revision of a file list are not equal, which is not allowed."
+                }
             }
         }
     }
@@ -134,49 +172,76 @@ data class ScannerRun(
     }
 
     private val scanResultsById: Map<Identifier, List<ScanResult>> by lazy {
-        provenances.map { it.id }.associateWith { id -> getMergedResultsForId(id) }
+        logger.debug { "Merging scan results..." }
+
+        val (result, duration) = measureTimedValue {
+            provenances.map { it.id }.associateWith { id -> getMergedResultsForId(id) }
+        }
+
+        logger.debug { "Merging scan results took $duration." }
+
+        result
+    }
+
+    private val fileListByProvenance: Map<KnownProvenance, FileList> by lazy {
+        files.associateBy { it.provenance }
+    }
+
+    private val fileListById: Map<Identifier, FileList> by lazy {
+        provenances.mapNotNull {
+            getMergedFileListForId(it.id)?.let { fileList ->
+                it.id to fileList
+            }
+        }.toMap()
     }
 
     /**
      * Return all scan results related to [id] with the internal sub-repository scan results merged into the root
      * repository scan results. ScanResults for different scanners are not merged, so that the output contains exactly
-     * one scan result per scanner.
+     * one scan result per scanner. In case of any provenance resolution issue, a fake scan result just containing the
+     * issue is returned.
      */
     private fun getMergedResultsForId(id: Identifier): List<ScanResult> {
-        // Algorithm:
-        // 1. If package provenance could not be resolved, create a scan result with the resolution issue.
-        // 2. If nested provenance could not be resolved, take the scan results for the package provenance and each
-        //    scanner and add the resolution issue.
-        // 3. Else, merge the scan results for each scanner based on the nested provenance of the package.
-        val resolutionResult = provenancesById.getValue(id)
-
-        resolutionResult.packageProvenanceResolutionIssue?.let {
-            return listOf(scanResultForProvenanceResolutionIssue(resolutionResult.packageProvenance, it))
+        val resolutionResult = provenancesById.getValue(id).apply {
+            if (issues.isNotEmpty()) {
+                return listOf(scanResultForProvenanceResolutionIssues(packageProvenance, issues))
+            }
         }
 
         val packageProvenance = resolutionResult.packageProvenance!!
 
         val scanResultsByPath = resolutionResult.getKnownProvenancesWithoutVcsPath().mapValues { (_, provenance) ->
             scanResultsByProvenance[provenance].orEmpty()
+        }.mapValues { (_, scanResults) ->
+            scanResults.filter { it.scanner.name in scanners[id].orEmpty() }
         }
 
-        val scanResults = mergeScanResultsByScanner(scanResultsByPath).map { scanResult ->
+        // TODO: Handle the case of incomplete scan results (per scanner), e.g. propagate an issue.
+        return mergeScanResultsByScanner(scanResultsByPath, packageProvenance).map { scanResult ->
             scanResult.filterByPath(packageProvenance.vcsPath).filterByIgnorePatterns(config.ignorePatterns)
         }.map { scanResult ->
             // The VCS revision of scan result is equal to the resolved revision. So, use the package provenance
             // to re-align the VCS revision with the package's metadata.
-            scanResult.copy(
-                provenance = packageProvenance,
-                summary = scanResult.summary.addIssue(resolutionResult.nestedProvenanceResolutionIssue)
-            )
+            scanResult.copy(summary = scanResult.summary.addIssue(resolutionResult.nestedProvenanceResolutionIssue))
+        }
+    }
 
-            // TODO: Compute and set the package verification code of the scan summary.
+    private fun getMergedFileListForId(id: Identifier): FileList? {
+        val resolutionResult = provenancesById[id]?.takeIf {
+            it.packageProvenanceResolutionIssue == null && it.nestedProvenanceResolutionIssue == null
+        } ?: return null
+
+        val packageProvenance = resolutionResult.packageProvenance!!
+
+        val fileListsByPath = resolutionResult.getKnownProvenancesWithoutVcsPath().mapValues { (_, provenance) ->
+            // If there was an issue creating at least one file list, then return null instead of an incomplete file
+            // list.
+            fileListByProvenance[provenance] ?: return null
         }
 
-        return scanResults.takeIf { it.isNotEmpty() }
-            ?: resolutionResult.nestedProvenanceResolutionIssue?.let { issue ->
-                listOf(scanResultForProvenanceResolutionIssue(packageProvenance, issue))
-            }.orEmpty()
+        return mergeFileLists(fileListsByPath)
+            .filterByVcsPath(packageProvenance.vcsPath)
+            .copy(provenance = packageProvenance)
     }
 
     @JsonIgnore
@@ -185,36 +250,57 @@ data class ScannerRun(
     fun getScanResults(id: Identifier): List<ScanResult> = scanResultsById[id].orEmpty()
 
     @JsonIgnore
+    fun getAllFileLists(): Map<Identifier, FileList> = fileListById
+
+    fun getFileList(id: Identifier): FileList? = fileListById[id]
+
+    @JsonIgnore
     fun getIssues(): Map<Identifier, Set<Issue>> =
         scanResultsById.mapValues { (_, scanResults) ->
             scanResults.flatMapTo(mutableSetOf()) { it.summary.issues }
         }
 }
 
-private fun ProvenanceResolutionResult.getKnownProvenancesWithoutVcsPath(): Map<String, KnownProvenance> =
-    buildMap {
-        when (packageProvenance) {
-            is RepositoryProvenance -> put("", packageProvenance.clearVcsPath().alignRevisions())
-            is ArtifactProvenance -> put("", packageProvenance)
-            else -> { }
-        }
-
-        subRepositories.mapValuesTo(this) { (_, vcsInfo) ->
-            RepositoryProvenance(vcsInfo = vcsInfo, resolvedRevision = vcsInfo.revision)
-        }
-    }
-
-private val Provenance.vcsPath: String
-    get() = (this as? RepositoryProvenance)?.vcsInfo?.path.orEmpty()
-
-private fun scanResultForProvenanceResolutionIssue(packageProvenance: KnownProvenance?, issue: Issue): ScanResult =
+private fun scanResultForProvenanceResolutionIssues(packageProvenance: KnownProvenance?, issues: List<Issue>) =
     ScanResult(
-        packageProvenance ?: UnknownProvenance,
+        provenance = packageProvenance ?: UnknownProvenance,
         scanner = ScannerDetails(name = "ProvenanceResolver", version = "", configuration = ""),
-        summary = ScanSummary.EMPTY.copy(
-            issues = listOf(issue)
-        )
+        summary = ScanSummary.EMPTY.copy(issues = issues)
     )
 
 private fun ScanSummary.addIssue(issue: Issue?): ScanSummary =
     if (issue == null) this else copy(issues = (issues + issue).distinct())
+
+private fun mergeFileLists(fileListByPath: Map<String, FileList>): FileList {
+    val provenance = requireNotNull(fileListByPath[""]) {
+        "There must be a file list associated with the root path."
+    }.provenance
+
+    val files = fileListByPath.flatMapTo(mutableSetOf()) { (path, fileList) ->
+        fileList.files.map { fileEntry ->
+            fileEntry.copy(path = fileEntry.path.prependPath(path))
+        }
+    }
+
+    return FileList(provenance, files)
+}
+
+private fun FileList.filterByVcsPath(path: String): FileList {
+    if (path.isBlank()) return this
+
+    require(provenance is RepositoryProvenance) {
+        "Expected a repository provenance but got a ${provenance.javaClass.simpleName}."
+    }
+
+    val provenance = provenance.copy(vcsInfo = provenance.vcsInfo.copy(path = path))
+
+    // Do not keep files outside the VCS path in contrast to ScanSummary.filterByVcsPath().
+    val files = files.filterTo(mutableSetOf()) { fileEntry ->
+        File(fileEntry.path).startsWith(path)
+    }
+
+    return FileList(provenance, files)
+}
+
+val ProvenanceResolutionResult.issues: List<Issue>
+    get() = listOfNotNull(packageProvenanceResolutionIssue, nestedProvenanceResolutionIssue)

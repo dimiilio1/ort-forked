@@ -19,7 +19,6 @@
 
 package org.ossreviewtoolkit.plugins.scanners.scanoss
 
-import java.io.File
 import java.time.Instant
 
 import org.ossreviewtoolkit.clients.scanoss.FullScanResponse
@@ -34,41 +33,14 @@ import org.ossreviewtoolkit.model.SnippetFinding
 import org.ossreviewtoolkit.model.TextLocation
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
-import org.ossreviewtoolkit.model.mapLicense
 import org.ossreviewtoolkit.utils.spdx.SpdxConstants
 import org.ossreviewtoolkit.utils.spdx.SpdxExpression
-import org.ossreviewtoolkit.utils.spdx.calculatePackageVerificationCode
 
 /**
- * Generate a summary from the given SCANOSS [result], using [startTime] and [endTime] metadata. From the [scanPath]
- * the package verification code is generated.
+ * Generate a summary from the given SCANOSS [result], using [startTime], [endTime] as metadata. This variant can be
+ * used if the result is not read from a local file.
  */
-internal fun generateSummary(
-    startTime: Instant,
-    endTime: Instant,
-    scanPath: File,
-    result: FullScanResponse,
-    detectedLicenseMapping: Map<String, String>
-) =
-    generateSummary(
-        startTime,
-        endTime,
-        calculatePackageVerificationCode(scanPath),
-        result,
-        detectedLicenseMapping
-    )
-
-/**
- * Generate a summary from the given SCANOSS [result], using [startTime], [endTime], and [verificationCode]
- * metadata. This variant can be used if the result is not read from a local file.
- */
-internal fun generateSummary(
-    startTime: Instant,
-    endTime: Instant,
-    verificationCode: String,
-    result: FullScanResponse,
-    detectedLicenseMapping: Map<String, String>
-): ScanSummary {
+internal fun generateSummary(startTime: Instant, endTime: Instant, result: FullScanResponse): ScanSummary {
     val licenseFindings = mutableSetOf<LicenseFinding>()
     val copyrightFindings = mutableSetOf<CopyrightFinding>()
     val snippetFindings = mutableSetOf<SnippetFinding>()
@@ -76,7 +48,7 @@ internal fun generateSummary(
     result.forEach { (_, scanResponses) ->
         scanResponses.forEach { scanResponse ->
             if (scanResponse.id == IdentificationType.FILE) {
-                licenseFindings += getLicenseFindings(scanResponse, detectedLicenseMapping)
+                licenseFindings += getLicenseFindings(scanResponse)
                 copyrightFindings += getCopyrightFindings(scanResponse)
             }
 
@@ -96,7 +68,6 @@ internal fun generateSummary(
     return ScanSummary(
         startTime = startTime,
         endTime = endTime,
-        packageVerificationCode = verificationCode,
         licenseFindings = licenseFindings,
         copyrightFindings = copyrightFindings,
         snippetFindings = snippetFindings
@@ -106,10 +77,7 @@ internal fun generateSummary(
 /**
  * Get the license findings from the given [scanResponse].
  */
-private fun getLicenseFindings(
-    scanResponse: ScanResponse,
-    detectedLicenseMappings: Map<String, String>
-): List<LicenseFinding> {
+private fun getLicenseFindings(scanResponse: ScanResponse): List<LicenseFinding> {
     val path = scanResponse.file ?: return emptyList()
     val score = scanResponse.matched?.removeSuffix("%")?.toFloatOrNull()
 
@@ -123,7 +91,7 @@ private fun getLicenseFindings(
         }
 
         LicenseFinding(
-            license = validatedLicense.mapLicense(detectedLicenseMappings),
+            license = validatedLicense,
             location = TextLocation(
                 path = path,
                 startLine = TextLocation.UNKNOWN_LINE,

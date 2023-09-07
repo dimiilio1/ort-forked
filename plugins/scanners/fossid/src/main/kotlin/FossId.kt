@@ -69,7 +69,6 @@ import org.ossreviewtoolkit.model.Provenance
 import org.ossreviewtoolkit.model.RepositoryProvenance
 import org.ossreviewtoolkit.model.ScanResult
 import org.ossreviewtoolkit.model.ScanSummary
-import org.ossreviewtoolkit.model.ScannerDetails
 import org.ossreviewtoolkit.model.Severity
 import org.ossreviewtoolkit.model.UnknownProvenance
 import org.ossreviewtoolkit.model.VcsType
@@ -97,7 +96,7 @@ import org.ossreviewtoolkit.utils.ort.showStackTrace
  * gets a Git repository URL as input and would be a good match for [ProvenanceScannerWrapper].
  */
 class FossId internal constructor(
-    private val name: String,
+    override val name: String,
     private val scannerConfig: ScannerConfiguration,
     private val config: FossIdConfig
 ) : PackageScannerWrapper {
@@ -203,8 +202,10 @@ class FossId internal constructor(
 
     private val service = FossIdRestService.create(config.serverUrl)
 
+    override val version = service.version
+    override val configuration = ""
+
     override val criteria: ScannerCriteria? = null
-    override val details = ScannerDetails(name, service.version, "")
 
     override fun filterSecretOptions(options: Options) =
         options.mapValues { (k, v) ->
@@ -231,15 +232,12 @@ class FossId internal constructor(
     /**
      * Create a [ScanSummary] containing a single [issue], started at [startTime] and finished at [endTime].
      */
-    private fun createSingleIssueSummary(
-        startTime: Instant,
-        endTime: Instant = Instant.now(),
-        issue: Issue
-    ) = ScanSummary.EMPTY.copy(
-        startTime = startTime,
-        endTime = endTime,
-        issues = listOf(issue)
-    )
+    private fun createSingleIssueSummary(startTime: Instant, endTime: Instant = Instant.now(), issue: Issue) =
+        ScanSummary.EMPTY.copy(
+            startTime = startTime,
+            endTime = endTime,
+            issues = listOf(issue)
+        )
 
     override fun scanPackage(pkg: Package, context: ScanContext): ScanResult {
         val (result, duration) = measureTimedValue {
@@ -253,7 +251,7 @@ class FossId internal constructor(
                 val issue = createAndLogIssue(
                     source = name,
                     message = "Package '${pkg.id.toCoordinates()}' uses VCS type '${pkg.vcsProcessed.type}', but " +
-                            "only ${VcsType.GIT} is supported.",
+                        "only ${VcsType.GIT} is supported.",
                     severity = Severity.WARNING
                 )
 
@@ -274,7 +272,7 @@ class FossId internal constructor(
                 val issue = createAndLogIssue(
                     source = name,
                     message = "Ignoring package '${pkg.id.toCoordinates()}' from '${pkg.vcsProcessed.url}' as it has " +
-                            "path '${pkg.vcsProcessed.path}' set and scanning cannot be limited to paths.",
+                        "path '${pkg.vcsProcessed.path}' set and scanning cannot be limited to paths.",
                     severity = Severity.WARNING
                 )
                 val provenance = RepositoryProvenance(pkg.vcsProcessed, pkg.vcsProcessed.revision)
@@ -318,7 +316,7 @@ class FossId internal constructor(
                         val issue = createAndLogIssue(
                             source = name,
                             message = "Package '${pkg.id.toCoordinates()}' has been scanned in asynchronous mode. " +
-                                    "Scan results need to be inspected on the server instance.",
+                                "Scan results need to be inspected on the server instance.",
                             severity = Severity.HINT
                         )
                         val summary = createSingleIssueSummary(startTime, issue = issue)
@@ -379,7 +377,7 @@ class FossId internal constructor(
                 ScanStatus.QUEUED -> {
                     logger.warn {
                         "Found a previous scan which is still running. Will ignore the 'waitForResult' option and " +
-                                "wait..."
+                            "wait..."
                     }
                     waitScanComplete(scanCode)
                     true
@@ -499,9 +497,12 @@ class FossId internal constructor(
             }
         }
 
+        val mappedUrl = urlProvider.getUrl(urlWithoutCredentials)
+        val mappedUrlWithoutCredentials = mappedUrl.replaceCredentialsInUri()
+
         // we ignore the revision because we want to do a delta scan
         val recentScans = scans.recentScansForRepository(
-            urlWithoutCredentials,
+            mappedUrlWithoutCredentials,
             projectRevision = projectRevision,
             defaultBranch = defaultBranch
         )
@@ -511,25 +512,40 @@ class FossId internal constructor(
         val existingScan = recentScans.findLatestPendingOrFinishedScan()
 
         val scanCode = if (existingScan == null) {
-            logger.info { "No scan found for $urlWithoutCredentials and revision $revision. Creating origin scan..." }
+            logger.info {
+                "No scan found for $mappedUrlWithoutCredentials and revision $revision. Creating origin scan..."
+            }
             namingProvider.createScanCode(projectName, DeltaTag.ORIGIN, branchLabel)
         } else {
-            logger.info { "Scan '${existingScan.code}' found for $urlWithoutCredentials and revision $revision." }
+            logger.info { "Scan '${existingScan.code}' found for $mappedUrlWithoutCredentials and revision $revision." }
             logger.info {
                 "Existing scan has for reference(s): ${existingScan.comment.orEmpty()}. Creating delta scan..."
             }
             namingProvider.createScanCode(projectName, DeltaTag.DELTA, branchLabel)
         }
 
-        val newUrl = urlProvider.getUrl(urlWithoutCredentials)
-
-        val scanId = createScan(projectCode, scanCode, newUrl, revision, projectRevision.orEmpty())
+        val scanId = createScan(projectCode, scanCode, mappedUrl, revision, projectRevision.orEmpty())
 
         logger.info { "Initiating the download..." }
         service.downloadFromGit(config.user, config.apiKey, scanCode)
             .checkResponse("download data from Git", false)
 
         if (existingScan == null) {
+            val excludesRules = context.excludes?.let {
+                convertRules(it, issues).also {
+                    logger.info { "${it.size} rule(s) from ORT excludes have been found." }
+                }
+            }.orEmpty()
+
+            excludesRules.forEach {
+                service.createIgnoreRule(config.user, config.apiKey, scanCode, it.type, it.value, RuleScope.SCAN)
+                    .checkResponse("create ignore rules", false)
+
+                logger.info {
+                    "Ignore rule of type '${it.type}' and value '${it.value}' has been created for the new scan."
+                }
+            }
+
             if (config.waitForResult) checkScan(scanCode)
         } else {
             val existingScanCode = requireNotNull(existingScan.code) {
@@ -671,7 +687,7 @@ class FossId internal constructor(
             // Scans that were added to the queue are interpreted as an error by FossID before version 2021.2.
             // For older versions, `waitScanComplete()` is able to deal with queued scans. Therefore, not checking the
             // response of queued scans.
-            if (details.version >= "2021.2" || scanResult.error != "Scan was added to queue.") {
+            if (version >= "2021.2" || scanResult.error != "Scan was added to queue.") {
                 scanResult.checkResponse("trigger scan", false)
             }
 
@@ -846,10 +862,13 @@ class FossId internal constructor(
     ): ScanResult {
         // TODO: Maybe get issues from FossID (see has_failed_scan_files, get_failed_files and maybe get_scan_log).
 
-        // TODO: Deprecation: Remove the pending files in issues. This is a breaking change.
-        val issues = rawResults.listPendingFiles.mapTo(mutableListOf()) {
-            Issue(source = name, message = "Pending identification for '$it'.", severity = Severity.HINT)
-        }
+        val issues = mutableListOf(
+            Issue(
+                source = name,
+                message = "This scan has ${rawResults.listPendingFiles.size} file(s) pending identification in FossID.",
+                severity = Severity.HINT
+            )
+        )
 
         val snippetFindings = mapSnippetFindings(rawResults, issues)
 
@@ -857,12 +876,11 @@ class FossId internal constructor(
 
         val (licenseFindings, copyrightFindings) = rawResults.markedAsIdentifiedFiles.ifEmpty {
             rawResults.identifiedFiles
-        }.mapSummary(ignoredFiles, issues, scannerConfig.detectedLicenseMapping)
+        }.mapSummary(ignoredFiles, issues)
 
         val summary = ScanSummary(
             startTime = startTime,
             endTime = Instant.now(),
-            packageVerificationCode = "",
             licenseFindings = licenseFindings,
             copyrightFindings = copyrightFindings,
             snippetFindings = snippetFindings,

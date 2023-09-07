@@ -29,6 +29,7 @@ import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.config.OsvConfiguration
 import org.ossreviewtoolkit.model.readValue
+import org.ossreviewtoolkit.model.utils.toPurl
 import org.ossreviewtoolkit.utils.test.getAssetFile
 
 class OsvFunTest : StringSpec({
@@ -77,10 +78,9 @@ class OsvFunTest : StringSpec({
 })
 
 private fun identifierToPackage(id: String): Package =
-    Package.EMPTY.copy(id = Identifier(id))
+    Identifier(id).let { Package.EMPTY.copy(id = it, purl = it.toPurl()) }
 
-private fun createOsv(): Osv =
-    Osv("OSV", OsvConfiguration(serverUrl = null))
+private fun createOsv(): Osv = Osv("OSV", OsvConfiguration(serverUrl = null))
 
 private fun Map<Identifier, AdvisorResult>.patchTimes(): Map<Identifier, AdvisorResult> =
     mapValues { (_, advisorResult) ->

@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git tag to release from"
+        required: true
+        type: string
+
+jobs:
+  publish:
+    env:
+      ORT_VERSION: ${{ inputs.tag || github.ref_name }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.ORT_VERSION }}
+          fetch-depth: 0
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v2
+        with:
+          gradle-home-cache-cleanup: true
+      - name: Publish to OSSRH
+        env:
+          OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          OSSRH_PASSWORD: ${{ secrets.OSSRH_PASSWORD }}
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        run: ./gradlew publishAllPublicationsToOSSRHRepository
+      - name: Build ORT Distributions
+        run: ./gradlew :cli:distZip :helper-cli:distZip
+      - name: Generate Release Notes
+        run: ./gradlew -q printChangeLog > RELEASE_NOTES.md
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create $ORT_VERSION --notes-file RELEASE_NOTES.md \
+              ./cli/build/distributions/ort-$ORT_VERSION.zip ./helper-cli/build/distributions/orth-$ORT_VERSION.zip

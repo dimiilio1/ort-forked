@@ -38,6 +38,7 @@ import org.ossreviewtoolkit.model.Snippet as OrtSnippet
 import org.ossreviewtoolkit.model.SnippetFinding
 import org.ossreviewtoolkit.model.TextLocation
 import org.ossreviewtoolkit.model.createAndLogIssue
+import org.ossreviewtoolkit.model.mapLicense
 import org.ossreviewtoolkit.model.utils.PurlType
 import org.ossreviewtoolkit.utils.common.collapseToRanges
 import org.ossreviewtoolkit.utils.common.collectMessages
@@ -71,7 +72,8 @@ internal data class FindingsContainer(
  */
 internal fun <T : Summarizable> List<T>.mapSummary(
     ignoredFiles: Map<String, IgnoredFile>,
-    issues: MutableList<Issue>
+    issues: MutableList<Issue>,
+    detectedLicenseMapping: Map<String, String>
 ): FindingsContainer {
     val licenseFindings = mutableSetOf<LicenseFinding>()
     val copyrightFindings = mutableSetOf<CopyrightFinding>()
@@ -83,7 +85,10 @@ internal fun <T : Summarizable> List<T>.mapSummary(
 
         summary.licences.forEach {
             runCatching {
-                LicenseFinding(it.identifier, location)
+                // TODO: The detected license mapping must be applied here, because FossID can return license strings
+                //       which cannot be parsed to an SpdxExpression. A better solution could be to automatically
+                //       convert the strings into a form that can be parsed, then the mapping could be applied globally.
+                LicenseFinding(it.identifier.mapLicense(detectedLicenseMapping), location)
             }.onSuccess { licenseFinding ->
                 licenseFindings += licenseFinding.copy(license = licenseFinding.license.normalize())
             }.onFailure { spdxException ->
@@ -113,7 +118,9 @@ internal fun <T : Summarizable> List<T>.mapSummary(
  */
 internal fun mapSnippetFindings(rawResults: RawResults, issues: MutableList<Issue>): Set<SnippetFinding> {
     return rawResults.listSnippets.flatMap { (file, rawSnippets) ->
-        rawSnippets.map { snippet ->
+        val findings = mutableMapOf<TextLocation, MutableSet<OrtSnippet>>()
+
+        rawSnippets.forEach { snippet ->
             val license = snippet.artifactLicense?.let {
                 DeclaredLicenseProcessor.process(it).also { expression ->
                     if (expression == null) {
@@ -141,7 +148,7 @@ internal fun mapSnippetFindings(rawResults: RawResults, issues: MutableList<Issu
                 FossId.SNIPPET_DATA_RELEASE_DATE to snippet.releaseDate.orEmpty()
             )
 
-            var sourceLocation: TextLocation? = null
+            var sourceLocations: Set<TextLocation> = setOf(TextLocation(file, TextLocation.UNKNOWN_LINE))
             var snippetLocation: TextLocation? = null
 
             if (snippet.matchType == MatchType.PARTIAL) {
@@ -149,8 +156,12 @@ internal fun mapSnippetFindings(rawResults: RawResults, issues: MutableList<Issu
                 val rawMatchedLinesSourceFile = rawMatchedLines?.localFile.orEmpty().collapseToRanges()
                 val rawMatchedLinesSnippetFile = rawMatchedLines?.mirrorFile.orEmpty().collapseToRanges()
 
-                sourceLocation = rawMatchedLinesSourceFile.firstOrNull()
-                    ?.let { (startLine, endLine) -> TextLocation(file, startLine, endLine) }
+                if (rawMatchedLinesSourceFile.isNotEmpty()) {
+                    sourceLocations = rawMatchedLinesSourceFile.map { (first, second) ->
+                        TextLocation(file, first, second)
+                    }.toSet()
+                }
+
                 snippetLocation = rawMatchedLinesSnippetFile.firstOrNull()
                     ?.let { (startLine, endLine) -> TextLocation(snippet.file, startLine, endLine) }
 
@@ -174,11 +185,12 @@ internal fun mapSnippetFindings(rawResults: RawResults, issues: MutableList<Issu
                 additionalSnippetData
             )
 
-            SnippetFinding(
-                sourceLocation ?: TextLocation(file, TextLocation.UNKNOWN_LINE),
-                ortSnippet
-            )
+            sourceLocations.forEach {
+                findings.getOrPut(it) { mutableSetOf(ortSnippet) } += ortSnippet
+            }
         }
+
+        findings.map { SnippetFinding(it.key, it.value) }
     }.toSet()
 }
 

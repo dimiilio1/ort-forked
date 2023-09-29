@@ -107,7 +107,7 @@ class UploadCurationsCommand : OrtCommand(
         unharvestedCurations.forEach { curation ->
             val definitionUrl = "${server.webUrl}/definitions/${curationsToCoordinates[curation]}"
 
-            println(
+            echo(
                 "Package '${curation.id.toCoordinates()}' was not harvested until now, but harvesting was requested. " +
                     "Check $definitionUrl for the harvesting status."
             )
@@ -116,34 +116,34 @@ class UploadCurationsCommand : OrtCommand(
         var uploadedCurationsCount = 0
         val uploadableCurations = curationsByHarvestStatus[HarvestStatus.HARVESTED].orEmpty() +
             curationsByHarvestStatus[HarvestStatus.PARTIALLY_HARVESTED].orEmpty()
+        val count = uploadableCurations.size
 
         uploadableCurations.forEachIndexed { index, curation ->
             val patch = curation.toContributionPatch()
 
             if (patch == null) {
-                println(
-                    "Unable to convert $curation (${index + 1} of ${uploadableCurations.size}) to a contribution patch."
-                )
+                echo("Unable to convert $curation (${index + 1} of $count) to a contribution patch.")
             } else {
-                print(
-                    "Curation ${index + 1} of ${uploadableCurations.size} for package '${curation.id.toCoordinates()}' "
+                echo(
+                    "Curation ${index + 1} of $count for package '${curation.id.toCoordinates()}' ",
+                    trailingNewline = false
                 )
 
                 runCatching {
                     service.callBlocking { putCuration(patch) }
                 }.onSuccess {
-                    println("was uploaded successfully:\n${it.url}")
+                    echo("was uploaded successfully:\n${it.url}")
                     ++uploadedCurationsCount
                 }.onFailure {
-                    println("failed to be uploaded.")
+                    echo("failed to be uploaded.")
                 }
             }
         }
 
-        println("Successfully uploaded $uploadedCurationsCount of ${uploadableCurations.size} curations.")
+        echo("Successfully uploaded $uploadedCurationsCount of $count curations.")
 
-        if (uploadedCurationsCount != uploadableCurations.size) {
-            println("At least one curation failed to be uploaded.")
+        if (uploadedCurationsCount != count) {
+            echo("At least one curation failed to be uploaded.")
             throw ProgramResult(2)
         }
     }

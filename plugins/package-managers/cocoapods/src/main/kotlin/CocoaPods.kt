@@ -102,7 +102,7 @@ class CocoaPods(
     override fun beforeResolution(definitionFiles: List<File>) = checkVersion()
 
     override fun resolveDependencies(definitionFile: File, labels: Map<String, String>): List<ProjectAnalyzerResult> {
-        return stashDirectories(File("~/.cocoapods/repos")).use {
+        return stashDirectories(Os.userHomeDirectory.resolve(".cocoapods/repos")).use {
             // Ensure to use the CDN instead of the monolithic specs repo.
             run("repo", "add-cdn", "trunk", "https://cdn.cocoapods.org", "--allow-root")
 
@@ -127,10 +127,12 @@ class CocoaPods(
         val issues = mutableListOf<Issue>()
 
         if (lockfile.isFile) {
-            val dependencies = getPackageReferences(lockfile)
+            val lockfileData = parseLockfile(lockfile)
 
-            scopes += Scope(SCOPE_NAME, dependencies)
-            packages += scopes.flatMap { it.collectDependencies() }.map { getPackage(it, workingDir) }
+            scopes += Scope(SCOPE_NAME, lockfileData.dependencies)
+            packages += scopes.flatMap { it.collectDependencies() }.map {
+                lockfileData.externalSources[it] ?: getPackage(it, workingDir)
+            }
         } else {
             issues += createAndLogIssue(
                 source = managerName,
@@ -194,7 +196,7 @@ class CocoaPods(
 
         val podspecCommand = runCatching {
             run(
-                "spec", "which", podspecName,
+                "spec", "which", "^$podspecName$",
                 "--version=${id.version}",
                 "--allow-root",
                 "--regex",
@@ -229,38 +231,93 @@ private const val LOCKFILE_FILENAME = "Podfile.lock"
 
 private const val SCOPE_NAME = "dependencies"
 
-private val NAME_AND_VERSION_REGEX = "(\\S+)\\s+(.*)".toRegex()
+private fun parseNameAndVersion(entry: String): Pair<String, String?> {
+    val info = entry.split(' ', limit = 2)
+    val name = info[0]
 
-private fun getPackageReferences(podfileLock: File): Set<PackageReference> {
-    val versionForName = mutableMapOf<String, String>()
-    val dependenciesForName = mutableMapOf<String, MutableSet<String>>()
+    // A version entry could look something like "(6.3.0)", "(= 2021.06.28.00-v2)", "(~> 8.15.0)", etc. Also see
+    // https://guides.cocoapods.org/syntax/podfile.html#pod.
+    val version = info.getOrNull(1)?.removeSurrounding("(", ")")
+
+    return name to version
+}
+
+private data class LockfileData(
+    val dependencies: Set<PackageReference>,
+    val externalSources: Map<Identifier, Package>
+)
+
+private fun parseLockfile(podfileLock: File): LockfileData {
+    val resolvedVersions = mutableMapOf<String, String>()
+    val dependencyConstraints = mutableMapOf<String, MutableSet<String>>()
     val root = yamlMapper.readTree(podfileLock)
 
-    root.get("PODS").asIterable().forEach { node ->
-        val entry = when (node) {
-            is ObjectNode -> node.fieldNames().asSequence().first()
-            else -> node.textValue()
-        }
+    // The "PODS" section lists the resolved dependencies and, nested by one level, any version constraints of their
+    // direct dependencies. That is, the nesting never goes deeper than two levels.
+    root.get("PODS").forEach { node ->
+        when (node) {
+            is ObjectNode -> {
+                val (name, version) = parseNameAndVersion(node.fieldNames().asSequence().single())
+                resolvedVersions[name] = checkNotNull(version)
+                dependencyConstraints[name] = node.single().mapTo(mutableSetOf()) {
+                    // Discard the version (which is only a constraint in this case) and just take the name.
+                    parseNameAndVersion(it.textValue()).first
+                }
+            }
 
-        val (name, version) = NAME_AND_VERSION_REGEX.find(entry)!!.groups.let {
-            it[1]!!.value to it[2]!!.value.removeSurrounding("(", ")")
+            else -> {
+                val (name, version) = parseNameAndVersion(node.textValue())
+                resolvedVersions[name] = checkNotNull(version)
+            }
         }
-        versionForName[name] = version
-
-        val dependencies = node[entry]?.map { it.textValue().substringBefore(" ") }.orEmpty()
-        dependenciesForName.getOrPut(name) { mutableSetOf() } += dependencies
     }
+
+    val externalSources = root.get("CHECKOUT OPTIONS")?.fields()?.asSequence()?.mapNotNull {
+        val checkout = it.value as ObjectNode
+        val url = checkout[":git"]?.textValue() ?: return@mapNotNull null
+        val revision = checkout[":commit"].textValueOrEmpty()
+
+        // The version written to the lockfile matches the version specified in the project's ".podspec" file at the
+        // given revision, so the same version might be used in different revisions. To still get a unique identifier,
+        // append the revision to the version.
+        val versionFromPodspec = checkNotNull(resolvedVersions[it.key])
+        val uniqueVersion = "$versionFromPodspec-$revision"
+        val id = Identifier("Pod", "", it.key, uniqueVersion)
+
+        // Write the unique version back for correctly associating dependencies below.
+        resolvedVersions[it.key] = uniqueVersion
+
+        id to Package(
+            id = id,
+            declaredLicenses = emptySet(),
+            description = "",
+            homepageUrl = url,
+            binaryArtifact = RemoteArtifact.EMPTY,
+            sourceArtifact = RemoteArtifact.EMPTY,
+            vcs = VcsInfo(VcsType.GIT, url, revision)
+        )
+    }?.toMap()
 
     fun createPackageReference(name: String): PackageReference =
         PackageReference(
-            id = Identifier("Pod", "", name, versionForName.getValue(name)),
-            dependencies = dependenciesForName.getValue(name).mapTo(mutableSetOf()) { createPackageReference(it) }
+            id = Identifier("Pod", "", name, resolvedVersions.getValue(name)),
+            dependencies = dependencyConstraints[name].orEmpty().filter {
+                // Only use a constraint as a dependency if it has a resolved version.
+                it in resolvedVersions
+            }.mapTo(mutableSetOf()) {
+                createPackageReference(it)
+            }
         )
 
-    return root.get("DEPENDENCIES").mapTo(mutableSetOf()) { node ->
-        val name = node.textValue().substringBefore(" ")
+    // The "DEPENDENCIES" section lists direct dependencies, but only along with version constraints, not with their
+    // resolved versions, and eventually additional information about the source.
+    val dependencies = root.get("DEPENDENCIES").mapTo(mutableSetOf()) { node ->
+        // Discard the version (which is only a constraint in this case) and just take the name.
+        val (name, _) = parseNameAndVersion(node.textValue())
         createPackageReference(name)
     }
+
+    return LockfileData(dependencies, externalSources.orEmpty())
 }
 
 @JsonIgnoreProperties(ignoreUnknown = true)

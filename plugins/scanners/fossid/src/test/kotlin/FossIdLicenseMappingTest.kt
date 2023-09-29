@@ -49,7 +49,7 @@ class FossIdLicenseMappingTest : WordSpec({
             val sampleFile = createMarkAsIdentifiedFile("invalid license")
             val issues = mutableListOf<Issue>()
 
-            val findings = listOf(sampleFile).mapSummary(emptyMap(), issues)
+            val findings = listOf(sampleFile).mapSummary(emptyMap(), issues, emptyMap())
 
             issues should haveSize(1)
             issues.first() shouldNotBeNull {
@@ -67,7 +67,9 @@ class FossIdLicenseMappingTest : WordSpec({
             issues should beEmpty()
             findings should haveSize(1)
             findings.first() shouldNotBeNull {
-                snippet.licenses.toString() shouldBe "Apache-2.0"
+                snippets.first() shouldNotBeNull {
+                    licenses.toString() shouldBe "Apache-2.0"
+                }
             }
         }
 
@@ -80,7 +82,9 @@ class FossIdLicenseMappingTest : WordSpec({
             issues should beEmpty()
             findings should haveSize(1)
             findings.first() shouldNotBeNull {
-                snippet.licenses.toString() shouldBe "Apache-2.0"
+                snippets.first() shouldNotBeNull {
+                    licenses.toString() shouldBe "Apache-2.0"
+                }
             }
         }
 
@@ -98,7 +102,9 @@ class FossIdLicenseMappingTest : WordSpec({
             }
             findings should haveSize(1)
             findings.first() shouldNotBeNull {
-                snippet.licenses shouldBe SpdxConstants.NOASSERTION.toSpdx()
+                snippets.first() shouldNotBeNull {
+                    licenses shouldBe SpdxConstants.NOASSERTION.toSpdx()
+                }
             }
         }
     }
@@ -127,6 +133,7 @@ private fun createMarkAsIdentifiedFile(license: String): MarkedAsIdentifiedFile 
 
     return MarkedAsIdentifiedFile(
         "comment",
+        emptyMap(),
         1,
         "copyright",
         1,

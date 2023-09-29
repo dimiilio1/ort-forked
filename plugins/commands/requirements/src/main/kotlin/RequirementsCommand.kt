@@ -20,6 +20,7 @@
 package org.ossreviewtoolkit.plugins.commands.requirements
 
 import com.github.ajalt.clikt.core.ProgramResult
+import com.github.ajalt.mordant.rendering.Theme
 
 import java.io.File
 import java.lang.reflect.Modifier
@@ -39,6 +40,10 @@ import org.ossreviewtoolkit.utils.spdx.scanCodeLicenseTextDir
 import org.reflections.Reflections
 
 import org.semver4j.Semver
+
+private val DANGER_PREFIX = "\t${Theme.Default.danger("-")} "
+private val WARNING_PREFIX = "\t${Theme.Default.warning("+")} "
+private val SUCCESS_PREFIX = "\t${Theme.Default.success("*")} "
 
 class RequirementsCommand : OrtCommand(
     name = "requirements",
@@ -115,46 +120,47 @@ class RequirementsCommand : OrtCommand(
         var statusCode = 0
 
         allTools.forEach { (category, tools) ->
-            println("${category}s:")
+            echo(Theme.Default.info("${category}s:"))
 
             tools.forEach { tool ->
-                // TODO: State whether a tool can be bootstrapped, but that requires refactoring of CommandLineTool.
                 val message = buildString {
                     val (prefix, suffix) = if (tool.isInPath() || File(tool.command()).isFile) {
                         runCatching {
                             val actualVersion = tool.getVersion()
                             runCatching {
                                 val isRequiredVersion = tool.getVersionRequirement().let {
-                                    Semver.coerce(actualVersion).satisfies(it)
+                                    Semver.coerce(actualVersion)?.satisfies(it) == true
                                 }
 
                                 if (isRequiredVersion) {
-                                    Pair("\t* ", "Found version $actualVersion.")
+                                    Pair(SUCCESS_PREFIX, "Found version $actualVersion.")
                                 } else {
                                     statusCode = statusCode or 2
-                                    Pair("\t+ ", "Found version $actualVersion.")
+                                    Pair(WARNING_PREFIX, "Found version $actualVersion.")
                                 }
                             }.getOrElse {
                                 statusCode = statusCode or 2
-                                Pair("\t+ ", "Found version '$actualVersion'.")
+                                Pair(WARNING_PREFIX, "Found version '$actualVersion'.")
                             }
                         }.getOrElse {
                             if (!tool.getVersionRequirement().isSatisfiedByAny) {
                                 statusCode = statusCode or 2
                             }
 
-                            Pair("\t+ ", "Could not determine the version.")
+                            Pair(WARNING_PREFIX, "Could not determine the version.")
                         }
                     } else {
-                        // Tolerate scanners and Pub to be missing as they can be bootstrapped.
-                        // Tolerate Yarn2 because it is provided in code repositories that use it.
+                        // Tolerate the following to be missing when determining the status code:
+                        // - Pub, as it can be bootstrapped as part of the Flutter SDK,
+                        // - Yarn 2+, as it is provided with the code that uses it,
+                        // - scanners, as scanning is basically optional and one scanner would be enough.
                         if (category != "Scanner" && tool.javaClass.simpleName != "Pub"
                             && tool.javaClass.simpleName != "Yarn2"
                         ) {
                             statusCode = statusCode or 4
                         }
 
-                        Pair("\t- ", "Tool not found.")
+                        Pair(DANGER_PREFIX, "Tool not found.")
                     }
 
                     append(prefix)
@@ -169,27 +175,27 @@ class RequirementsCommand : OrtCommand(
                     append(suffix)
                 }
 
-                println(message)
+                echo(message)
             }
 
-            println()
+            echo()
         }
 
-        println("Prefix legend:")
-        println("\t- The tool was not found in the PATH environment.")
-        println("\t+ The tool was found in the PATH environment, but not in the required version.")
-        println("\t* The tool was found in the PATH environment in the required version.")
+        echo("Prefix legend:")
+        echo("${DANGER_PREFIX}The tool was not found in the PATH environment.")
+        echo("${WARNING_PREFIX}The tool was found in the PATH environment, but not in the required version.")
+        echo("${SUCCESS_PREFIX}The tool was found in the PATH environment in the required version.")
 
-        println()
+        echo()
         if (scanCodeLicenseTextDir != null) {
-            println("ScanCode license texts found in '$scanCodeLicenseTextDir'.")
+            echo(Theme.Default.info("ScanCode license texts found in '$scanCodeLicenseTextDir'."))
         } else {
-            println("ScanCode license texts not found.")
+            echo(Theme.Default.warning("ScanCode license texts not found."))
         }
 
         if (statusCode != 0) {
-            println()
-            println("Not all tools were found in their required versions.")
+            echo()
+            echo(Theme.Default.warning("Not all tools were found in their required versions."))
             throw ProgramResult(statusCode)
         }
     }

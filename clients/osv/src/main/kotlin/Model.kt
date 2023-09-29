@@ -36,10 +36,9 @@ import kotlinx.serialization.json.JsonObject
 // 3. https://github.com/Kotlin/kotlinx.serialization/issues/1058
 
 /**
- * Implementation of the "Open Source Vulnerability format" according to schema version 1.3.0 (March 24, 2022), see
- * https://ossf.github.io/osv-schema/ which links to
- * https://github.com/ossf/osv-schema/blob/11524982426be469795b9c684ba340c5c90895d0/validation/schema.json which was
- * used as a reference.
+ * Implementation of the "Open Source Vulnerability format" according to schema version 1.6.0 (Aug 11, 2023), see
+ * https://github.com/ossf/osv-schema/blob/v1.6.0/validation/schema.json, also referenced from
+ * https://ossf.github.io/osv-schema/.
  *
  * For the documentation of all entities and properties please refer to above links.
  */
@@ -86,7 +85,20 @@ data class Affected(
 data class Credit(
     val name: String,
     val contact: List<String> = emptyList()
-)
+) {
+    enum class Type {
+        ANALYST,
+        COORDINATOR,
+        FINDER,
+        OTHER,
+        REMEDIATION_DEVELOPER,
+        REMEDIATION_REVIEWER,
+        REMEDIATION_VERIFIER,
+        REPORTER,
+        SPONSOR,
+        TOOL
+    }
+}
 
 /**
  * Defined package ecosystem values, see https://ossf.github.io/osv-schema/#affectedpackage-field.
@@ -164,7 +176,12 @@ data class Reference(
     enum class Type {
         ADVISORY,
         ARTICLE,
+        DETECTION,
+        DISCUSSION,
+        EVIDENCE,
         FIX,
+        GIT,
+        INTRODUCED,
         PACKAGE,
         REPORT,
         WEB
@@ -177,6 +194,7 @@ data class Severity(
     val score: String
 ) {
     enum class Type {
+        CVSS_V2,
         CVSS_V3
     }
 }

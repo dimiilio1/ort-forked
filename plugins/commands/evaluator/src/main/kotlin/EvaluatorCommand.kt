@@ -61,7 +61,7 @@ import org.ossreviewtoolkit.model.utils.addPackageCurations
 import org.ossreviewtoolkit.model.utils.addResolutions
 import org.ossreviewtoolkit.model.utils.mergeLabels
 import org.ossreviewtoolkit.plugins.commands.api.OrtCommand
-import org.ossreviewtoolkit.plugins.commands.api.utils.SeverityStats
+import org.ossreviewtoolkit.plugins.commands.api.utils.SeverityStatsPrinter
 import org.ossreviewtoolkit.plugins.commands.api.utils.configurationGroup
 import org.ossreviewtoolkit.plugins.commands.api.utils.inputGroup
 import org.ossreviewtoolkit.plugins.commands.api.utils.outputGroup
@@ -218,8 +218,8 @@ class EvaluatorCommand : OrtCommand(
             file.absolutePath + " (does not exist)".takeIf { !file.exists() }.orEmpty()
         }
 
-        println("Looking for evaluator-specific configuration in the following files and directories:")
-        println("\t" + configurationInfo)
+        echo("Looking for evaluator-specific configuration in the following files and directories:")
+        echo("\t" + configurationInfo)
 
         // Fail early if output files exist and must not be overwritten.
         val outputFiles = mutableSetOf<File>()
@@ -239,9 +239,9 @@ class EvaluatorCommand : OrtCommand(
 
             scriptUrls.forEach {
                 if (evaluator.checkSyntax(it.toURL().readText())) {
-                    println("Syntax check for $it succeeded.")
+                    echo("Syntax check for $it succeeded.")
                 } else {
-                    println("Syntax check for $it failed.")
+                    echo("Syntax check for $it failed.")
                     allChecksSucceeded = false
                 }
             }
@@ -316,10 +316,10 @@ class EvaluatorCommand : OrtCommand(
         val evaluatorRun = evaluator.run(*scripts.toTypedArray())
 
         val duration = with(evaluatorRun) { Duration.between(startTime, endTime).toKotlinDuration() }
-        println("The evaluation of ${scriptUrls.size} script(s) took $duration.")
+        echo("The evaluation of ${scriptUrls.size} script(s) took $duration.")
 
         evaluatorRun.violations.forEach { violation ->
-            println(violation.format())
+            echo(violation.format())
         }
 
         // Note: This overwrites any existing EvaluatorRun from the input file.
@@ -330,14 +330,11 @@ class EvaluatorCommand : OrtCommand(
 
         outputDir?.let { absoluteOutputDir ->
             absoluteOutputDir.safeMkdirs()
-            writeOrtResult(ortResultOutput, outputFiles, "evaluation")
+            writeOrtResult(ortResultOutput, outputFiles, terminal)
         }
 
-        val (resolvedViolations, unresolvedViolations) =
-            evaluatorRun.violations.partition { resolutionProvider.isResolved(it) }
-        val severityStats = SeverityStats.createFromRuleViolations(resolvedViolations, unresolvedViolations)
-
-        severityStats.print(terminal).conclude(ortConfig.severeRuleViolationThreshold, 2)
+        SeverityStatsPrinter(terminal, resolutionProvider).stats(evaluatorRun.violations)
+            .print().conclude(ortConfig.severeRuleViolationThreshold, 2)
     }
 }
 

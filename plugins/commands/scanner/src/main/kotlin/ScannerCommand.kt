@@ -52,7 +52,7 @@ import org.ossreviewtoolkit.model.utils.DefaultResolutionProvider
 import org.ossreviewtoolkit.model.utils.mergeLabels
 import org.ossreviewtoolkit.plugins.commands.api.OrtCommand
 import org.ossreviewtoolkit.plugins.commands.api.utils.OPTION_GROUP_INPUT
-import org.ossreviewtoolkit.plugins.commands.api.utils.SeverityStats
+import org.ossreviewtoolkit.plugins.commands.api.utils.SeverityStatsPrinter
 import org.ossreviewtoolkit.plugins.commands.api.utils.configurationGroup
 import org.ossreviewtoolkit.plugins.commands.api.utils.outputGroup
 import org.ossreviewtoolkit.plugins.commands.api.utils.readOrtResult
@@ -155,53 +155,61 @@ class ScannerCommand : OrtCommand(
         val ortResult = runScanners(scanners, projectScanners ?: scanners, ortConfig).mergeLabels(labels)
 
         outputDir.safeMkdirs()
-        writeOrtResult(ortResult, outputFiles, "scan")
+        writeOrtResult(ortResult, outputFiles, terminal)
 
         val scannerRun = ortResult.scanner
         if (scannerRun == null) {
-            println("No scanner run was created.")
+            echo("No scanner run was created.")
             throw ProgramResult(1)
         }
 
         val duration = with(scannerRun) { Duration.between(startTime, endTime).toKotlinDuration() }
-        println("The scan took $duration.")
+        echo("The scan took $duration.")
 
         val resolutionProvider = DefaultResolutionProvider.create(ortResult, resolutionsFile)
-        val (resolvedIssues, unresolvedIssues) = scannerRun.getIssues().flatMap { it.value }
-            .partition { resolutionProvider.isResolved(it) }
-        val severityStats = SeverityStats.createFromIssues(resolvedIssues, unresolvedIssues)
-
-        severityStats.print(terminal).conclude(ortConfig.severeIssueThreshold, 2)
+        val issues = scannerRun.getIssues().flatMap { it.value }
+        SeverityStatsPrinter(terminal, resolutionProvider).stats(issues)
+            .print().conclude(ortConfig.severeIssueThreshold, 2)
     }
 
     private fun runScanners(
-        scannerWrapperFactories: List<ScannerWrapperFactory>,
-        projectScannerWrapperFactories: List<ScannerWrapperFactory>,
+        scannerWrapperFactories: List<ScannerWrapperFactory<*>>,
+        projectScannerWrapperFactories: List<ScannerWrapperFactory<*>>,
         ortConfig: OrtConfiguration
     ): OrtResult {
         val packageScannerWrappers = scannerWrapperFactories
             .takeIf { PackageType.PACKAGE in packageTypes }.orEmpty()
-            .map { it.create(ortConfig.scanner, ortConfig.downloader) }
+            .map { it.create(ortConfig.scanner.options?.get(it.type).orEmpty()) }
         val projectScannerWrappers = projectScannerWrapperFactories
             .takeIf { PackageType.PROJECT in packageTypes }.orEmpty()
-            .map { it.create(ortConfig.scanner, ortConfig.downloader) }
+            .map { it.create(ortConfig.scanner.options?.get(it.type).orEmpty()) }
 
         if (projectScannerWrappers.isNotEmpty()) {
-            println("Scanning projects with:")
-            println(projectScannerWrappers.joinToString { "\t${it.name} (version ${it.version})" })
+            echo("Scanning projects with:")
+            echo(projectScannerWrappers.joinToString { "\t${it.name} (version ${it.version})" })
         } else {
-            println("Projects will not be scanned.")
+            echo("Projects will not be scanned.")
         }
 
         if (packageScannerWrappers.isNotEmpty()) {
-            println("Scanning packages with:")
-            println(packageScannerWrappers.joinToString { "\t${it.name} (version ${it.version})" })
+            echo("Scanning packages with:")
+            echo(packageScannerWrappers.joinToString { "\t${it.name} (version ${it.version})" })
         } else {
-            println("Packages will not be scanned.")
+            echo("Packages will not be scanned.")
         }
 
         val scanStorages = ScanStorages.createFromConfig(ortConfig.scanner)
         val workingTreeCache = DefaultWorkingTreeCache()
+
+        logger.info {
+            val readers = scanStorages.readers.map { it.javaClass.simpleName }
+            "Using the following scan storages for reading results: $readers"
+        }
+
+        logger.info {
+            val writers = scanStorages.writers.map { it.javaClass.simpleName }
+            "Using the following scan storages for writing results: $writers"
+        }
 
         try {
             val scanner = Scanner(

@@ -33,6 +33,7 @@ import org.ossreviewtoolkit.model.VcsType
 import org.ossreviewtoolkit.model.readValue
 import org.ossreviewtoolkit.model.utils.PackageCurationProvider
 import org.ossreviewtoolkit.plugins.packagecurationproviders.api.PackageCurationProviderFactory
+import org.ossreviewtoolkit.utils.common.Options
 import org.ossreviewtoolkit.utils.common.encodeOr
 import org.ossreviewtoolkit.utils.common.safeMkdirs
 import org.ossreviewtoolkit.utils.ort.ortDataDirectory
@@ -45,7 +46,7 @@ class OrtConfigPackageCurationProviderFactory : PackageCurationProviderFactory<U
 
     override fun create(config: Unit) = OrtConfigPackageCurationProvider()
 
-    override fun parseConfig(config: Map<String, String>) = Unit
+    override fun parseOptions(options: Options) = Unit
 }
 
 /**
@@ -82,7 +83,7 @@ open class OrtConfigPackageCurationProvider : PackageCurationProvider {
  * The path must be aligned with the
  * [conventions for the ort-config repository](https://github.com/oss-review-toolkit/ort-config#curations).
  */
-private fun Identifier.toCurationPath() = "${type.encodeOr("_")}/${namespace.encodeOr("_")}/${name.encodeOr("_")}.yml"
+fun Identifier.toCurationPath() = "${type.encodeOr("_")}/${namespace.encodeOr("_")}/${name.encodeOr("_")}.yml"
 
 private fun updateOrtConfig(dir: File) {
     dir.safeMkdirs()

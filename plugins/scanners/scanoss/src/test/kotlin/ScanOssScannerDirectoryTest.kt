@@ -42,8 +42,6 @@ import org.ossreviewtoolkit.model.SnippetFinding
 import org.ossreviewtoolkit.model.TextLocation
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
-import org.ossreviewtoolkit.model.config.DownloaderConfiguration
-import org.ossreviewtoolkit.model.config.ScannerConfiguration
 import org.ossreviewtoolkit.scanner.ScanContext
 import org.ossreviewtoolkit.utils.spdx.SpdxExpression
 
@@ -63,9 +61,8 @@ class ScanOssScannerDirectoryTest : StringSpec({
 
     beforeSpec {
         server.start()
-        val scannerOptions = mapOf(ScanOssConfig.API_URL_PROPERTY to "http://localhost:${server.port()}")
-        val configuration = ScannerConfiguration(options = mapOf("ScanOss" to scannerOptions))
-        scanner = spyk(ScanOss.Factory().create(configuration, DownloaderConfiguration()))
+        val options = mapOf(ScanOssConfig.API_URL_PROPERTY to "http://localhost:${server.port()}")
+        scanner = spyk(ScanOss.Factory().create(options))
     }
 
     afterSpec {
@@ -111,18 +108,20 @@ class ScanOssScannerDirectoryTest : StringSpec({
             snippetFindings.shouldContainExactly(
                 SnippetFinding(
                     TextLocation("utils/src/main/kotlin/ArchiveUtils.kt", 1, 240),
-                    Snippet(
-                        99.0f,
-                        TextLocation(
-                            "https://osskb.org/api/file_contents/871fb0c5188c2f620d9b997e225b0095",
-                            128,
-                            367
-                        ),
-                        RepositoryProvenance(
-                            VcsInfo(VcsType.UNKNOWN, "https://github.com/scanoss/ort", ""), "."
-                        ),
-                        "pkg:github/scanoss/ort",
-                        SpdxExpression.parse("Apache-2.0")
+                    setOf(
+                        Snippet(
+                            99.0f,
+                            TextLocation(
+                                "https://osskb.org/api/file_contents/871fb0c5188c2f620d9b997e225b0095",
+                                128,
+                                367
+                            ),
+                            RepositoryProvenance(
+                                VcsInfo(VcsType.UNKNOWN, "https://github.com/scanoss/ort", ""), "."
+                            ),
+                            "pkg:github/scanoss/ort",
+                            SpdxExpression.parse("Apache-2.0")
+                        )
                     )
                 )
             )

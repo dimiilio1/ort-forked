@@ -47,7 +47,6 @@ import org.ossreviewtoolkit.utils.ort.ProcessedDeclaredLicense
 import org.ossreviewtoolkit.utils.spdx.SpdxConstants
 import org.ossreviewtoolkit.utils.spdx.SpdxExpression
 import org.ossreviewtoolkit.utils.spdx.SpdxLicense
-import org.ossreviewtoolkit.utils.spdx.SpdxLicenseException
 import org.ossreviewtoolkit.utils.spdx.calculatePackageVerificationCode
 import org.ossreviewtoolkit.utils.spdx.model.SpdxChecksum
 import org.ossreviewtoolkit.utils.spdx.model.SpdxDocument
@@ -81,6 +80,11 @@ internal fun Identifier.toSpdxId(infix: String = "Package", suffix: String = "")
         append(toCoordinates())
         if (suffix.isNotEmpty()) append("-$suffix")
     }.toSpdxId()
+
+/**
+ * Convert an [Identifier]'s coordinates to an SPDX reference ID for the specified [type].
+ */
+internal fun Identifier.toSpdxId(type: SpdxPackageType): String = toSpdxId(type.infix, type.suffix)
 
 /**
  * Get the text with all Copyright statements associated with the package of the given [id], or return `NONE` if there
@@ -146,7 +150,7 @@ internal fun Package.toSpdxPackage(
     }
 
     return SpdxPackage(
-        spdxId = id.toSpdxId(type.infix, type.suffix),
+        spdxId = id.toSpdxId(type),
         checksums = when (type) {
             SpdxPackageType.BINARY_PACKAGE -> listOfNotNull(binaryArtifact.hash.toSpdxChecksum())
             SpdxPackageType.SOURCE_PACKAGE -> listOfNotNull(sourceArtifact.hash.toSpdxChecksum())
@@ -170,15 +174,19 @@ internal fun Package.toSpdxPackage(
             else -> concludedLicense.nullOrBlankToSpdxNoassertionOrNone()
         },
         licenseDeclared = declaredLicensesProcessed.toSpdxDeclaredLicense(),
-        licenseInfoFromFiles = licenseInfoResolver.resolveLicenseInfo(id)
-            .filterExcluded()
-            .filter(LicenseView.ONLY_DETECTED)
-            .map { resolvedLicense ->
-                resolvedLicense.license.takeIf { it.isValid(SpdxExpression.Strictness.ALLOW_DEPRECATED) }
-                    .nullOrBlankToSpdxNoassertionOrNone()
-            }
-            .distinct()
-            .sorted(),
+        licenseInfoFromFiles = if (packageVerificationCode == null) {
+            emptyList()
+        } else {
+            licenseInfoResolver.resolveLicenseInfo(id)
+                .filterExcluded()
+                .filter(LicenseView.ONLY_DETECTED)
+                .map { resolvedLicense ->
+                    resolvedLicense.license.takeIf { it.isValid(SpdxExpression.Strictness.ALLOW_DEPRECATED) }
+                        .nullOrBlankToSpdxNoassertionOrNone()
+                }
+                .distinct()
+                .sorted()
+        },
         packageVerificationCode = packageVerificationCode,
         name = id.name,
         summary = description.nullOrBlankToSpdxNone(),
@@ -224,12 +232,15 @@ private fun ProcessedDeclaredLicense.toSpdxDeclaredLicense(): String =
  * Use [licenseTextProvider] to add the license texts for all packages to the [SpdxDocument].
  */
 internal fun SpdxDocument.addExtractedLicenseInfo(licenseTextProvider: LicenseTextProvider): SpdxDocument {
-    val nonSpdxLicenses = packages.flatMapTo(mutableSetOf()) {
-        // TODO: Also add detected non-SPDX licenses here.
-        SpdxExpression.parse(it.licenseConcluded).licenses() + SpdxExpression.parse(it.licenseDeclared).licenses()
-    }.filter {
-        SpdxConstants.isPresent(it) && SpdxLicense.forId(it) == null && SpdxLicenseException.forId(it) == null
-    }
+    val allLicenses = buildSet {
+        packages.forEach {
+            add(it.licenseConcluded)
+            add(it.licenseDeclared)
+            addAll(it.licenseInfoFromFiles)
+        }
+    }.flatMapTo(mutableSetOf()) { SpdxExpression.parse(it).licenses() }
+
+    val nonSpdxLicenses = allLicenses.filter { SpdxConstants.isPresent(it) && SpdxLicense.forId(it) == null }
 
     val extractedLicenseInfo = nonSpdxLicenses.sorted().mapNotNull { license ->
         licenseTextProvider.getLicenseText(license)?.let { text ->

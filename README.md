@@ -385,7 +385,7 @@ supported:
   * [PNPM](https://pnpm.io/) (limitations:
     [no peer dependencies](https://github.com/oss-review-toolkit/ort/issues/95))
   * [Yarn 1](https://classic.yarnpkg.com/)
-  * [Yarn 2+](https://next.yarnpkg.com/)
+  * [Yarn 2+](https://v2.yarnpkg.com/)
 * .NET
   * [DotNet](https://docs.microsoft.com/en-us/dotnet/core/tools/) (limitations:
     [no floating versions / ranges](https://github.com/oss-review-toolkit/ort/pull/1303#issue-253860146),
@@ -705,6 +705,8 @@ following formats are supported (reporter names are case-insensitive):
   (`-f Opossum`)
 * [SPDX Document](https://spdx.dev/specifications/), version 2.2 (`-f SpdxDocument`)
 * Static HTML (`-f StaticHtml`)
+* [TrustSource](https://www.trustsource.io/) JSON file (`-f TrustSource`)
+  * Use this as an alternative to [ts-scan](https://github.com/TrustSource/ts-scan) for support of more build systems.
 * Web App (`-f WebApp`)
   * Also see the [EvaluatedModelReporter](plugins/reporters/evaluated-model/src/main/kotlin/EvaluatedModelReporter.kt)
     (`-f EvaluatedModel`) which is the JSON / YAML format used by the Web App report that is also suitable for custom

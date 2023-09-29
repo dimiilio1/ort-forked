@@ -45,7 +45,7 @@ import org.ossreviewtoolkit.model.FileFormat
 import org.ossreviewtoolkit.model.utils.DefaultResolutionProvider
 import org.ossreviewtoolkit.model.utils.mergeLabels
 import org.ossreviewtoolkit.plugins.commands.api.OrtCommand
-import org.ossreviewtoolkit.plugins.commands.api.utils.SeverityStats
+import org.ossreviewtoolkit.plugins.commands.api.utils.SeverityStatsPrinter
 import org.ossreviewtoolkit.plugins.commands.api.utils.configurationGroup
 import org.ossreviewtoolkit.plugins.commands.api.utils.outputGroup
 import org.ossreviewtoolkit.plugins.commands.api.utils.readOrtResult
@@ -118,8 +118,8 @@ class AdvisorCommand : OrtCommand(
         validateOutputFiles(outputFiles)
 
         val distinctProviders = providerFactories.distinct()
-        println("The following advisors are activated:")
-        println("\t" + distinctProviders.joinToString().ifEmpty { "<None>" })
+        echo("The following advisors are activated:")
+        echo("\t" + distinctProviders.joinToString().ifEmpty { "<None>" })
 
         val advisor = Advisor(distinctProviders, ortConfig.advisor)
 
@@ -129,16 +129,16 @@ class AdvisorCommand : OrtCommand(
         }
 
         outputDir.safeMkdirs()
-        writeOrtResult(ortResultOutput, outputFiles, "advisor")
+        writeOrtResult(ortResultOutput, outputFiles, terminal)
 
         val advisorRun = ortResultOutput.advisor
         if (advisorRun == null) {
-            println("No advisor run was created.")
+            echo("No advisor run was created.")
             throw ProgramResult(1)
         }
 
         val duration = with(advisorRun) { Duration.between(startTime, endTime).toKotlinDuration() }
-        println("The advice took $duration.")
+        echo("The advice took $duration.")
 
         with(advisorRun.results.getVulnerabilities()) {
             val includedPackages = ortResultOutput.getPackages(omitExcluded = true).map { it.metadata.id }
@@ -148,17 +148,15 @@ class AdvisorCommand : OrtCommand(
             }
             val vulnerabilityCount = filterKeys { it in includedPackages }.values.sumOf { it.size }
 
-            println(
+            echo(
                 "$vulnerablePackageCount of $totalPackageCount package(s) (not counting excluded ones) are " +
                     "vulnerable, with $vulnerabilityCount vulnerabilities in total."
             )
         }
 
         val resolutionProvider = DefaultResolutionProvider.create(ortResultOutput, resolutionsFile)
-        val (resolvedIssues, unresolvedIssues) = advisorRun.results.getIssues().flatMap { it.value }
-            .partition { resolutionProvider.isResolved(it) }
-        val severityStats = SeverityStats.createFromIssues(resolvedIssues, unresolvedIssues)
-
-        severityStats.print(terminal).conclude(ortConfig.severeIssueThreshold, 2)
+        val issues = advisorRun.results.getIssues().flatMap { it.value }
+        SeverityStatsPrinter(terminal, resolutionProvider).stats(issues)
+            .print().conclude(ortConfig.severeIssueThreshold, 2)
     }
 }

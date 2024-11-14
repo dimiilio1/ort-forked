@@ -1,4 +1,4 @@
-#!/usr/bin/ruby
+#!/usr/bin/env ruby
 
 # Copyright (C) 2017 The ORT Project Authors (see <https://github.com/oss-review-toolkit/ort/blob/main/NOTICE>)
 #
@@ -32,4 +32,4 @@ Bundler.load.current_dependencies.each do |dep|
     end
 end
 
-puts(YAML.dump(groups))
+puts(groups.to_yaml)

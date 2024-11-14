@@ -30,6 +30,7 @@ import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.split
 import com.github.ajalt.clikt.parameters.types.enum
 import com.github.ajalt.clikt.parameters.types.file
+import com.github.ajalt.mordant.rendering.Theme
 
 import java.io.File
 import java.net.URI
@@ -37,7 +38,7 @@ import java.time.Duration
 
 import kotlin.time.toKotlinDuration
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.evaluator.Evaluator
 import org.ossreviewtoolkit.model.FileFormat
@@ -54,11 +55,7 @@ import org.ossreviewtoolkit.model.licenses.LicenseInfoResolver
 import org.ossreviewtoolkit.model.licenses.orEmpty
 import org.ossreviewtoolkit.model.readValue
 import org.ossreviewtoolkit.model.readValueOrDefault
-import org.ossreviewtoolkit.model.utils.CompositePackageConfigurationProvider
 import org.ossreviewtoolkit.model.utils.DefaultResolutionProvider
-import org.ossreviewtoolkit.model.utils.addPackageConfigurations
-import org.ossreviewtoolkit.model.utils.addPackageCurations
-import org.ossreviewtoolkit.model.utils.addResolutions
 import org.ossreviewtoolkit.model.utils.mergeLabels
 import org.ossreviewtoolkit.plugins.commands.api.OrtCommand
 import org.ossreviewtoolkit.plugins.commands.api.utils.SeverityStatsPrinter
@@ -67,6 +64,7 @@ import org.ossreviewtoolkit.plugins.commands.api.utils.inputGroup
 import org.ossreviewtoolkit.plugins.commands.api.utils.outputGroup
 import org.ossreviewtoolkit.plugins.commands.api.utils.readOrtResult
 import org.ossreviewtoolkit.plugins.commands.api.utils.writeOrtResult
+import org.ossreviewtoolkit.plugins.packageconfigurationproviders.api.CompositePackageConfigurationProvider
 import org.ossreviewtoolkit.plugins.packageconfigurationproviders.api.PackageConfigurationProviderFactory
 import org.ossreviewtoolkit.plugins.packageconfigurationproviders.api.SimplePackageConfigurationProvider
 import org.ossreviewtoolkit.plugins.packageconfigurationproviders.dir.DirPackageConfigurationProvider
@@ -74,6 +72,9 @@ import org.ossreviewtoolkit.plugins.packagecurationproviders.api.SimplePackageCu
 import org.ossreviewtoolkit.plugins.packagecurationproviders.file.FilePackageCurationProvider
 import org.ossreviewtoolkit.utils.common.expandTilde
 import org.ossreviewtoolkit.utils.common.safeMkdirs
+import org.ossreviewtoolkit.utils.config.setPackageConfigurations
+import org.ossreviewtoolkit.utils.config.setPackageCurations
+import org.ossreviewtoolkit.utils.config.setResolutions
 import org.ossreviewtoolkit.utils.ort.ORT_COPYRIGHT_GARBAGE_FILENAME
 import org.ossreviewtoolkit.utils.ort.ORT_EVALUATOR_RULES_FILENAME
 import org.ossreviewtoolkit.utils.ort.ORT_LICENSE_CLASSIFICATIONS_FILENAME
@@ -84,8 +85,6 @@ class EvaluatorCommand : OrtCommand(
     name = "evaluate",
     help = "Evaluate ORT result files against policy rules."
 ) {
-    private companion object : Logging
-
     private val ortFile by option(
         "--ort-file", "-i",
         help = "The ORT result file to read as input."
@@ -151,7 +150,7 @@ class EvaluatorCommand : OrtCommand(
     private val packageCurationsFile by option(
         "--package-curations-file",
         help = "A file containing package curations. This replaces all package curations contained in the given ORT " +
-            "result file with the ones present in the given file and, if enabled, those from the package " +
+            "result file with the ones present in the given file and, if enabled, those from the repository " +
             "configuration."
     ).convert { it.expandTilde() }
         .file(mustExist = true, canBeFile = true, canBeDir = false, mustBeWritable = false, mustBeReadable = true)
@@ -162,7 +161,7 @@ class EvaluatorCommand : OrtCommand(
         "--package-curations-dir",
         help = "A directory containing package curation files. This replaces all package curations contained in the " +
             "given ORT result file with the ones present in the given directory and, if enabled, those from the " +
-            "package configuration file."
+            "repository configuration."
     ).convert { it.expandTilde() }
         .file(mustExist = true, canBeFile = false, canBeDir = true, mustBeWritable = false, mustBeReadable = true)
         .convert { it.absoluteFile.normalize() }
@@ -198,13 +197,20 @@ class EvaluatorCommand : OrtCommand(
     ).flag()
 
     override fun run() {
-        val scriptUrls = mutableSetOf<URI>()
+        val scriptUris = mutableSetOf<URI>()
 
-        rulesFile.mapTo(scriptUrls) { it.toURI() }
-        rulesResource.mapTo(scriptUrls) { javaClass.getResource(it).toURI() }
+        rulesFile.mapTo(scriptUris) { it.toURI() }
+        rulesResource.mapTo(scriptUris) { javaClass.getResource(it).toURI() }
 
-        if (scriptUrls.isEmpty()) {
-            scriptUrls += ortConfigDirectory.resolve(ORT_EVALUATOR_RULES_FILENAME).toURI()
+        if (scriptUris.isEmpty()) {
+            val defaultRulesFile = ortConfigDirectory.resolve(ORT_EVALUATOR_RULES_FILENAME)
+
+            if (defaultRulesFile.isFile) {
+                scriptUris += defaultRulesFile.toURI()
+            } else {
+                echo(Theme.Default.danger("No rules specified."))
+                throw ProgramResult(1)
+            }
         }
 
         val configurationFiles = listOfNotNull(
@@ -214,11 +220,13 @@ class EvaluatorCommand : OrtCommand(
             repositoryConfigurationFile
         )
 
-        val configurationInfo = configurationFiles.joinToString("\n\t") { file ->
+        val configurationInfo = configurationFiles.joinToString("\n\t", postfix = "\n\t") { file ->
             file.absolutePath + " (does not exist)".takeIf { !file.exists() }.orEmpty()
+        } + scriptUris.joinToString("\n\t") {
+            runCatching { File(it).absolutePath }.getOrDefault(it.toString())
         }
 
-        echo("Looking for evaluator-specific configuration in the following files and directories:")
+        echo("Looking for evaluator-specific configuration in the following files, directories and resources:")
         echo("\t" + configurationInfo)
 
         // Fail early if output files exist and must not be overwritten.
@@ -237,7 +245,7 @@ class EvaluatorCommand : OrtCommand(
 
             var allChecksSucceeded = true
 
-            scriptUrls.forEach {
+            scriptUris.forEach {
                 if (evaluator.checkSyntax(it.toURL().readText())) {
                     echo("Syntax check for $it succeeded.")
                 } else {
@@ -271,14 +279,14 @@ class EvaluatorCommand : OrtCommand(
                 add("EvaluatorCommandOption" to providerFromOption)
             }
 
-            ortResultInput = ortResultInput.addPackageCurations(packageCurationProviders)
+            ortResultInput = ortResultInput.setPackageCurations(packageCurationProviders)
         }
 
         val enabledPackageConfigurationProviders = buildList {
             val repositoryPackageConfigurations = ortResultInput.repository.config.packageConfigurations
 
             if (ortConfig.enableRepositoryPackageConfigurations) {
-                add(SimplePackageConfigurationProvider(repositoryPackageConfigurations))
+                add(SimplePackageConfigurationProvider(configurations = repositoryPackageConfigurations))
             } else {
                 if (repositoryPackageConfigurations.isNotEmpty()) {
                     logger.info { "Local package configurations were not applied because the feature is not enabled." }
@@ -297,10 +305,12 @@ class EvaluatorCommand : OrtCommand(
         val packageConfigurationProvider =
             CompositePackageConfigurationProvider(*enabledPackageConfigurationProviders.toTypedArray())
 
+        ortResultInput = ortResultInput.setPackageConfigurations(packageConfigurationProvider)
+
         val copyrightGarbage = copyrightGarbageFile.takeIf { it.isFile }?.readValue<CopyrightGarbage>().orEmpty()
 
         val licenseInfoResolver = LicenseInfoResolver(
-            provider = DefaultLicenseInfoProvider(ortResultInput, packageConfigurationProvider),
+            provider = DefaultLicenseInfoProvider(ortResultInput),
             copyrightGarbage = copyrightGarbage,
             addAuthorsToCopyrights = ortConfig.addAuthorsToCopyrights,
             archiver = ortConfig.scanner.archive.createFileArchiver(),
@@ -312,21 +322,26 @@ class EvaluatorCommand : OrtCommand(
             licenseClassificationsFile.takeIf { it.isFile }?.readValue<LicenseClassifications>().orEmpty()
         val evaluator = Evaluator(ortResultInput, licenseInfoResolver, resolutionProvider, licenseClassifications)
 
-        val scripts = scriptUrls.map { it.toURL().readText() }
+        val scripts = scriptUris.map { it.toURL().readText() }
         val evaluatorRun = evaluator.run(*scripts.toTypedArray())
 
-        val duration = with(evaluatorRun) { Duration.between(startTime, endTime).toKotlinDuration() }
-        echo("The evaluation of ${scriptUrls.size} script(s) took $duration.")
+        if (evaluatorRun.violations.isNotEmpty()) {
+            echo("The following ${evaluatorRun.violations.size} rule violations have been found:")
 
-        evaluatorRun.violations.forEach { violation ->
-            echo(violation.format())
+            evaluatorRun.violations.forEach { violation ->
+                echo(violation.format())
+            }
+        } else {
+            echo("No rule violations have been found.")
         }
+
+        val duration = with(evaluatorRun) { Duration.between(startTime, endTime).toKotlinDuration() }
+        echo("The evaluation of ${scriptUris.size} script(s) took $duration.")
 
         // Note: This overwrites any existing EvaluatorRun from the input file.
         val ortResultOutput = ortResultInput.copy(evaluator = evaluatorRun)
             .mergeLabels(labels)
-            .addPackageConfigurations(packageConfigurationProvider)
-            .addResolutions(resolutionProvider)
+            .setResolutions(resolutionProvider)
 
         outputDir?.let { absoluteOutputDir ->
             absoluteOutputDir.safeMkdirs()
@@ -348,6 +363,7 @@ private fun RuleViolation.format() =
             append(id.toCoordinates())
             append(" - ")
         }
+
         license?.let { license ->
             append(license)
             licenseSource?.let { source ->
@@ -355,7 +371,9 @@ private fun RuleViolation.format() =
                 append(source)
                 append(")")
             }
+
             append(" - ")
         }
+
         append(message)
     }

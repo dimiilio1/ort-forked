@@ -19,19 +19,23 @@
 
 package org.ossreviewtoolkit.plugins.packageconfigurationproviders.api
 
+import org.apache.logging.log4j.kotlin.logger
+
 import org.ossreviewtoolkit.model.config.ProviderPluginConfiguration
-import org.ossreviewtoolkit.model.utils.PackageConfigurationProvider
-import org.ossreviewtoolkit.utils.common.Plugin
-import org.ossreviewtoolkit.utils.common.TypedConfigurablePluginFactory
+import org.ossreviewtoolkit.plugins.api.PluginConfig
+import org.ossreviewtoolkit.plugins.api.PluginFactory
 import org.ossreviewtoolkit.utils.common.getDuplicates
 
 /**
  * The extension point for [PackageConfigurationProvider]s.
  */
-interface PackageConfigurationProviderFactory<CONFIG> :
-    TypedConfigurablePluginFactory<CONFIG, PackageConfigurationProvider> {
+interface PackageConfigurationProviderFactory : PluginFactory<PackageConfigurationProvider> {
     companion object {
-        val ALL = Plugin.getAll<PackageConfigurationProviderFactory<*>>()
+        /**
+         * All [package configuration provider factories][PackageConfigurationProviderFactory] available in the
+         * classpath, associated by their names.
+         */
+        val ALL by lazy { PluginFactory.getAll<PackageConfigurationProviderFactory, PackageConfigurationProvider>() }
 
         /**
          * Create a new (identifier, provider instance) tuple for each
@@ -41,20 +45,27 @@ interface PackageConfigurationProviderFactory<CONFIG> :
         fun create(
             configurations: List<ProviderPluginConfiguration>
         ): List<Pair<String, PackageConfigurationProvider>> =
-            configurations.filter { it.enabled }
-                .map { it.id to ALL.getValue(it.type).create(it.config) }
-                .apply {
-                    require(none { (id, _) -> id.isBlank() }) {
-                        "The configuration contains a package configuration provider with a blank ID which is not " +
-                            "allowed."
-                    }
-
-                    val duplicateIds = getDuplicates { (id, _) -> id }.keys
-                    require(duplicateIds.isEmpty()) {
-                        "Found multiple package configuration providers for the IDs ${duplicateIds.joinToString()}, " +
-                            "which is not allowed. Please configure a unique ID for each package configuration " +
-                            "provider."
+            configurations.filter {
+                it.enabled
+            }.mapNotNull {
+                ALL[it.type]?.let { factory ->
+                    it.id to factory.create(PluginConfig(it.options, it.secrets))
+                }.also { factory ->
+                    factory ?: logger.error {
+                        "Configuration provider of type '${it.type}' is enabled in configuration but not available " +
+                            "in the classpath."
                     }
                 }
+            }.apply {
+                require(none { (id, _) -> id.isBlank() }) {
+                    "The configuration contains a package configuration provider with a blank ID which is not allowed."
+                }
+
+                val duplicateIds = getDuplicates { (id, _) -> id }.keys
+                require(duplicateIds.isEmpty()) {
+                    "Found multiple package configuration providers for the IDs ${duplicateIds.joinToString()}, " +
+                        "which is not allowed. Please configure a unique ID for each package configuration provider."
+                }
+            }
     }
 }

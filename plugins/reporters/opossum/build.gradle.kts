@@ -19,18 +19,20 @@
 
 plugins {
     // Apply precompiled plugins.
-    id("ort-library-conventions")
+    id("ort-plugin-conventions")
 }
 
 dependencies {
-    api(project(":reporter"))
+    api(projects.reporter)
 
-    implementation(project(":downloader"))
-    implementation(project(":model"))
-    implementation(project(":utils:common-utils"))
-    implementation(project(":utils:ort-utils"))
-    implementation(project(":utils:spdx-utils"))
+    ksp(projects.reporter)
 
-    implementation(libs.jacksonAnnotations)
-    implementation(libs.jacksonDatabind)
+    implementation(projects.downloader)
+    implementation(projects.model)
+    implementation(projects.utils.commonUtils)
+    implementation(projects.utils.ortUtils)
+    implementation(projects.utils.spdxUtils)
+
+    implementation(libs.jackson.annotations)
+    implementation(libs.jackson.databind)
 }

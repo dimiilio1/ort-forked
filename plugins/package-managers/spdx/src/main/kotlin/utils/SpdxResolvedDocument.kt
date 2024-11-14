@@ -24,7 +24,7 @@ package org.ossreviewtoolkit.plugins.packagemanagers.spdx.utils
 import java.io.File
 import java.net.URI
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.model.Hash
 import org.ossreviewtoolkit.model.Issue
@@ -86,7 +86,7 @@ internal data class SpdxResolvedDocument(
      */
     private val issuesByReferenceId: Map<String, Issue>
 ) {
-    companion object : Logging {
+    companion object {
         fun load(cache: SpdxDocumentCache, rootDocumentFile: File, managerName: String): SpdxResolvedDocument {
             val rootDocument = cache.load(rootDocumentFile).getOrThrow()
 
@@ -132,6 +132,15 @@ internal data class SpdxResolvedDocument(
 
         return pkg
     }
+
+    /**
+     * Retrieve the issues from [issuesByReferenceId] that are not associated with [any package][packagesById]. These
+     * issues can be related to general issues within the SPDX document.
+     */
+    fun getIssuesWithoutSpdxPackage() =
+        issuesByReferenceId.mapNotNull { (id, issue) ->
+            if (packagesById[id] == null) issue else null
+        }
 
     /**
      * Return the local definition file in which the package with the given [identifier] is declared. If the package
@@ -248,7 +257,7 @@ internal data class ResolutionResult(
 )
 
 /**
- * Return a flag whether this URI points to a local definition file.
+ * Check whether this URI points to a local definition file.
  */
 private fun URI.isLocalDefinitionFile(): Boolean = scheme.equals("file", ignoreCase = true) || !isAbsolute
 
@@ -274,7 +283,7 @@ internal fun SpdxExternalDocumentReference.resolve(
         return ResolutionResult(
             document = null,
             uri = baseUri,
-            issue = SpdxResolvedDocument.createAndLogIssue(
+            issue = createAndLogIssue(
                 source = managerName,
                 message = "The SPDX document at '$spdxDocument' cannot be resolved as a URI (referred from $baseUri " +
                     "as part of '$externalDocumentId')."
@@ -303,7 +312,7 @@ private fun SpdxExternalDocumentReference.resolveFromFile(
     val file = uri.toDefinitionFile() ?: return ResolutionResult(
         document = null,
         uri = baseUri,
-        issue = SpdxResolvedDocument.createAndLogIssue(
+        issue = createAndLogIssue(
             source = managerName,
             message = "The file pointed to by '$uri' in reference '$externalDocumentId' does not exist."
         )
@@ -313,7 +322,7 @@ private fun SpdxExternalDocumentReference.resolveFromFile(
         return ResolutionResult(
             document = null,
             uri = uri,
-            issue = SpdxResolvedDocument.createAndLogIssue(
+            issue = createAndLogIssue(
                 source = managerName,
                 message = "Failed to parse the SPDX document pointed to by '$uri' in reference " +
                     "'$externalDocumentId': ${it.message}"
@@ -335,7 +344,7 @@ private fun SpdxExternalDocumentReference.resolveFromDownload(
     baseUri: URI,
     managerName: String
 ): ResolutionResult {
-    SpdxResolvedDocument.logger.info {
+    logger.info {
         "Downloading SPDX document from $uri (referred from $baseUri as part of '$externalDocumentId')."
     }
 
@@ -354,7 +363,7 @@ private fun SpdxExternalDocumentReference.resolveFromDownload(
             return ResolutionResult(
                 document = null,
                 uri = uri,
-                issue = SpdxResolvedDocument.createAndLogIssue(
+                issue = createAndLogIssue(
                     source = managerName,
                     message = "Failed to download SPDX document from $uri (referred from $baseUri as part of " +
                         "'$externalDocumentId'): ${it.collectMessages()}"
@@ -366,7 +375,7 @@ private fun SpdxExternalDocumentReference.resolveFromDownload(
             return ResolutionResult(
                 document = null,
                 uri = uri,
-                issue = SpdxResolvedDocument.createAndLogIssue(
+                issue = createAndLogIssue(
                     source = managerName,
                     message = "Failed to parse SPDX document from $uri (referred from $baseUri as part of " +
                         "'$externalDocumentId'): ${it.message}"
@@ -376,7 +385,7 @@ private fun SpdxExternalDocumentReference.resolveFromDownload(
 
         ResolutionResult(document, uri, verifyChecksum(file, baseUri, managerName))
     } finally {
-        tempDir.safeDeleteRecursively(force = true)
+        tempDir.safeDeleteRecursively()
     }
 }
 
@@ -385,7 +394,7 @@ private fun SpdxExternalDocumentReference.resolveFromDownload(
  * checksum. If not, return an [Issue] based on the document [uri] and [managerName].
  */
 private fun SpdxExternalDocumentReference.verifyChecksum(file: File, uri: URI, managerName: String): Issue? {
-    val hash = Hash.create(checksum.checksumValue, checksum.algorithm.name)
+    val hash = Hash(checksum.checksumValue, checksum.algorithm.name)
     if (hash.verify(file)) return null
 
     return SpdxResolvedDocument.createAndLogIssue(

@@ -24,7 +24,7 @@ import java.time.Instant
 
 import kotlinx.serialization.json.Json
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.model.Issue
 import org.ossreviewtoolkit.model.LicenseFinding
@@ -34,7 +34,8 @@ import org.ossreviewtoolkit.model.TextLocation
 import org.ossreviewtoolkit.scanner.CommandLinePathScannerWrapper
 import org.ossreviewtoolkit.scanner.ScanContext
 import org.ossreviewtoolkit.scanner.ScanException
-import org.ossreviewtoolkit.scanner.ScannerCriteria
+import org.ossreviewtoolkit.scanner.ScannerMatcher
+import org.ossreviewtoolkit.scanner.ScannerWrapperConfig
 import org.ossreviewtoolkit.scanner.ScannerWrapperFactory
 import org.ossreviewtoolkit.utils.common.Options
 import org.ossreviewtoolkit.utils.common.Os
@@ -43,21 +44,28 @@ import org.ossreviewtoolkit.utils.ort.createOrtTempDir
 
 private val JSON = Json { ignoreUnknownKeys = true }
 
-class BoyterLc internal constructor(name: String, private val options: Options) : CommandLinePathScannerWrapper(name) {
-    companion object : Logging {
+class BoyterLc internal constructor(name: String, private val wrapperConfig: ScannerWrapperConfig) :
+    CommandLinePathScannerWrapper(name) {
+    companion object {
         val CONFIGURATION_OPTIONS = listOf(
             "--confidence", "0.95", // Cut-off value to only get most relevant matches.
             "--format", "json"
         )
     }
 
-    class Factory : ScannerWrapperFactory<BoyterLc>("BoyterLc") {
-        override fun create(options: Options) = BoyterLc(type, options)
+    class Factory : ScannerWrapperFactory<Unit>("BoyterLc") {
+        override fun create(config: Unit, wrapperConfig: ScannerWrapperConfig) = BoyterLc(type, wrapperConfig)
+
+        override fun parseConfig(options: Options, secrets: Options) = Unit
     }
 
     override val configuration = CONFIGURATION_OPTIONS.joinToString(" ")
 
-    override val criteria by lazy { ScannerCriteria.create(details, options) }
+    override val matcher by lazy { ScannerMatcher.create(details, wrapperConfig.matcherConfig) }
+
+    override val readFromStorage by lazy { wrapperConfig.readFromStorageWithDefault(matcher) }
+
+    override val writeToStorage by lazy { wrapperConfig.writeToStorageWithDefault(matcher) }
 
     override fun command(workingDir: File?) =
         listOfNotNull(workingDir, if (Os.isWindows) "lc.exe" else "lc").joinToString(File.separator)
@@ -79,7 +87,7 @@ class BoyterLc internal constructor(name: String, private val options: Options) 
             if (stderr.isNotBlank()) logger.debug { stderr }
             if (isError) throw ScanException(errorMessage)
 
-            resultFile.readText().also { resultFile.parentFile.safeDeleteRecursively(force = true) }
+            resultFile.readText().also { resultFile.parentFile.safeDeleteRecursively() }
         }
     }
 

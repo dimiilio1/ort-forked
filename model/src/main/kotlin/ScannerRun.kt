@@ -27,7 +27,7 @@ import java.time.Instant
 
 import kotlin.time.measureTimedValue
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.model.config.ScannerConfiguration
 import org.ossreviewtoolkit.model.utils.FileListSortedSetConverter
@@ -89,7 +89,7 @@ data class ScannerRun(
     @JsonSerialize(converter = FileListSortedSetConverter::class)
     val files: Set<FileList>
 ) {
-    companion object : Logging {
+    companion object {
         /**
          * A constant for a [ScannerRun] where all properties are empty.
          */
@@ -208,6 +208,7 @@ data class ScannerRun(
             }
         }
 
+        @Suppress("UnsafeCallOnNullableType")
         val packageProvenance = resolutionResult.packageProvenance!!
 
         val scanResultsByPath = resolutionResult.getKnownProvenancesWithoutVcsPath().mapValues { (_, provenance) ->
@@ -231,6 +232,7 @@ data class ScannerRun(
             it.packageProvenanceResolutionIssue == null && it.nestedProvenanceResolutionIssue == null
         } ?: return null
 
+        @Suppress("UnsafeCallOnNullableType")
         val packageProvenance = resolutionResult.packageProvenance!!
 
         val fileListsByPath = resolutionResult.getKnownProvenancesWithoutVcsPath().mapValues { (_, provenance) ->
@@ -255,7 +257,7 @@ data class ScannerRun(
     fun getFileList(id: Identifier): FileList? = fileListById[id]
 
     @JsonIgnore
-    fun getIssues(): Map<Identifier, Set<Issue>> =
+    fun getAllIssues(): Map<Identifier, Set<Issue>> =
         scanResultsById.mapValues { (_, scanResults) ->
             scanResults.flatMapTo(mutableSetOf()) { it.summary.issues }
         }

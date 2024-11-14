@@ -25,11 +25,20 @@ repository:
       - pattern: "**/*.java"
         reason: "EXAMPLE_OF"
         comment: "These are example files."
+      - pattern: "analyzer/src/funTest/assets/projects/synthetic/gradle/lib/excluded-file.dat"
+        reason: "DATA_FILE_OF"
       scopes:
       - pattern: "testCompile"
         reason: "TEST_DEPENDENCY_OF"
         comment: "The scope only contains test dependencies."
     resolutions:
+      issues:
+      - message: "Example advisor error, resolved."
+        reason: "CANT_FIX_ISSUE"
+        comment: "A comment explaining why the issue can be ignored."
+      - message: "Example error, resolved."
+        reason: "CANT_FIX_ISSUE"
+        comment: "Resolved for illustration."
       rule_violations:
       - message: "Apache-2.0 hint"
         reason: "CANT_FIX_EXCEPTION"
@@ -97,6 +106,11 @@ analyzer:
         - id: "Maven:org.apache.commons:commons-text:1.1"
           dependencies:
           - id: "Maven:org.apache.commons:commons-lang3:3.5"
+          issues:
+          - timestamp: "2024-04-25T07:44:20.725613974Z"
+            source: "Gradle"
+            message: "Example analyzer warning in included package."
+            severity: "WARNING"
         - id: "Maven:org.example.test:component:1.11"
           dependencies:
           - id: "Maven:org.apache.commons:commons-text:1.1"
@@ -109,6 +123,11 @@ analyzer:
           - id: "Maven:com.foobar:foobar:1.0"
           - id: "Maven:com.h2database:h2:1.4.200"
           - id: "Maven:org.hamcrest:hamcrest-core:1.3"
+          issues:
+          - timestamp: "2024-04-25T07:44:20.725613974Z"
+            source: "Gradle"
+            message: "Example analyzer warning in excluded package."
+            severity: "WARNING"
         - id: "Maven:org.example.test:component:1.11"
           dependencies:
           - id: "Maven:org.apache.commons:commons-text:1.1"
@@ -337,6 +356,24 @@ analyzer:
         url: ""
         revision: ""
         path: ""
+    issues:
+      Gradle:org.ossreviewtoolkit.gradle.example:lib:1.0.0:
+      - timestamp: "2024-04-25T07:44:20.725613974Z"
+        source: "Gradle"
+        message: "Example hint."
+        severity: "HINT"
+      - timestamp: "2024-04-25T07:44:20.725613974Z"
+        source: "Gradle"
+        message: "Example warning."
+        severity: "WARNING"
+      - timestamp: "2024-04-25T07:44:20.725613974Z"
+        source: "Gradle"
+        message: "Example error."
+        severity: "ERROR"
+      - timestamp: "2024-04-25T07:44:20.725613974Z"
+        source: "Gradle"
+        message: "Example error, resolved."
+        severity: "ERROR"
 scanner:
   start_time: "1970-01-01T00:40:00Z"
   end_time: "1970-01-01T00:48:00Z"
@@ -350,7 +387,6 @@ scanner:
     tool_versions: {}
   config:
     skip_concluded: false
-    create_missing_archives: false
     detected_license_mapping:
       LicenseRef-scancode-agpl-generic-additional-terms: "NOASSERTION"
       LicenseRef-scancode-generic-cla: "NOASSERTION"
@@ -475,6 +511,28 @@ scanner:
           path: "project/file1.java"
           start_line: 1
           end_line: 1
+      issues:
+      - timestamp: "2024-04-22T10:36:10.661544294Z"
+        source: "FakeScanner"
+        message: "ERROR: Timeout after 300 seconds while scanning file 'project/file-within-excluded-project.dat'."
+        severity: "ERROR"
+        affected_path: "project/file-within-excluded-project.dat"
+      - timestamp: "2024-04-25T07:44:20.725613974Z"
+        source: "FakeScanner"
+        message: "Example hint."
+        severity: "HINT"
+      - timestamp: "2024-04-25T07:44:20.725613974Z"
+        source: "FakeScanner"
+        message: "Example warning."
+        severity: "WARNING"
+      - timestamp: "2024-04-25T07:44:20.725613974Z"
+        source: "FakeScanner"
+        message: "Example error."
+        severity: "ERROR"
+      - timestamp: "2024-04-25T07:44:20.725613974Z"
+        source: "FakeScanner"
+        message: "Example error, resolved."
+        severity: "ERROR"
   - provenance:
       vcs_info:
         type: "Git"
@@ -524,6 +582,32 @@ scanner:
           Caused by: DownloadException: No VCS URL provided for 'Gradle:org.ossreviewtoolkit.gradle.example:lib:1.0.0'.\
           \ Please make sure the published POM file includes the SCM connection, see:\
           \ https://docs.gradle.org/current/userguide/publishing_maven.html#sec:modifying_the_generated_pom"
+        severity: "ERROR"
+      - timestamp: "2024-04-22T10:36:10.661544294Z"
+        source: "FakeScanner"
+        message: "ERROR: Timeout after 300 seconds while scanning file 'analyzer/src/funTest/assets/projects/synthetic/gradle/lib/included-file.dat'."
+        severity: "ERROR"
+        affected_path: "analyzer/src/funTest/assets/projects/synthetic/gradle/lib/included-file.dat"
+      - timestamp: "2024-04-22T10:36:10.661544294Z"
+        source: "FakeScanner"
+        message: "ERROR: Timeout after 300 seconds while scanning file 'analyzer/src/funTest/assets/projects/synthetic/gradle/lib/excluded-file.dat'."
+        severity: "ERROR"
+        affected_path: "analyzer/src/funTest/assets/projects/synthetic/gradle/lib/excluded-file.dat"
+      - timestamp: "2024-04-25T07:44:20.725613974Z"
+        source: "FakeScanner"
+        message: "Example hint."
+        severity: "HINT"
+      - timestamp: "2024-04-25T07:44:20.725613974Z"
+        source: "FakeScanner"
+        message: "Example warning."
+        severity: "WARNING"
+      - timestamp: "2024-04-25T07:44:20.725613974Z"
+        source: "FakeScanner"
+        message: "Example error."
+        severity: "ERROR"
+      - timestamp: "2024-04-25T07:44:20.725613974Z"
+        source: "FakeScanner"
+        message: "Example error, resolved."
         severity: "ERROR"
   - provenance:
       source_artifact:
@@ -591,24 +675,24 @@ scanner:
       start_time: "1970-01-01T00:00:00Z"
       end_time: "1970-01-01T00:00:00Z"
   scanners:
-    "Gradle:org.ossreviewtoolkit:nested-fake-project:1.0.0":
-      - "FakeScanner"
-    "Gradle:org.ossreviewtoolkit.gradle.example:lib:1.0.0":
-      - "FakeScanner"
-    "Ant:junit:junit:4.12":
-      - "Dummy"
-    "Maven:com.foobar:foobar:1.0":
-      - "Dummy"
-    "Maven:com.h2database:h2:1.4.200":
-      - "Dummy"
-    "Maven:org.apache.commons:commons-lang3:3.5":
-      - "Dummy"
-    "Maven:org.apache.commons:commons-text:1.1":
-      - "Dummy"
-    "Maven:org.example.test:example-component:1.11":
-      - "Dummy"
-    "Maven:org.hamcrest:hamcrest-core:1.3":
-      - "Dummy"
+    Ant:junit:junit:4.12:
+    - "Dummy"
+    Gradle:org.ossreviewtoolkit:nested-fake-project:1.0.0:
+    - "FakeScanner"
+    Gradle:org.ossreviewtoolkit.gradle.example:lib:1.0.0:
+    - "FakeScanner"
+    Maven:com.foobar:foobar:1.0:
+    - "Dummy"
+    Maven:com.h2database:h2:1.4.200:
+    - "Dummy"
+    Maven:org.apache.commons:commons-lang3:3.5:
+    - "Dummy"
+    Maven:org.apache.commons:commons-text:1.1:
+    - "Dummy"
+    Maven:org.example.test:example-component:1.11:
+    - "Dummy"
+    Maven:org.hamcrest:hamcrest-core:1.3:
+    - "Dummy"
   files:
   - provenance:
       vcs_info:
@@ -685,36 +769,47 @@ advisor:
     variables: {}
     tool_versions: {}
   config:
-    nexus_iq:
-      server_url: "https://rest-api-url-of-your-nexus-iq-server"
-      browse_url: "https://web-browsing-url-of-your-nexus-iq-server"
-      username: "username"
-    vulnerable_code:
-      server_url: "http://localhost:8000"
+    config:
+      OssIndex:
+        options:
+          serverUrl: "https://ossindex.sonatype.org"
+        secrets:
+          username: "username"
+          password: "password"
   results:
-    advisor_results:
-      Maven:org.apache.commons:commons-text:1.1:
-      - advisor:
-          name: "VulnerableCode"
-          capabilities:
-          - "VULNERABILITIES"
-        summary:
-          start_time: "1970-01-01T00:00:00Z"
-          end_time: "1970-01-01T00:00:00Z"
-          issues:
-          - timestamp: "1970-01-01T00:00:00Z"
-            source: "VulnerableCode"
-            message: "A test issue."
-            severity: "ERROR"
-        defects: []
-        vulnerabilities:
-        - id: "VULCOID-VULNERABILITY_ID"
-          summary: "summary text"
-          description: "description text"
-          references:
-          - url: "https://registry.vulnerability-url/"
-            scoring_system: "SCORING_SYSTEM_NAME"
-            severity: "ERROR"
+    Maven:org.apache.commons:commons-text:1.1:
+    - advisor:
+        name: "VulnerableCode"
+        capabilities:
+        - "VULNERABILITIES"
+      summary:
+        start_time: "1970-01-01T00:00:00Z"
+        end_time: "1970-01-01T00:00:00Z"
+        issues:
+        - timestamp: "1970-01-01T00:00:00Z"
+          source: "VulnerableCode"
+          message: "Example advisor error, resolved."
+          severity: "ERROR"
+        - timestamp: "1970-01-01T00:00:00Z"
+          source: "VulnerableCode"
+          message: "Example advisor error."
+          severity: "ERROR"
+        - timestamp: "1970-01-01T00:00:00Z"
+          source: "VulnerableCode"
+          message: "Example advisor warning."
+          severity: "WARNING"
+        - timestamp: "1970-01-01T00:00:00Z"
+          source: "VulnerableCode"
+          message: "Example advisor hint."
+          severity: "HINT"
+      vulnerabilities:
+      - id: "VULCOID-VULNERABILITY_ID"
+        summary: "summary text"
+        description: "description text"
+        references:
+        - url: "https://registry.vulnerability-url/"
+          scoring_system: "SCORING_SYSTEM_NAME"
+          severity: "ERROR"
 evaluator:
   start_time: "1970-01-01T01:09:00Z"
   end_time: "1970-01-01T01:11:00Z"
@@ -756,6 +851,18 @@ resolved_configuration:
       curations:
         comment: "H2 database offers a license choice"
         concluded_license: "MPL-2.0 OR EPL-1.0"
+  resolutions:
+    issues:
+    - message: "Example advisor error, resolved."
+      reason: "CANT_FIX_ISSUE"
+      comment: "A comment explaining why the issue can be ignored."
+    - message: "Example error, resolved."
+      reason: "CANT_FIX_ISSUE"
+      comment: "Resolved for illustration."
+    rule_violations:
+    - message: "Apache-2.0 hint"
+      reason: "CANT_FIX_EXCEPTION"
+      comment: "Apache-2 is not an issue."
 labels:
   job_parameters.JOB_PARAM_1: "label job param 1"
   job_parameters.JOB_PARAM_2: "label job param 2"

@@ -21,6 +21,7 @@ package org.ossreviewtoolkit.plugins.reporters.spdx
 
 import com.networknt.schema.JsonSchemaFactory
 import com.networknt.schema.SpecVersion
+import com.networknt.schema.serialization.JsonNodeReader
 
 import io.kotest.core.TestConfiguration
 import io.kotest.core.spec.style.WordSpec
@@ -53,6 +54,7 @@ import org.ossreviewtoolkit.model.config.Excludes
 import org.ossreviewtoolkit.model.config.RepositoryConfiguration
 import org.ossreviewtoolkit.model.config.ScopeExclude
 import org.ossreviewtoolkit.model.config.ScopeExcludeReason
+import org.ossreviewtoolkit.model.readValue
 import org.ossreviewtoolkit.reporter.ReporterInput
 import org.ossreviewtoolkit.utils.common.normalizeLineBreaks
 import org.ossreviewtoolkit.utils.ort.Environment
@@ -69,15 +71,15 @@ import org.ossreviewtoolkit.utils.test.scannerRunOf
 class SpdxDocumentReporterFunTest : WordSpec({
     "Reporting to JSON" should {
         "create a valid document" {
-            val jsonMapper = FileFormat.JSON.mapper
+            val nodeReader = JsonNodeReader.builder().jsonMapper(FileFormat.JSON.mapper).build()
             val schema = JsonSchemaFactory
                 .builder(JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V7))
-                .objectMapper(FileFormat.JSON.mapper)
+                .jsonNodeReader(nodeReader)
                 .build()
                 .getSchema(getAssetFile("spdx-schema.json").toURI())
 
             val jsonSpdxDocument = generateReport(ortResult, FileFormat.JSON)
-            val errors = schema.validate(jsonMapper.readTree(jsonSpdxDocument))
+            val errors = schema.validate(FileFormat.JSON.mapper.readTree(jsonSpdxDocument))
 
             errors should beEmpty()
         }
@@ -97,7 +99,7 @@ class SpdxDocumentReporterFunTest : WordSpec({
             val jsonSpdxDocument = generateReport(
                 ortResult,
                 FileFormat.JSON,
-                SpdxDocumentReporter.OPTION_FILE_INFORMATION_ENABLED to "false"
+                defaultConfig.copy(fileInformationEnabled = false)
             )
 
             val document = fromJson<SpdxDocument>(jsonSpdxDocument)
@@ -107,7 +109,7 @@ class SpdxDocumentReporterFunTest : WordSpec({
     }
 
     "Reporting to YAML" should {
-        "create the expected document" {
+        "create the expected document for a synthetic ORT result" {
             val expectedResultFile = getAssetFile("spdx-document-reporter-expected-output.spdx.yml")
 
             val yamlSpdxDocument = generateReport(ortResult, FileFormat.YAML)
@@ -117,26 +119,46 @@ class SpdxDocumentReporterFunTest : WordSpec({
                 custom = fromYaml<SpdxDocument>(yamlSpdxDocument).getCustomReplacements()
             )
         }
+
+        "create the expected document for the ORT result of a Go project" {
+            val ortResultFile = getAssetFile("disclosure-cli-analyzer-and-scanner-result.yml")
+            val ortResultForGoProject = ortResultFile.readValue<OrtResult>()
+            val expectedResultFile = getAssetFile("disclosure-cli-expected-output.spdx.yml")
+
+            val yamlSpdxDocument = generateReport(ortResultForGoProject, FileFormat.YAML)
+
+            yamlSpdxDocument should matchExpectedResult(
+                expectedResultFile,
+                custom = fromYaml<SpdxDocument>(yamlSpdxDocument).getCustomReplacements()
+            )
+        }
     }
 })
+
+private val defaultConfig = SpdxDocumentReporterConfig(
+    creationInfoComment = "some creation info comment",
+    creationInfoPerson = "some creation info person",
+    creationInfoOrganization = "some creation info organization",
+    documentComment = "some document comment",
+    documentName = "some document name",
+    fileInformationEnabled = true,
+    outputFileFormats = emptyList()
+)
 
 private fun TestConfiguration.generateReport(
     ortResult: OrtResult,
     format: FileFormat,
-    vararg extraReporterOptions: Pair<String, String>
+    config: SpdxDocumentReporterConfig = defaultConfig
 ): String {
     val input = ReporterInput(ortResult)
 
     val outputDir = tempdir()
 
-    val reportOptions = mapOf(
-        SpdxDocumentReporter.OPTION_CREATION_INFO_COMMENT to "some creation info comment",
-        SpdxDocumentReporter.OPTION_DOCUMENT_COMMENT to "some document comment",
-        SpdxDocumentReporter.OPTION_DOCUMENT_NAME to "some document name",
-        SpdxDocumentReporter.OPTION_OUTPUT_FILE_FORMATS to format.toString()
-    ) + extraReporterOptions
-
-    return SpdxDocumentReporter().generateReport(input, outputDir, reportOptions).single().readText()
+    return SpdxDocumentReporter(config = config.copy(outputFileFormats = listOf(format.name)))
+        .generateReport(input, outputDir)
+        .single()
+        .getOrThrow()
+        .readText()
         .normalizeLineBreaks()
 }
 

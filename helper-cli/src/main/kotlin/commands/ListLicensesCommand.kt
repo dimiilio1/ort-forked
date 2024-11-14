@@ -19,7 +19,6 @@
 
 package org.ossreviewtoolkit.helper.commands
 
-import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.UsageError
 import com.github.ajalt.clikt.parameters.options.convert
 import com.github.ajalt.clikt.parameters.options.default
@@ -33,8 +32,11 @@ import com.github.ajalt.clikt.parameters.types.file
 import java.io.File
 import java.lang.IllegalArgumentException
 
-import org.ossreviewtoolkit.helper.utils.fetchScannedSources
+import org.ossreviewtoolkit.helper.utils.OrtHelperCommand
+import org.ossreviewtoolkit.helper.utils.downloadSources
 import org.ossreviewtoolkit.helper.utils.getLicenseFindingsById
+import org.ossreviewtoolkit.helper.utils.getScannedProvenance
+import org.ossreviewtoolkit.helper.utils.getSourceCodeOrigin
 import org.ossreviewtoolkit.helper.utils.getViolatedRulesByLicense
 import org.ossreviewtoolkit.helper.utils.readOrtResult
 import org.ossreviewtoolkit.helper.utils.replaceConfig
@@ -49,7 +51,7 @@ import org.ossreviewtoolkit.utils.common.FileMatcher
 import org.ossreviewtoolkit.utils.common.expandTilde
 import org.ossreviewtoolkit.utils.spdx.SpdxExpression
 
-internal class ListLicensesCommand : CliktCommand(
+internal class ListLicensesCommand : OrtHelperCommand(
     help = "Lists the license findings for a given package as distinct text locations."
 ) {
     private val ortFile by option(
@@ -146,9 +148,14 @@ internal class ListLicensesCommand : CliktCommand(
             throw UsageError("Could not find the package for the given id '${packageId.toCoordinates()}'.")
         }
 
+        val sourceCodeOrigin = ortResult.getScannedProvenance(packageId).getSourceCodeOrigin() ?: run {
+            println("No scan results available.")
+            return
+        }
+
         val sourcesDir = sourceCodeDir ?: run {
             println("Downloading sources for package '${packageId.toCoordinates()}'...")
-            ortResult.fetchScannedSources(packageId)
+            ortResult.downloadSources(packageId, sourceCodeOrigin)
         }
 
         val packageConfigurationProvider = DirPackageConfigurationProvider(packageConfigurationsDir)
@@ -303,5 +310,6 @@ private fun Provenance.writeValueAsString(): String =
         is RepositoryProvenance -> {
             "type=${vcsInfo.type}, url=${vcsInfo.url}, path=${vcsInfo.path}, revision=$resolvedRevision"
         }
+
         else -> throw IllegalArgumentException("Provenance must have either a non-null source artifact or VCS info.")
     }

@@ -23,7 +23,9 @@ import ch.qos.logback.classic.Level
 import ch.qos.logback.classic.Logger
 
 import com.github.ajalt.clikt.core.CliktCommand
+import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.core.context
+import com.github.ajalt.clikt.core.main
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.output.MordantHelpFormatter
 import com.github.ajalt.clikt.parameters.options.default
@@ -38,8 +40,8 @@ import org.ossreviewtoolkit.helper.commands.classifications.LicenseClassificatio
 import org.ossreviewtoolkit.helper.commands.dev.DevCommand
 import org.ossreviewtoolkit.helper.commands.packageconfig.PackageConfigurationCommand
 import org.ossreviewtoolkit.helper.commands.packagecuration.PackageCurationsCommand
+import org.ossreviewtoolkit.helper.commands.provenancestorage.ProvenanceStorageCommand
 import org.ossreviewtoolkit.helper.commands.repoconfig.RepositoryConfigurationCommand
-import org.ossreviewtoolkit.helper.commands.scanstorage.ScanStorageCommand
 import org.ossreviewtoolkit.helper.utils.ORTH_NAME
 import org.ossreviewtoolkit.utils.common.Os
 import org.ossreviewtoolkit.utils.ort.printStackTrace
@@ -57,10 +59,7 @@ fun main(args: Array<String>) {
 
 private const val REQUIRED_OPTION_MARKER = "*"
 
-internal class HelperMain : CliktCommand(
-    name = ORTH_NAME,
-    epilog = "$REQUIRED_OPTION_MARKER denotes required options."
-) {
+internal class HelperMain : CliktCommand(ORTH_NAME) {
     private val logLevel by option(help = "Set the verbosity level of log output.").switch(
         "--error" to Level.ERROR,
         "--warn" to Level.WARN,
@@ -72,18 +71,17 @@ internal class HelperMain : CliktCommand(
 
     init {
         context {
-            expandArgumentFiles = false
             helpFormatter = { MordantHelpFormatter(context = it, REQUIRED_OPTION_MARKER, showDefaultValues = true) }
         }
 
         subcommands(
             ConvertOrtFileCommand(),
-            CreateAnalyzerResultCommand(),
             CreateAnalyzerResultFromPackageListCommand(),
             DevCommand(),
             ExtractRepositoryConfigurationCommand(),
             GenerateTimeoutErrorResolutionsCommand(),
             GetPackageLicensesCommand(),
+            GroupScanIssuesCommand(),
             DownloadResultsFromPostgresCommand(),
             ImportCopyrightGarbageCommand(),
             ImportScanResultsCommand(),
@@ -97,8 +95,8 @@ internal class HelperMain : CliktCommand(
             MergeRepositoryConfigurationsCommand(),
             PackageConfigurationCommand(),
             PackageCurationsCommand(),
+            ProvenanceStorageCommand(),
             RepositoryConfigurationCommand(),
-            ScanStorageCommand(),
             SetDependencyRepresentationCommand(),
             SetLabelsCommand(),
             TransformResultCommand(),
@@ -106,7 +104,14 @@ internal class HelperMain : CliktCommand(
         )
     }
 
+    override fun helpEpilog(context: Context) = "$REQUIRED_OPTION_MARKER denotes required options."
+
     override fun run() {
+        // This is somewhat dirty: For logging, ORT uses the Log4j API (because of its nice Kotlin API), but Logback as
+        // the implementation (for its robustness). The former API does not provide a way to set the root log level,
+        // only the Log4j implementation does (via org.apache.logging.log4j.core.config.Configurator). However, the
+        // SLF4J API does provide a way to get the root logger and set its level. That is why ORT's CLI additionally
+        // depends on the SLF4J API, just to be able to set the root log level below.
         val rootLogger = LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME) as Logger
         rootLogger.level = logLevel
 

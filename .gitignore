@@ -1,7 +1,7 @@
-.batect/
 .gradle/
 .idea/
 !.idea/icon*.png
+.kotlin/
 build/
 out/
 /local.properties

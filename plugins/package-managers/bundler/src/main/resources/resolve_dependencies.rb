@@ -18,7 +18,7 @@
 # License-Filename: LICENSE
 
 # This script mimics the behavior of calling the `bundle lock` CLI command, which resolves a `Gemfile`'s dependencies
-# and writes them along with the respective versions to a lock file [1]. Internally, Bundler tries to find the
+# and writes them along with the respective versions to a lockfile [1]. Internally, Bundler tries to find the
 # dependencies' `gemspec` files both locally and remotely, and retrieves the respective metadata. However, except for
 # the name, version, and transitive dependencies, the Bundler call discards any other metadata. To maintain all
 # metadata, this script basically follows the same steps, but then serializes all metadata as YAML for further
@@ -27,17 +27,17 @@
 # [1] https://github.com/rubygems/bundler/blob/35be6d9a603084f719fec4f4028c18860def07f6/lib/bundler/cli/lock.rb#L49-L58
 
 require 'bundler'
+require 'yaml'
 
 # Resolve dependencies independently of the Ruby interpreter.
 Bundler.settings.set_global(:force_ruby_platform, true)
 
-definition = Bundler.definition
-
 # This command tries to resolve dependencies that are specified in the Gemfile of the current working directory.
 # Explicitly enable resolution of remote `gem` or `git` dependencies. `path` dependencies are still resolved locally.
-definition.resolve_remotely!
+puts Bundler.ui.silence {
+    Bundler.definition.resolve_remotely!
 
-definition.specs.each do |spec|
-  puts("\0")
-  puts(spec.to_yaml)
-end
+    # Resolving is triggered lazily, so the below "to_yaml" call might be the place where progress output needs to be
+    # silenced in addition to the above "resolve_remotely" call.
+    Bundler.definition.specs.map { |spec| spec.to_yaml }.join("\0")
+}

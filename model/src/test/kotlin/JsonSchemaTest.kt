@@ -21,6 +21,7 @@ package org.ossreviewtoolkit.model
 
 import com.networknt.schema.JsonSchemaFactory
 import com.networknt.schema.SpecVersion
+import com.networknt.schema.serialization.JsonNodeReader
 
 import io.kotest.core.spec.style.StringSpec
 import io.kotest.inspectors.forAll
@@ -29,10 +30,10 @@ import io.kotest.matchers.should
 
 import java.io.File
 
-import org.ossreviewtoolkit.model.config.REFERENCE_CONFIG_FILENAME
 import org.ossreviewtoolkit.utils.ort.ORT_LICENSE_CLASSIFICATIONS_FILENAME
 import org.ossreviewtoolkit.utils.ort.ORT_PACKAGE_CONFIGURATION_FILENAME
 import org.ossreviewtoolkit.utils.ort.ORT_PACKAGE_CURATIONS_FILENAME
+import org.ossreviewtoolkit.utils.ort.ORT_REFERENCE_CONFIG_FILENAME
 import org.ossreviewtoolkit.utils.ort.ORT_REPO_CONFIG_FILENAME
 import org.ossreviewtoolkit.utils.ort.ORT_RESOLUTIONS_FILENAME
 
@@ -88,7 +89,7 @@ class JsonSchemaTest : StringSpec({
 
     "The embedded reference configuration validates successfully" {
         val ortConfigurationSchema = File("../integrations/schemas/ort-configuration-schema.json").toURI()
-        val referenceConfigFile = File("src/main/resources/$REFERENCE_CONFIG_FILENAME").toJsonNode()
+        val referenceConfigFile = File("src/main/resources/$ORT_REFERENCE_CONFIG_FILENAME").toJsonNode()
 
         val errors = schemaV7.getSchema(ortConfigurationSchema).validate(referenceConfigFile)
 
@@ -105,9 +106,11 @@ class JsonSchemaTest : StringSpec({
     }
 })
 
+private val nodeReader = JsonNodeReader.builder().yamlMapper(yamlMapper).build()
+
 private val schemaV7 = JsonSchemaFactory
     .builder(JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V7))
-    .objectMapper(yamlMapper)
+    .jsonNodeReader(nodeReader)
     .build()
 
 private val repositoryConfigurationSchema =

@@ -21,7 +21,7 @@ package org.ossreviewtoolkit.model
 
 import com.fasterxml.jackson.annotation.JsonProperty
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.utils.ort.showStackTrace
 
@@ -53,8 +53,6 @@ data class PackageCuration(
     @JsonProperty("curations")
     val data: PackageCurationData
 ) {
-    private companion object : Logging
-
     /**
      * Return true if this [PackageCuration] is applicable to the package with the given [identifier][pkgId],
      * disregarding the version.
@@ -76,7 +74,7 @@ data class PackageCuration(
                 // `Semver.satisfies(String)` requires a valid version range to work as expected, see:
                 // https://github.com/semver4j/semver4j/issues/132.
                 val range = RangesListFactory.create(id.version)
-                require(range.get().size > 0) {
+                require(range.get().isNotEmpty()) {
                     "'${id.version}' is not a valid version range."
                 }
 

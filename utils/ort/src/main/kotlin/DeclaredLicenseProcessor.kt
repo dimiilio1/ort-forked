@@ -24,19 +24,16 @@ import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonPropertyOrder
 import com.fasterxml.jackson.databind.annotation.JsonSerialize
 
-import org.apache.logging.log4j.kotlin.Logging
-
 import org.ossreviewtoolkit.utils.common.StringSortedSetConverter
-import org.ossreviewtoolkit.utils.common.collectMessages
 import org.ossreviewtoolkit.utils.common.unquote
 import org.ossreviewtoolkit.utils.spdx.SpdxCompoundExpression
 import org.ossreviewtoolkit.utils.spdx.SpdxConstants
 import org.ossreviewtoolkit.utils.spdx.SpdxDeclaredLicenseMapping
 import org.ossreviewtoolkit.utils.spdx.SpdxExpression
 import org.ossreviewtoolkit.utils.spdx.SpdxOperator
-import org.ossreviewtoolkit.utils.spdx.toSpdx
+import org.ossreviewtoolkit.utils.spdx.toSpdxOrNull
 
-object DeclaredLicenseProcessor : Logging {
+object DeclaredLicenseProcessor {
     private val urlPrefixesToRemove = listOf(
         "choosealicense.com/licenses/",
         "gnu.org/licenses/old-licenses/",
@@ -92,9 +89,11 @@ object DeclaredLicenseProcessor : Logging {
             ?: SpdxDeclaredLicenseMapping.map(strippedLicense)
             ?: SpdxDeclaredLicenseMapping.map(strippedLicense.unquote())
             ?: SpdxDeclaredLicenseMapping.map(strippedLicense.removePrefix(SpdxConstants.TAG).trim())
-            ?: parseLicense(strippedLicense)
 
-        return mappedLicense?.normalize()?.takeIf { it.isValid() || it.toString() == SpdxConstants.NONE }
+        val processedLicense = mappedLicense ?: strippedLicense.toSpdxOrNull()
+        return processedLicense?.normalize()?.takeIf {
+            it.isValid(SpdxExpression.Strictness.ALLOW_LICENSEREF_EXCEPTIONS) || it.toString() == SpdxConstants.NONE
+        }
     }
 
     /**
@@ -133,13 +132,6 @@ object DeclaredLicenseProcessor : Logging {
 
         return ProcessedDeclaredLicense(spdxExpression, mapped, unmapped)
     }
-
-    private fun parseLicense(declaredLicense: String) =
-        runCatching {
-            declaredLicense.toSpdx()
-        }.onFailure {
-            logger.debug { "Could not parse declared license '$declaredLicense': ${it.collectMessages()}" }
-        }.getOrNull()
 }
 
 data class ProcessedDeclaredLicense(

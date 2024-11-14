@@ -27,13 +27,13 @@ import io.kotest.matchers.collections.containExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.collections.shouldNotContain
 import io.kotest.matchers.maps.containExactly
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.beTheSameInstanceAs
 
 import java.time.Instant
 
-import org.ossreviewtoolkit.analyzer.managers.utils.PackageManagerDependencyHandler
 import org.ossreviewtoolkit.model.AnalyzerResult
 import org.ossreviewtoolkit.model.DependencyGraph
 import org.ossreviewtoolkit.model.DependencyReference
@@ -52,7 +52,6 @@ import org.ossreviewtoolkit.model.config.ScopeExcludeReason
 import org.ossreviewtoolkit.model.fromYaml
 import org.ossreviewtoolkit.model.toYaml
 import org.ossreviewtoolkit.model.yamlMapper
-import org.ossreviewtoolkit.utils.test.shouldNotBeNull
 
 class AnalyzerResultBuilderTest : WordSpec() {
     private val issue1 = Issue(timestamp = Instant.EPOCH, source = "source-1", message = "message-1")
@@ -157,18 +156,16 @@ class AnalyzerResultBuilderTest : WordSpec() {
             "not change its representation when serialized again" {
                 val p1 = project1.copy(scopeDependencies = null, scopeNames = setOf("scope1"))
                 val p2 = project2.copy(scopeDependencies = null, scopeNames = setOf("scope3"))
-                val result = AnalyzerResult(
+                val serializedResult = AnalyzerResult(
                     projects = setOf(p1, p2, project3),
                     packages = emptySet(),
                     dependencyGraphs = mapOf(
                         project1.id.type to graph1,
                         project2.id.type to graph2
                     )
-                )
+                ).toYaml()
 
-                val serializedResult = result.toYaml().fromYaml<AnalyzerResult>().toYaml()
-
-                serializedResult shouldBe serializedResult
+                serializedResult.fromYaml<AnalyzerResult>().toYaml() shouldBe serializedResult
             }
 
             "use the dependency graph representation on serialization" {
@@ -214,7 +211,7 @@ class AnalyzerResultBuilderTest : WordSpec() {
 
                 analyzerResult.getAllIssues() should containExactly(
                     package1.id to setOf(issue1),
-                    package3.id to setOf(issue2),
+                    package3.id to setOf(issue2, issue5),
                     project1.id to setOf(issue3, issue4),
                     project2.id to setOf(issue4)
                 )
@@ -329,12 +326,12 @@ class AnalyzerResultBuilderTest : WordSpec() {
             }
 
             "resolve package manager dependencies" {
-                val packageManagerDependency = PackageManagerDependencyHandler.createPackageManagerDependency(
+                val packageManagerDependency = PackageManagerDependency(
                     packageManager = project1.id.type,
                     definitionFile = project1.definitionFilePath,
                     scope = scope1.name,
                     linkage = PackageLinkage.PROJECT_DYNAMIC
-                )
+                ).toPackageReference()
 
                 val scope = Scope(
                     name = "scope",
@@ -348,9 +345,9 @@ class AnalyzerResultBuilderTest : WordSpec() {
                 )
 
                 val project = Project.EMPTY.copy(
-                    id = Identifier("type", "namespace", "project", "version"),
+                    id = project2.id,
                     scopeDependencies = setOf(scope),
-                    definitionFilePath = "project"
+                    definitionFilePath = project2.definitionFilePath
                 )
 
                 val projectAnalyzerResult = ProjectAnalyzerResult(

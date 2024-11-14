@@ -1,4 +1,6 @@
-# syntax=docker/dockerfile:1.4
+# syntax=devthefuture/dockerfile-x:v1.4.2
+# The above opts-in for an extended syntax that supports e.g. "INCLUDE" statements, see
+# https://codeberg.org/devthefuture/dockerfile-x
 
 # Copyright (C) 2020 The ORT Project Authors (see <https://github.com/oss-review-toolkit/ort/blob/main/NOTICE>)
 #
@@ -17,9 +19,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # License-Filename: LICENSE
 
-# Set this to the Java version to use in the base image (and to build and run ORT with).
-ARG JAVA_VERSION=17
-ARG UBUNTU_VERSION=jammy
+INCLUDE docker/versions.dockerfile
 
 # Use OpenJDK Eclipe Temurin Ubuntu LTS
 FROM eclipse-temurin:$JAVA_VERSION-jdk-$UBUNTU_VERSION as base
@@ -41,6 +41,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     coreutils \
     curl \
     dirmngr \
+    file \
     gcc \
     git \
     git-lfs \
@@ -50,6 +51,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     libarchive-tools \
     libffi-dev \
     libgmp-dev \
+    libmagic1 \
     libz-dev \
     locales \
     lzma \
@@ -105,12 +107,6 @@ COPY "$CRT_FILES" /tmp/certificates/
 RUN /etc/scripts/export_proxy_certificates.sh /tmp/certificates/ \
     &&  /etc/scripts/import_certificates.sh /tmp/certificates/
 
-# Add Syft to use as primary SPDX Docker scanner
-# Create docs dir to store future SPDX files
-RUN curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin \
-    && mkdir -p /usr/share/doc/ort \
-    && chown $USER:$USER /usr/share/doc/ort
-
 USER $USER
 WORKDIR $HOME
 
@@ -135,8 +131,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     tk-dev \
     && sudo rm -rf /var/lib/apt/lists/*
 
-ARG PYTHON_VERSION=3.10.13
-ARG PYENV_GIT_TAG=v2.3.25
+ARG PYTHON_VERSION
+ARG PYENV_GIT_TAG
 
 ENV PYENV_ROOT=/opt/python
 ENV PATH=$PATH:$PYENV_ROOT/shims:$PYENV_ROOT/bin
@@ -144,23 +140,13 @@ RUN curl -kSs https://pyenv.run | bash \
     && pyenv install -v $PYTHON_VERSION \
     && pyenv global $PYTHON_VERSION
 
-ARG CONAN_VERSION=1.57.0
-ARG PYTHON_INSPECTOR_VERSION=0.9.8
-ARG PYTHON_PIPENV_VERSION=2022.9.24
-ARG PYTHON_POETRY_VERSION=1.6.1
-ARG PIPTOOL_VERSION=22.2.2
-ARG SCANCODE_VERSION=32.0.6
-
-RUN pip install --no-cache-dir -U \
-    pip=="$PIPTOOL_VERSION" \
-    wheel \
-    && pip install --no-cache-dir -U \
-    Mercurial \
-    conan=="$CONAN_VERSION" \
-    pip \
-    pipenv=="$PYTHON_PIPENV_VERSION" \
-    poetry=="$PYTHON_POETRY_VERSION" \
-    python-inspector=="$PYTHON_INSPECTOR_VERSION"
+ARG CONAN_VERSION
+ARG PYTHON_INSPECTOR_VERSION
+ARG PYTHON_PIPENV_VERSION
+ARG PYTHON_POETRY_VERSION
+ARG PYTHON_SETUPTOOLS_VERSION
+ARG PIPTOOL_VERSION
+ARG SCANCODE_VERSION
 
 RUN ARCH=$(arch | sed s/aarch64/arm64/) \
     &&  if [ "$ARCH" == "arm64" ]; then \
@@ -171,6 +157,17 @@ RUN ARCH=$(arch | sed s/aarch64/arm64/) \
     rm requirements.txt; \
     fi
 
+RUN pip install --no-cache-dir -U \
+    pip=="$PIPTOOL_VERSION" \
+    wheel \
+    && pip install --no-cache-dir -U \
+    Mercurial \
+    conan=="$CONAN_VERSION" \
+    pipenv=="$PYTHON_PIPENV_VERSION" \
+    poetry=="$PYTHON_POETRY_VERSION" \
+    python-inspector=="$PYTHON_INSPECTOR_VERSION" \
+    setuptools=="$PYTHON_SETUPTOOLS_VERSION"
+
 FROM scratch AS python
 COPY --from=pythonbuild /opt/python /opt/python
 
@@ -178,11 +175,11 @@ COPY --from=pythonbuild /opt/python /opt/python
 # NODEJS - Build NodeJS as a separate component with nvm
 FROM base AS nodejsbuild
 
-ARG BOWER_VERSION=1.8.12
-ARG NODEJS_VERSION=18.14.2
-ARG NPM_VERSION=8.15.1
-ARG PNPM_VERSION=7.8.0
-ARG YARN_VERSION=1.22.17
+ARG BOWER_VERSION
+ARG NODEJS_VERSION
+ARG NPM_VERSION
+ARG PNPM_VERSION
+ARG YARN_VERSION
 
 ENV NVM_DIR=/opt/nvm
 ENV PATH=$PATH:$NVM_DIR/versions/node/v$NODEJS_VERSION/bin
@@ -214,8 +211,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     zlib1g-dev \
     && sudo rm -rf /var/lib/apt/lists/*
 
-ARG COCOAPODS_VERSION=1.11.2
-ARG RUBY_VERSION=3.1.2
+ARG COCOAPODS_VERSION
+ARG RUBY_VERSION
 
 ENV RBENV_ROOT=/opt/rbenv
 ENV PATH=$RBENV_ROOT/bin:$RBENV_ROOT/shims/:$RBENV_ROOT/plugins/ruby-build/bin:$PATH
@@ -236,7 +233,7 @@ COPY --from=rubybuild /opt/rbenv /opt/rbenv
 # RUST - Build as a separate component
 FROM base AS rustbuild
 
-ARG RUST_VERSION=1.72.0
+ARG RUST_VERSION
 
 ENV RUST_HOME=/opt/rust
 ENV CARGO_HOME=$RUST_HOME/cargo
@@ -250,15 +247,13 @@ COPY --from=rustbuild /opt/rust /opt/rust
 # GOLANG - Build as a separate component
 FROM base AS gobuild
 
-ARG GO_DEP_VERSION=0.5.4
-ARG GO_VERSION=1.20.5
+ARG GO_VERSION
 ENV GOBIN=/opt/go/bin
 ENV PATH=$PATH:/opt/go/bin
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN ARCH=$(arch | sed s/aarch64/arm64/ | sed s/x86_64/amd64/) \
-    && curl -L https://dl.google.com/go/go$GO_VERSION.linux-$ARCH.tar.gz | tar -C /opt -xz \
-    && curl -ksS https://raw.githubusercontent.com/golang/dep/v$GO_DEP_VERSION/install.sh | bash
+    && curl -L https://dl.google.com/go/go$GO_VERSION.linux-$ARCH.tar.gz | tar -C /opt -xz
 
 FROM scratch AS golang
 COPY --from=gobuild /opt/go /opt/go
@@ -274,7 +269,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     zlib1g-dev \
     && sudo rm -rf /var/lib/apt/lists/*
 
-ARG HASKELL_STACK_VERSION=2.7.5
+ARG HASKELL_STACK_VERSION
 
 ENV HASKELL_HOME=/opt/haskell
 ENV PATH=$PATH:$HASKELL_HOME/bin
@@ -295,7 +290,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     unzip \
     && sudo rm -rf /var/lib/apt/lists/*
 
-ARG ANDROID_CMD_VERSION=9477386
+ARG ANDROID_CMD_VERSION
 ENV ANDROID_HOME=/opt/android-sdk
 
 RUN --mount=type=tmpfs,target=/android \
@@ -310,7 +305,7 @@ RUN --mount=type=tmpfs,target=/android \
     fi \
     && yes | $ANDROID_HOME/cmdline-tools/bin/sdkmanager $SDK_MANAGER_PROXY_OPTIONS --sdk_root=$ANDROID_HOME "platform-tools" "cmdline-tools;latest"
 
-RUN curl -ksS https://storage.googleapis.com/git-repo-downloads/repo | tee $ANDROID_HOME/cmdline-tools/bin/repo > /dev/null 2>&1 \
+RUN curl -ksS https://storage.googleapis.com/git-repo-downloads/repo > $ANDROID_HOME/cmdline-tools/bin/repo \
     && sudo chmod a+x $ANDROID_HOME/cmdline-tools/bin/repo
 
 FROM scratch AS android
@@ -320,7 +315,7 @@ COPY --from=androidbuild /opt/android-sdk /opt/android-sdk
 #  Dart
 FROM base AS dartbuild
 
-ARG DART_VERSION=2.18.4
+ARG DART_VERSION
 WORKDIR /opt/
 
 ENV DART_SDK=/opt/dart-sdk
@@ -340,7 +335,7 @@ COPY --from=dartbuild /opt/dart-sdk /opt/dart-sdk
 # SBT
 FROM base AS scalabuild
 
-ARG SBT_VERSION=1.6.1
+ARG SBT_VERSION
 
 ENV SBT_HOME=/opt/sbt
 ENV PATH=$PATH:$SBT_HOME/bin
@@ -354,7 +349,7 @@ COPY --from=scalabuild /opt/sbt /opt/sbt
 # SWIFT
 FROM base AS swiftbuild
 
-ARG SWIFT_VERSION=5.8.1
+ARG SWIFT_VERSION
 
 ENV SWIFT_HOME=/opt/swift
 ENV PATH=$PATH:$SWIFT_HOME/bin
@@ -376,8 +371,8 @@ COPY --from=swiftbuild /opt/swift /opt/swift
 # DOTNET
 FROM base AS dotnetbuild
 
-ARG DOTNET_VERSION=6.0
-ARG NUGET_INSPECTOR_VERSION=0.9.12
+ARG DOTNET_VERSION
+ARG NUGET_INSPECTOR_VERSION
 
 ENV DOTNET_HOME=/opt/dotnet
 ENV NUGET_INSPECTOR_HOME=$DOTNET_HOME
@@ -395,11 +390,36 @@ RUN mkdir -p $DOTNET_HOME \
     fi
 
 RUN mkdir -p $DOTNET_HOME/bin \
-    && curl -L https://github.com/nexB/nuget-inspector/releases/download/v$NUGET_INSPECTOR_VERSION/nuget-inspector-v$NUGET_INSPECTOR_VERSION-linux-x64.tar.gz \
+    && curl -L https://github.com/aboutcode-org/nuget-inspector/releases/download/v$NUGET_INSPECTOR_VERSION/nuget-inspector-v$NUGET_INSPECTOR_VERSION-linux-x64.tar.gz \
     | tar --strip-components=1 -C $DOTNET_HOME/bin -xz
 
 FROM scratch AS dotnet
 COPY --from=dotnetbuild /opt/dotnet /opt/dotnet
+
+#------------------------------------------------------------------------
+# BAZEL
+FROM base as bazelbuild
+
+ARG BAZELISK_VERSION
+
+ENV BAZEL_HOME=/opt/bazel
+ENV GOBIN=/opt/go/bin
+
+RUN mkdir -p $BAZEL_HOME/bin \
+    && if [ "$(arch)" = "aarch64" ]; then \
+    curl -L https://github.com/bazelbuild/bazelisk/releases/download/v$BAZELISK_VERSION/bazelisk-linux-arm64 -o $BAZEL_HOME/bin/bazel; \
+    else \
+    curl -L https://github.com/bazelbuild/bazelisk/releases/download/v$BAZELISK_VERSION/bazelisk-linux-amd64 -o $BAZEL_HOME/bin/bazel; \
+    fi \
+    && chmod a+x $BAZEL_HOME/bin/bazel
+
+COPY --from=gobuild /opt/go /opt/go
+
+RUN $GOBIN/go install github.com/bazelbuild/buildtools/buildozer@latest && chmod a+x $GOBIN/buildozer
+
+FROM scratch as bazel
+COPY --from=bazelbuild /opt/bazel /opt/bazel
+COPY --from=bazelbuild /opt/go/bin/buildozer /opt/go/bin/buildozer
 
 #------------------------------------------------------------------------
 # ORT
@@ -430,8 +450,8 @@ FROM scratch AS ortbin
 COPY --from=ortbuild /opt/ort /opt/ort
 
 #------------------------------------------------------------------------
-# Main Minimal Runtime container
-FROM base as run
+# Container with minimal selection of supported package managers.
+FROM base as minimal-tools
 
 # Remove ort build scripts
 RUN [ -d /etc/scripts ] && sudo rm -rf /etc/scripts
@@ -444,20 +464,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     subversion \
     && sudo rm -rf /var/lib/apt/lists/*
 
-RUN syft / --exclude '*/usr/share/doc' --exclude '*/etc' -o spdx-json --file /usr/share/doc/ort/ort-base.spdx.json
-
 # Python
 ENV PYENV_ROOT=/opt/python
 ENV PATH=$PATH:$PYENV_ROOT/shims:$PYENV_ROOT/bin
 COPY --from=python --chown=$USER:$USER $PYENV_ROOT $PYENV_ROOT
-RUN syft $PYENV_ROOT -o spdx-json --file /usr/share/doc/ort/ort-python.spdx.json
 
 # NodeJS
-ARG NODEJS_VERSION=18.14.2
+ARG NODEJS_VERSION
 ENV NVM_DIR=/opt/nvm
 ENV PATH=$PATH:$NVM_DIR/versions/node/v$NODEJS_VERSION/bin
 COPY --from=nodejs --chown=$USER:$USER $NVM_DIR $NVM_DIR
-RUN syft $NVM_DIR  -o spdx-json --file /usr/share/doc/ort/ort-nodejs.spdx.json
 
 # Rust
 ENV RUST_HOME=/opt/rust
@@ -466,19 +482,101 @@ ENV RUSTUP_HOME=$RUST_HOME/rustup
 ENV PATH=$PATH:$CARGO_HOME/bin:$RUSTUP_HOME/bin
 COPY --from=rust --chown=$USER:$USER $RUST_HOME $RUST_HOME
 RUN chmod o+rwx $CARGO_HOME
-RUN syft $RUST_HOME -o spdx-json --file /usr/share/doc/ort/ort-rust.spdx.json
 
 # Golang
 ENV PATH=$PATH:/opt/go/bin
 COPY --from=golang --chown=$USER:$USER /opt/go /opt/go
-RUN syft /opt/go -o spdx-json --file /usr/share/doc/ort/ort-golang.spdx.json
 
 # Ruby
 ENV RBENV_ROOT=/opt/rbenv/
 ENV GEM_HOME=/var/tmp/gem
 ENV PATH=$PATH:$RBENV_ROOT/bin:$RBENV_ROOT/shims:$RBENV_ROOT/plugins/ruby-install/bin
 COPY --from=ruby --chown=$USER:$USER $RBENV_ROOT $RBENV_ROOT
-RUN syft $RBENV_ROOT -o spdx-json --file /usr/share/doc/ort/ort-ruby.spdx.json
+
+#------------------------------------------------------------------------
+# Container with all supported package managers.
+FROM minimal-tools as all-tools
+
+# Repo and Android
+ENV ANDROID_HOME=/opt/android-sdk
+ENV ANDROID_USER_HOME=$HOME/.android
+ENV PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/cmdline-tools/bin
+ENV PATH=$PATH:$ANDROID_HOME/platform-tools
+COPY --from=android --chown=$USER:$USER $ANDROID_HOME $ANDROID_HOME
+RUN sudo chmod -R o+rw $ANDROID_HOME
+
+# Swift
+ENV SWIFT_HOME=/opt/swift
+ENV PATH=$PATH:$SWIFT_HOME/bin
+COPY --from=swift --chown=$USER:$USER $SWIFT_HOME $SWIFT_HOME
+
+# Scala
+ENV SBT_HOME=/opt/sbt
+ENV PATH=$PATH:$SBT_HOME/bin
+COPY --from=scala --chown=$USER:$USER $SBT_HOME $SBT_HOME
+
+# Dart
+ENV DART_SDK=/opt/dart-sdk
+ENV PATH=$PATH:$DART_SDK/bin
+COPY --from=dart --chown=$USER:$USER $DART_SDK $DART_SDK
+
+# Dotnet
+ENV DOTNET_HOME=/opt/dotnet
+ENV NUGET_INSPECTOR_HOME=$DOTNET_HOME
+ENV PATH=$PATH:$DOTNET_HOME:$DOTNET_HOME/tools:$DOTNET_HOME/bin
+
+COPY --from=dotnet --chown=$USER:$USER $DOTNET_HOME $DOTNET_HOME
+
+# PHP
+ARG PHP_VERSION
+ARG COMPOSER_VERSION
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    sudo apt-get update \
+    && sudo apt-get install -y software-properties-common \
+    && sudo add-apt-repository ppa:ondrej/php \
+    && sudo apt-get update \
+    && DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends php${PHP_VERSION} \
+    && sudo rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /opt/php/bin \
+    && curl -ksS https://getcomposer.org/installer | php -- --install-dir=/opt/php/bin --filename=composer --$COMPOSER_VERSION
+
+ENV PATH=$PATH:/opt/php/bin
+
+# Haskell
+ENV HASKELL_HOME=/opt/haskell
+ENV PATH=$PATH:$HASKELL_HOME/bin
+
+COPY --from=haskell /opt/haskell /opt/haskell
+
+# Bazel
+ENV BAZEL_HOME=/opt/bazel
+ENV PATH=$PATH:$BAZEL_HOME/bin
+
+COPY --from=bazel $BAZEL_HOME $BAZEL_HOME
+COPY --from=bazel --chown=$USER:$USER /opt/go/bin/buildozer /opt/go/bin/buildozer
+
+#------------------------------------------------------------------------
+# Runtime container with minimal selection of supported package managers pre-installed.
+FROM minimal-tools as minimal
+
+# ORT
+COPY --from=ortbin --chown=$USER:$USER /opt/ort /opt/ort
+ENV PATH=$PATH:/opt/ort/bin
+
+USER $USER
+WORKDIR $HOME
+
+# Ensure that the ORT data directory exists to be able to mount the config into it with correct permissions.
+RUN mkdir -p "$HOME/.ort"
+
+ENTRYPOINT ["/opt/ort/bin/ort"]
+
+#------------------------------------------------------------------------
+# Runtime container with all supported package managers pre-installed.
+FROM all-tools as run
 
 # ORT
 COPY --from=ortbin --chown=$USER:$USER /opt/ort /opt/ort

@@ -19,18 +19,22 @@
 
 package org.ossreviewtoolkit.model.config
 
-import com.sksamuel.hoplite.ConfigAlias
+import com.fasterxml.jackson.annotation.JsonIgnore
 
+import org.ossreviewtoolkit.utils.common.ConfigurablePluginFactory
+import org.ossreviewtoolkit.utils.common.Options
 import org.ossreviewtoolkit.utils.common.Plugin
 
 /**
- * The configuration of provider plugins.
+ * The configuration of provider [plugins][ConfigurablePluginFactory]. This class is used when multiple instances of the
+ * same type of plugin should be configurable, like it is for example possible for package curation providers.
+ * Therefore, each configured plugin gets a unique [id] in addition to the plugin [type] to be able to distinguish
+ * different configurations for the same plugin type.
  */
 data class ProviderPluginConfiguration(
     /**
      * The [type][Plugin.type] of the provider.
      */
-    @ConfigAlias("name")
     val type: String,
 
     /**
@@ -44,8 +48,20 @@ data class ProviderPluginConfiguration(
     val enabled: Boolean = true,
 
     /**
-     * The configuration of the provider. See the specific implementation for available configuration
-     * options.
+     * The configuration options of the provider. See the specific implementation for available configuration options.
      */
-    val config: Map<String, String> = emptyMap()
-)
+    val options: Options = emptyMap(),
+
+    /**
+     * The configuration secrets of the provider. See the specific implementation for available secret options.
+     *
+     * This property is not serialized to ensure that secrets do not appear in serialized output.
+     */
+    @JsonIgnore
+    val secrets: Options = emptyMap()
+) {
+    /**
+     * Return a string representation of the object that does not contain the [secrets].
+     */
+    override fun toString() = "${this::class.simpleName}(type=$type, id=$id, enabled=$enabled, options=$options)"
+}

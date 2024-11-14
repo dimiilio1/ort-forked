@@ -23,13 +23,15 @@ import com.sksamuel.hoplite.ConfigLoaderBuilder
 import com.sksamuel.hoplite.PropertySource
 import com.sksamuel.hoplite.addEnvironmentSource
 import com.sksamuel.hoplite.fp.getOrElse
+import com.sksamuel.hoplite.resolver.context.ContextResolverMode
 
 import java.io.File
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.model.Severity
 import org.ossreviewtoolkit.utils.common.EnvironmentVariableFilter
+import org.ossreviewtoolkit.utils.ort.ORT_FAILURE_STATUS_CODE
 import org.ossreviewtoolkit.utils.ort.ORT_PACKAGE_CONFIGURATIONS_DIRNAME
 import org.ossreviewtoolkit.utils.ort.ORT_PACKAGE_CURATIONS_DIRNAME
 import org.ossreviewtoolkit.utils.ort.ORT_PACKAGE_CURATIONS_FILENAME
@@ -100,12 +102,14 @@ data class OrtConfiguration(
     ),
 
     /**
-     * The threshold from which on issues count as severe.
+     * The threshold from which on issues count as severe. Severe issues cause the status code on exit of the CLI
+     * commands to be at least [ORT_FAILURE_STATUS_CODE].
      */
     val severeIssueThreshold: Severity = Severity.WARNING,
 
     /**
-     * The threshold from which on rule violations count as severe.
+     * The threshold from which on rule violations count as severe. Severe rule violations cause the status code on exit
+     * of the CLI commands to be at least [ORT_FAILURE_STATUS_CODE].
      */
     val severeRuleViolationThreshold: Severity = Severity.WARNING,
 
@@ -139,7 +143,7 @@ data class OrtConfiguration(
      */
     val notifier: NotifierConfiguration = NotifierConfiguration()
 ) {
-    companion object : Logging {
+    companion object {
         /**
          * Load the [OrtConfiguration]. The different sources are used with this priority:
          *
@@ -169,7 +173,7 @@ data class OrtConfiguration(
             val loader = ConfigLoaderBuilder.default()
                 .addEnvironmentSource()
                 .addPropertySources(sources)
-                .allowUnresolvedSubstitutions()
+                .withContextResolverMode(ContextResolverMode.SkipUnresolved)
                 .build()
 
             val config = loader.loadConfig<OrtConfigurationWrapper>()
@@ -192,8 +196,3 @@ data class OrtConfiguration(
 data class OrtConfigurationWrapper(
     val ort: OrtConfiguration
 )
-
-/**
- * The filename of the reference configuration file.
- */
-const val REFERENCE_CONFIG_FILENAME = "reference.yml"

@@ -4,27 +4,26 @@ sidebar_position: 1
 
 # Analyzer
 
-The *analyzer* is a Software Composition Analysis (SCA) tool that determines the dependencies of software projects
-inside the specified input directory (`-i`). It does so by querying the detected package managers; **no modifications**
-to your existing project source code, like applying build system plugins, are necessary for that to work. The tree of
-transitive dependencies per project is written out as part of an
-[OrtResult](https://github.com/oss-review-toolkit/ort/blob/main/model/src/main/kotlin/OrtResult.kt) in YAML (or
-JSON, see `-f`) format to a file named `analyzer-result.yml` in the specified output directory (`-o`). The output file
-exactly documents the status quo of all package-related metadata. It can be further processed or manually edited before
-passing it to one of the other tools.
+The *analyzer* is a Software Composition Analysis (SCA) tool that determines the dependencies of software projects inside the specified version-controlled input directory (`-i`).
+It is the only mandatory tool to run from ORT as its output is the input for all other tools.
+Analysis works by querying the detected package managers; **no modifications** to your existing project source code, like applying build system plugins, are necessary for that to work if the following preconditions are met:
 
-Currently, the following package managers (grouped by the programming language they are most commonly used with) are
-supported:
+* All projects use one of the package managers listed below in a reasonably recent version, and they are configured according to common best practices.
+* All projects can be built in a single step out-of-the-box, without any custom configuration being set, like build system properties or environment variables.
+
+The tree of transitive dependencies per project is written out as part of an [OrtResult](https://github.com/oss-review-toolkit/ort/blob/main/model/src/main/kotlin/OrtResult.kt) in YAML (or JSON, see `-f`) format to a file named `analyzer-result.yml` in the specified output directory (`-o`).
+The output file exactly documents the status quo of all package-related metadata.
+It can be further processed or manually edited before passing it to one of the other tools.
+
+Currently, the following package managers (grouped by the programming language they are most commonly used with) are supported:
 
 * C / C++
-  * [Conan](https://conan.io/)
+  * [Bazel](https://bazel.build/) (**experimental**) (limitations: see [open tasks](https://github.com/oss-review-toolkit/ort/issues/264))
+  * [Conan 1.x](https://conan.io/)
   * Also see: [SPDX documents](#analyzer-for-spdx-documents)
 * Dart / Flutter
   * [Pub](https://pub.dev/)
 * Go
-  * [dep](https://golang.github.io/dep/)
-  * [Glide](https://github.com/Masterminds/glide)
-  * [Godep](https://github.com/tools/godep)
   * [GoMod](https://github.com/golang/go/wiki/Modules)
 * Haskell
   * [Stack](https://haskellstack.org/)
@@ -52,7 +51,7 @@ supported:
     [no `cartfile.private`](https://github.com/oss-review-toolkit/ort/issues/3774))
   * [CocoaPods](https://github.com/CocoaPods/CocoaPods) (limitations:
     [no custom source repositories](https://github.com/oss-review-toolkit/ort/issues/4188))
-  * [Swift Package Manager](https://www.swift.org/package-manager)
+  * [SwiftPM](https://www.swift.org/package-manager)
 * PHP
   * [Composer](https://getcomposer.org/)
 * Python
@@ -67,12 +66,8 @@ supported:
 * Scala
   * [SBT](https://www.scala-sbt.org/)
 * Unmanaged
-  * This is a special "package manager" that manages all files that cannot be associated to any of the other package
-    managers.
+  * This is a special "package manager" that manages all files that cannot be associated with any of the other package managers.
 
 <a name="analyzer-for-spdx-documents"></a>
 
-If another package manager that is not part of the list above is used (or no package manager at all), the generic
-fallback to [SPDX documents](https://spdx.dev/specifications/) can be leveraged to describe
-[projects](https://github.com/oss-review-toolkit/ort/blob/main/plugins/package-managers/spdx/src/funTest/assets/projects/synthetic/inline-packages/project-xyz.spdx.yml)
-or [packages](https://github.com/oss-review-toolkit/ort/blob/main/plugins/package-managers/spdx/src/funTest/assets/projects/synthetic/libs/curl/package.spdx.yml).
+If another package manager that is not part of the list above is used (or no package manager at all), the generic fallback to [SPDX documents](https://spdx.dev/specifications/) can be leveraged to describe [projects](https://github.com/oss-review-toolkit/ort/blob/main/plugins/package-managers/spdx/src/funTest/assets/projects/synthetic/inline-packages/project-xyz.spdx.yml) or [packages](https://github.com/oss-review-toolkit/ort/blob/main/plugins/package-managers/spdx/src/funTest/assets/projects/synthetic/libs/curl/package.spdx.yml).

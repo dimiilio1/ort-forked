@@ -27,16 +27,15 @@ import org.apache.maven.model.building.ModelBuildingResult
 
 import org.gradle.api.Project
 import org.gradle.api.artifacts.Configuration
-import org.gradle.api.artifacts.ModuleVersionIdentifier
 import org.gradle.api.artifacts.component.ComponentIdentifier
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 import org.gradle.api.artifacts.component.ProjectComponentSelector
-import org.gradle.api.artifacts.repositories.UrlArtifactRepository
 import org.gradle.api.artifacts.result.DependencyResult
 import org.gradle.api.artifacts.result.ResolvedArtifactResult
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
 import org.gradle.api.artifacts.result.UnresolvedDependencyResult
+import org.gradle.api.internal.GradleInternal
 import org.gradle.api.internal.artifacts.DefaultModuleIdentifier
 import org.gradle.api.internal.artifacts.result.ResolvedComponentResultInternal
 import org.gradle.api.logging.Logging
@@ -48,21 +47,27 @@ import org.gradle.tooling.provider.model.ToolingModelBuilder
 import org.gradle.util.GradleVersion
 
 internal class OrtModelBuilder : ToolingModelBuilder {
-    private lateinit var repositories: Map<String, String?>
+    private val repositories = mutableMapOf<String, String?>()
 
     private val platformCategories = setOf("platform", "enforced-platform")
-
-    private val visitedDependencies = mutableSetOf<ModuleComponentIdentifier>()
-    private val visitedProjects = mutableSetOf<ModuleVersionIdentifier>()
 
     private val logger = Logging.getLogger(OrtModelBuilder::class.java)
     private val errors = mutableListOf<String>()
     private val warnings = mutableListOf<String>()
+    private val globalDependencySubtrees = mutableMapOf<String, List<OrtDependency>>()
 
     override fun canBuild(modelName: String): Boolean = modelName == OrtDependencyTreeModel::class.java.name
 
     override fun buildAll(modelName: String, project: Project): OrtDependencyTreeModel {
-        repositories = project.repositories.associate { it.name to (it as? UrlArtifactRepository)?.url?.toString() }
+        if (GradleVersion.current() >= GradleVersion.version("6.8")) {
+            // There currently is no way to access Gradle settings without using internal API, see
+            // https://github.com/gradle/gradle/issues/18616.
+            val settings = (project.gradle as GradleInternal).settings
+
+            settings.dependencyResolutionManagement.repositories.associateNamesWithUrlsTo(repositories)
+        }
+
+        project.repositories.associateNamesWithUrlsTo(repositories)
 
         val relevantConfigurations = project.configurations.filter { it.isRelevant() }
 
@@ -80,11 +85,7 @@ internal class OrtModelBuilder : ToolingModelBuilder {
 
             // Omit configurations without dependencies.
             root.dependencies.takeUnless { it.isEmpty() }?.let { dep ->
-                // Reset visited dependencies and projects per configuration.
-                visitedDependencies.clear()
-                visitedProjects.clear()
-
-                OrtConfigurationImpl(name = config.name, dependencies = dep.toOrtDependencies(poms))
+                OrtConfigurationImpl(name = config.name, dependencies = dep.toOrtDependencies(poms, emptySet()))
             }
         }
 
@@ -141,7 +142,8 @@ internal class OrtModelBuilder : ToolingModelBuilder {
     }
 
     private fun Collection<DependencyResult>.toOrtDependencies(
-        poms: Map<String, ModelBuildingResult>
+        poms: Map<String, ModelBuildingResult>,
+        visited: Set<ComponentIdentifier>
     ): List<OrtDependency> =
         if (GradleVersion.current() < GradleVersion.version("5.1")) {
             this
@@ -158,15 +160,23 @@ internal class OrtModelBuilder : ToolingModelBuilder {
                     if (isBom) return@mapNotNull null
 
                     val selectedComponent = dep.selected
+                    val id = selectedComponent.id
 
-                    when (val id = selectedComponent.id) {
+                    // Cut the graph on cyclic dependencies.
+                    if (id in visited) return@mapNotNull null
+
+                    when (id) {
                         is ModuleComponentIdentifier -> {
                             val pomFile = if (selectedComponent is ResolvedComponentResultInternal) {
-                                val repositoryId = runCatching { selectedComponent.repositoryId }
-                                    .recoverCatching {
-                                        @Suppress("DEPRECATION")
-                                        selectedComponent.repositoryName
-                                    }.getOrNull()
+                                val repositoryId = runCatching {
+                                    selectedComponent.repositoryId
+                                }.recoverCatching {
+                                    @Suppress("DEPRECATION")
+                                    selectedComponent.repositoryName
+                                }.map {
+                                    // Work around https://github.com/gradle/gradle/issues/25674.
+                                    if (it == "26c913274550a0b2221f47a0fe2d2358") "MavenRepo" else it
+                                }.getOrNull()
 
                                 repositories[repositoryId]?.let { repositoryUrl ->
                                     // Note: Only Maven-style layout is supported for now.
@@ -189,13 +199,16 @@ internal class OrtModelBuilder : ToolingModelBuilder {
                                 null
                             }
 
-                            val modelBuildingResult = poms.getValue(id.toString())
-                            val dependencies = if (id in visitedDependencies) {
-                                // Cut the graph on cyclic dependencies.
-                                emptyList()
-                            } else {
-                                visitedDependencies += id
-                                selectedComponent.dependencies.toOrtDependencies(poms)
+                            val modelBuildingResult = poms[id.toString()]
+                            if (modelBuildingResult == null) {
+                                val message = "No POM found for $id."
+                                logger.warn(message)
+                                warnings += message
+                            }
+
+                            // Check if we have scanned the dependencies of this subtree before, and if so, reuse them.
+                            val dependencies = globalDependencySubtrees.getOrPut(id.displayName) {
+                                selectedComponent.dependencies.toOrtDependencies(poms, visited + id)
                             }
 
                             OrtDependencyImpl(
@@ -203,31 +216,27 @@ internal class OrtModelBuilder : ToolingModelBuilder {
                                 artifactId = id.module,
                                 version = id.version,
                                 classifier = "",
-                                extension = modelBuildingResult.effectiveModel.packaging,
+                                extension = modelBuildingResult?.effectiveModel?.packaging.orEmpty(),
                                 dependencies = dependencies,
                                 error = null,
                                 warning = null,
                                 pomFile = pomFile,
-                                mavenModel = OrtMavenModelImpl(
-                                    licenses = modelBuildingResult.effectiveModel.collectLicenses(),
-                                    authors = modelBuildingResult.effectiveModel.collectAuthors(),
-                                    description = modelBuildingResult.effectiveModel.description.orEmpty(),
-                                    homepageUrl = modelBuildingResult.effectiveModel.url.orEmpty(),
-                                    vcs = modelBuildingResult.getVcsModel()
-                                ),
+                                mavenModel = modelBuildingResult?.run {
+                                    OrtMavenModelImpl(
+                                        licenses = effectiveModel.collectLicenses(),
+                                        authors = effectiveModel.collectAuthors(),
+                                        description = effectiveModel.description.orEmpty(),
+                                        homepageUrl = effectiveModel.url.orEmpty(),
+                                        vcs = getVcsModel()
+                                    )
+                                },
                                 localPath = null
                             )
                         }
 
                         is ProjectComponentIdentifier -> {
                             val moduleId = selectedComponent.moduleVersion ?: return@mapNotNull null
-                            val dependencies = if (moduleId in visitedProjects) {
-                                // Cut the graph on cyclic dependencies.
-                                emptyList()
-                            } else {
-                                visitedProjects += moduleId
-                                selectedComponent.dependencies.toOrtDependencies(poms)
-                            }
+                            val dependencies = selectedComponent.dependencies.toOrtDependencies(poms, visited + id)
 
                             OrtDependencyImpl(
                                 groupId = moduleId.group,

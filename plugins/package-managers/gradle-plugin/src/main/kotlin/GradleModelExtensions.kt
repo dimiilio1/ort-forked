@@ -20,6 +20,8 @@
 package org.ossreviewtoolkit.plugins.packagemanagers.gradleplugin
 
 import org.gradle.api.artifacts.Configuration
+import org.gradle.api.artifacts.dsl.RepositoryHandler
+import org.gradle.api.artifacts.repositories.UrlArtifactRepository
 import org.gradle.api.attributes.AttributeContainer
 import org.gradle.internal.deprecation.DeprecatableConfiguration
 import org.gradle.util.GradleVersion
@@ -48,5 +50,15 @@ internal fun Configuration.isRelevant(): Boolean {
     // https://gist.github.com/h0tk3y/41c73d1f822378f52f1e6cce8dcf56aa for some background information.
     val isDependenciesMetadata = name.endsWith("DependenciesMetadata")
 
-    return canBeResolved && !isDeprecatedConfiguration && !isDependenciesMetadata
+    // Ignore Kotlin Multiplatform Project configurations for resolving source files because by nature not every
+    // published library has sources variants that can be resolved.
+    val isDependencySources = name == "dependencySources" || name.endsWith("DependencySources")
+
+    return canBeResolved && !isDeprecatedConfiguration && !isDependenciesMetadata && !isDependencySources
 }
+
+/**
+ * Return a map that associates names of artifact repositories to their URLs.
+ */
+internal fun RepositoryHandler.associateNamesWithUrlsTo(repositories: MutableMap<String, String?>) =
+    associateTo(repositories) { it.name to (it as? UrlArtifactRepository)?.url?.toString() }

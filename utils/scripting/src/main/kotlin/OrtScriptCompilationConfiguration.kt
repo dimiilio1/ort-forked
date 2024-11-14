@@ -36,15 +36,15 @@ import kotlin.script.experimental.jvm.dependenciesFromCurrentContext
 import kotlin.script.experimental.jvm.jvm
 import kotlin.script.experimental.jvmhost.CompiledScriptJarsCache
 
-import org.ossreviewtoolkit.utils.common.encodeHex
 import org.ossreviewtoolkit.utils.common.safeMkdirs
 import org.ossreviewtoolkit.utils.ort.Environment
 import org.ossreviewtoolkit.utils.ort.ortDataDirectory
 
 class OrtScriptCompilationConfiguration : ScriptCompilationConfiguration({
-    compilerOptions("-jvm-target", Environment().javaVersion.substringBefore('.'))
+    compilerOptions("-jvm-target", Environment.JAVA_VERSION.substringBefore('.'))
 
     defaultImports(
+        "org.apache.logging.log4j.kotlin.logger",
         "org.ossreviewtoolkit.utils.common.*",
         "org.ossreviewtoolkit.utils.ort.*",
         "java.util.*"
@@ -89,5 +89,5 @@ private fun generateUniqueName(script: SourceCode, configuration: ScriptCompilat
             digest.update(it.value.toString().toByteArray())
         }
 
-    return digest.digest().encodeHex()
+    return digest.digest().toHexString()
 }

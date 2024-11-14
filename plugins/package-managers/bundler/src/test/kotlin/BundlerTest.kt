@@ -19,6 +19,8 @@
 
 package org.ossreviewtoolkit.plugins.packagemanagers.bundler
 
+import com.charleskorn.kaml.decodeFromStream
+
 import io.kotest.core.spec.style.WordSpec
 import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.shouldBe
@@ -30,7 +32,6 @@ import org.ossreviewtoolkit.model.HashAlgorithm
 import org.ossreviewtoolkit.model.RemoteArtifact
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
-import org.ossreviewtoolkit.model.readValue
 
 class BundlerTest : WordSpec({
     "parseBundlerVersionFromLockfile()" should {
@@ -56,13 +57,16 @@ class BundlerTest : WordSpec({
         }
     }
 
-    "createFromJson()" should {
-        "parse JSON metadata for a Gem correctly" {
-            val rspecGemJson = File("src/test/assets/rspec-3.7.0.yaml")
+    "createFromGem()" should {
+        "parse YAML metadata for a Gem correctly" {
+            val rubyGemsFile = File("src/test/assets/rspec-3.7.0.yaml")
+            val details = rubyGemsFile.inputStream().use {
+                YAML.decodeFromStream<VersionDetails>(it)
+            }
 
-            val gemspec = GemSpec.createFromGem(rspecGemJson.readValue())
+            val gemInfo = GemInfo.createFromGem(details)
 
-            gemspec shouldBe GemSpec(
+            gemInfo shouldBe GemInfo(
                 name = "rspec",
                 version = "3.7.0",
                 homepageUrl = "http://github.com/rspec",

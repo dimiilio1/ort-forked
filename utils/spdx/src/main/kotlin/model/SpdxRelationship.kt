@@ -22,7 +22,8 @@ package org.ossreviewtoolkit.utils.spdx.model
 import com.fasterxml.jackson.annotation.JsonInclude
 
 /**
- * A relationship between two SPDX documents, packages or files.
+ * A relationship between two [SpdxDocument]s, [SpdxPackage]s or [SpdxFile]s.
+ * See https://spdx.github.io/spdx-spec/v2.2.2/relationships-between-SPDX-elements/.
  */
 data class SpdxRelationship(
     /**
@@ -193,6 +194,12 @@ data class SpdxRelationship(
          * Is to be used when SPDXRef-A is an optional dependency of SPDXRef-B.
          */
         OPTIONAL_DEPENDENCY_OF,
+
+        /**
+         * Is to be used for a relationship which has not been defined in the formal SPDX specification. A description
+         * of the relationship should be included in the Relationship comments field.
+         */
+        OTHER,
 
         /**
          * Is to be used when SPDXRef-A is used as a package as part of SPDXRef-B.

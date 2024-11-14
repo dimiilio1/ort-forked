@@ -25,7 +25,7 @@ import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.types.file
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.eclipse.sw360.clients.adapter.AttachmentUploadRequest
 import org.eclipse.sw360.clients.adapter.SW360ProjectClientAdapter
@@ -57,8 +57,6 @@ class UploadResultToSw360Command : OrtCommand(
     name = "upload-result-to-sw360",
     help = "Upload an ORT result to SW360."
 ) {
-    private companion object : Logging
-
     private val ortFile by option(
         "--ort-file", "-i",
         help = "The ORT result file to read as input."
@@ -96,7 +94,7 @@ class UploadResultToSw360Command : OrtCommand(
                     .orElseGet { createSw360Release(pkg, sw360ReleaseClient) }
 
                 if (attachSources) {
-                    val tempDirectory = createOrtTempDir(pkg.id.toPath())
+                    val tempDirectory = createOrtTempDir()
                     try {
                         // First, download the sources of the package into a source directory, whose parent directory
                         // is temporary.
@@ -124,7 +122,7 @@ class UploadResultToSw360Command : OrtCommand(
                             logger.error { "Could not upload source attachment: " + uploadResult.failedUploads() }
                         }
                     } finally {
-                        tempDirectory.safeDeleteRecursively(force = true)
+                        tempDirectory.safeDeleteRecursively()
                     }
                 }
 
@@ -144,7 +142,7 @@ class UploadResultToSw360Command : OrtCommand(
         val sw360Project = SW360Project()
             .setName(project.id.name)
             .setVersion(project.id.version)
-            .setDescription("A ${project.id.type} project with the PURL ${project.id.toPurl()}.")
+            .setDescription("A ${project.id.type} project with the purl ${project.id.toPurl()}.")
             .setVisibility(SW360Visibility.BUISNESSUNIT_AND_MODERATORS)
 
         return try {

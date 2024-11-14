@@ -23,19 +23,13 @@ plugins {
 }
 
 dependencies {
-    api(project(":model"))
+    api(projects.model)
+    api(projects.plugins.api)
+    api(projects.utils.commonUtils)
 
-    implementation(project(":clients:github-graphql-client"))
-    implementation(project(":clients:nexus-iq-client"))
-    implementation(project(":clients:oss-index-client"))
-    implementation(project(":clients:osv-client"))
-    implementation(project(":clients:vulnerable-code-client"))
+    implementation(projects.utils.ortUtils)
 
-    implementation(libs.cvssCalculator)
-    implementation(libs.bundles.kotlinxSerialization)
-    implementation(libs.kotlinxCoroutines)
-    implementation(libs.ktorClientOkHttp)
+    implementation(libs.kotlinx.coroutines)
 
     testImplementation(libs.mockk)
-    testImplementation(libs.wiremock)
 }

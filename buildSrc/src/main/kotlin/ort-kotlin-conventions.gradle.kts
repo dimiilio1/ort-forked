@@ -21,11 +21,6 @@ import io.gitlab.arturbosch.detekt.Detekt
 import io.gitlab.arturbosch.detekt.report.ReportMergeTask
 
 import org.gradle.accessors.dm.LibrariesForLibs
-import org.gradle.api.JavaVersion
-import org.gradle.api.attributes.TestSuiteType
-import org.gradle.api.plugins.jvm.JvmTestSuite
-import org.gradle.api.tasks.compile.JavaCompile
-import org.gradle.api.tasks.testing.Test
 import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import org.gradle.api.tasks.testing.logging.TestLogEvent
 import org.gradle.kotlin.dsl.dependencies
@@ -40,6 +35,8 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 private val Project.libs: LibrariesForLibs
     get() = extensions.getByType()
 
+val javaLanguageVersion: String by project
+
 plugins {
     // Apply core plugins.
     jacoco
@@ -48,8 +45,10 @@ plugins {
     id("ort-base-conventions")
 
     // Apply third-party plugins.
+    id("com.autonomousapps.dependency-analysis")
     id("dev.adamko.dokkatoo")
     id("io.gitlab.arturbosch.detekt")
+
     kotlin("jvm")
 }
 
@@ -61,8 +60,8 @@ testing {
             dependencies {
                 implementation(project(":utils:test-utils"))
 
-                implementation(libs.kotestAssertionsCore)
-                implementation(libs.kotestRunnerJunit5)
+                implementation(libs.kotest.assertions.core)
+                implementation(libs.kotest.runner.junit5)
             }
         }
 
@@ -84,23 +83,20 @@ kotlin.target.compilations.apply {
 
 configurations.all {
     resolutionStrategy {
-        // Ensure all JRuby versions match our version to avoid Psych YAML library issues.
+        // Ensure all transitive JRuby versions match ORT's version to avoid Psych YAML library issues.
         force(libs.jruby)
 
-        // Ensure all Log4j API versions match our version.
-        force(libs.log4jApi)
-
-        // Ensure that all transitive versions of Kotlin libraries match our version of Kotlin.
+        // Ensure that all transitive versions of Kotlin libraries match ORT's version of Kotlin.
         force("org.jetbrains.kotlin:kotlin-reflect:${libs.versions.kotlinPlugin.get()}")
     }
 }
 
-// Note: Kotlin DSL cannot directly access configurations that are created by applying a plugin in the very same
-// project, thus put configuration names in quotes to leverage lazy lookup.
 dependencies {
-    "detektPlugins"(project(":detekt-rules"))
+    detektPlugins(project(":detekt-rules"))
 
-    "detektPlugins"("io.gitlab.arturbosch.detekt:detekt-formatting:${libs.versions.detektPlugin.get()}")
+    detektPlugins(libs.plugin.detekt.formatting)
+
+    implementation(libs.log4j.api.kotlin)
 }
 
 detekt {
@@ -108,28 +104,47 @@ detekt {
     buildUponDefaultConfig = true
     config.from(files("$rootDir/.detekt.yml"))
 
-    source.from(fileTree(".") { include("*.gradle.kts") }, "src/funTest/kotlin")
+    source.from(fileTree(".") { include("*.gradle.kts") }, "src/funTest/kotlin", "src/testFixtures/kotlin")
 
     basePath = rootDir.path
 }
 
-val javaVersion = JavaVersion.current()
-val maxKotlinJvmTarget = runCatching { JvmTarget.fromTarget(javaVersion.majorVersion) }
-    .getOrDefault(JvmTarget.entries.max())
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(javaLanguageVersion)
+        vendor = JvmVendorSpec.ADOPTIUM
+    }
+}
+
+tasks.withType<Jar>().configureEach {
+    manifest {
+        attributes["Build-Jdk"] = javaToolchains.compilerFor(java.toolchain).map { it.metadata.jvmVersion }
+    }
+}
+
+val maxKotlinJvmTarget = runCatching { JvmTarget.fromTarget(javaLanguageVersion) }
+    .getOrDefault(enumValues<JvmTarget>().max())
 
 val mergeDetektReportsTaskName = "mergeDetektReports"
 val mergeDetektReports = if (rootProject.tasks.findByName(mergeDetektReportsTaskName) != null) {
     rootProject.tasks.named<ReportMergeTask>(mergeDetektReportsTaskName)
 } else {
     rootProject.tasks.register<ReportMergeTask>(mergeDetektReportsTaskName) {
-        output = rootProject.layout.buildDirectory.dir("reports/detekt/merged.sarif").get().asFile
+        output = rootProject.layout.buildDirectory.file("reports/detekt/merged.sarif")
     }
 }
 
-tasks.withType<Detekt> detekt@{
+val detekt = tasks.named<Detekt>("detekt")
+
+tasks.withType<Detekt>().configureEach detekt@{
     jvmTarget = maxKotlinJvmTarget.target
 
     dependsOn(":detekt-rules:assemble")
+    if (this != detekt.get()) mustRunAfter(detekt)
+
+    exclude {
+        "/build/generated/" in it.file.absolutePath
+    }
 
     reports {
         html.required = false
@@ -151,23 +166,30 @@ tasks.withType<Detekt> detekt@{
     finalizedBy(mergeDetektReports)
 }
 
-tasks.withType<JavaCompile>().configureEach {
-    // Align this with Kotlin to avoid errors, see https://youtrack.jetbrains.com/issue/KT-48745.
-    sourceCompatibility = maxKotlinJvmTarget.target
-    targetCompatibility = maxKotlinJvmTarget.target
+tasks.register("detektAll") {
+    group = "Verification"
+    description = "Run all detekt tasks with and without type resolution."
+
+    dependsOn(tasks.withType<Detekt>())
 }
 
 tasks.withType<KotlinCompile>().configureEach {
-    val customCompilerArgs = listOf(
-        "-opt-in=kotlin.contracts.ExperimentalContracts",
-        "-opt-in=kotlin.io.path.ExperimentalPathApi",
-        "-opt-in=kotlin.time.ExperimentalTime"
+    val hasSerializationPlugin = plugins.hasPlugin(libs.plugins.kotlinSerialization.get().pluginId)
+
+    val optInRequirements = listOfNotNull(
+        "kotlin.ExperimentalStdlibApi",
+        "kotlin.contracts.ExperimentalContracts",
+        "kotlin.io.encoding.ExperimentalEncodingApi",
+        "kotlin.io.path.ExperimentalPathApi",
+        "kotlin.time.ExperimentalTime",
+        "kotlinx.serialization.ExperimentalSerializationApi".takeIf { hasSerializationPlugin }
     )
 
     compilerOptions {
         allWarningsAsErrors = true
-        freeCompilerArgs.addAll(customCompilerArgs)
+        freeCompilerArgs = listOf("-Xconsistent-data-class-copy-visibility")
         jvmTarget = maxKotlinJvmTarget
+        optIn = optInRequirements
     }
 }
 
@@ -176,16 +198,7 @@ tasks.register<Jar>("sourcesJar") {
     from(sourceSets.main.get().allSource)
 }
 
-tasks.register<Jar>("docsHtmlJar") {
-    description = "Assembles a JAR containing the HTML documentation."
-    group = "Documentation"
-
-    dependsOn(tasks.dokkatooGeneratePublicationHtml)
-    from(tasks.dokkatooGeneratePublicationHtml.flatMap { it.outputDirectory })
-    archiveClassifier = "htmldoc"
-}
-
-tasks.register<Jar>("docsJavadocJar") {
+tasks.register<Jar>("javadocJar") {
     description = "Assembles a JAR containing the Javadoc documentation."
     group = "Documentation"
 

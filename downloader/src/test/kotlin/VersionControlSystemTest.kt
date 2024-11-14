@@ -30,10 +30,10 @@ import java.io.File
 import java.io.IOException
 import java.lang.UnsupportedOperationException
 
-import org.ossreviewtoolkit.downloader.vcs.Git
 import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
+import org.ossreviewtoolkit.plugins.versioncontrolsystems.git.Git
 import org.ossreviewtoolkit.utils.common.CommandLineTool
 
 class VersionControlSystemTest : WordSpec({
@@ -151,12 +151,12 @@ class VersionControlSystemTest : WordSpec({
  */
 private class VersionControlSystemTestImpl(
     tool: CommandLineTool?,
-    override val type: VcsType = VcsType.UNKNOWN,
+    override val type: String = VcsType.UNKNOWN.toString(),
     override val latestRevisionNames: List<String> = emptyList()
 ) : VersionControlSystem(tool) {
     override fun getVersion(): String = "0"
 
-    override fun getDefaultBranchName(url: String): String? = null
+    override fun getDefaultBranchName(url: String): String = ""
 
     override fun getWorkingTree(vcsDirectory: File): WorkingTree = mockk()
 

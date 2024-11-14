@@ -26,19 +26,16 @@ import java.util.concurrent.ConcurrentHashMap
 
 import javax.sql.DataSource
 
-import kotlinx.coroutines.Deferred
-
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.Transaction
-import org.jetbrains.exposed.sql.transactions.experimental.suspendedTransactionAsync
 import org.jetbrains.exposed.sql.transactions.transaction
 
 import org.ossreviewtoolkit.model.config.PostgresConnection
 import org.ossreviewtoolkit.utils.ort.ORT_FULL_NAME
 
-object DatabaseUtils : Logging {
+object DatabaseUtils {
     /**
      * This map holds the [HikariDataSource] based on the [PostgresConnection].
      */
@@ -75,6 +72,13 @@ object DatabaseUtils : Logging {
                 password = config.password
                 schema = config.schema
                 maximumPoolSize = maxPoolSize
+
+                config.connectionTimeout?.also { connectionTimeout = it }
+                config.idleTimeout?.also { idleTimeout = it }
+                config.keepaliveTime?.also { keepaliveTime = it }
+                config.maxLifetime?.also { maxLifetime = it }
+                config.maximumPoolSize?.also { maximumPoolSize = it }
+                config.minimumIdle?.also { minimumIdle = it }
 
                 val suffix = " - $applicationNameSuffix".takeIf { applicationNameSuffix.isNotEmpty() }.orEmpty()
                 addDataSourceProperty("ApplicationName", "$ORT_FULL_NAME$suffix")
@@ -117,12 +121,6 @@ object DatabaseUtils : Logging {
      * Start a new transaction to execute the given [statement] on this [Database].
      */
     fun <T> Database.transaction(statement: Transaction.() -> T): T = transaction(this, statement)
-
-    /**
-     * Start a new asynchronous transaction to execute the given [statement] on this [Database].
-     */
-    suspend fun <T> Database.transactionAsync(statement: suspend Transaction.() -> T): Deferred<T> =
-        suspendedTransactionAsync(db = this, statement = statement)
 
     /**
      * Add a property with the given [key] and [value] to the [HikariConfig]. If the [value] is *null*, this

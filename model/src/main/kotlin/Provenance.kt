@@ -60,13 +60,14 @@ data class ArtifactProvenance(
  */
 data class RepositoryProvenance(
     /**
-     * The VCS repository that was downloaded.
+     * The VCS information that was used for [resolving the revision][resolvedRevision]. It potentially still contains
+     * an unresolved "moving" VCS revision (e.g. a branch or tag name).
      */
     val vcsInfo: VcsInfo,
 
     /**
-     * The VCS revision of the source code that was downloaded, resolved from [vcsInfo] during download. Must not be
-     * blank, and must also be fixed revision, e.g. the SHA1 of a Git commit instead of a branch or tag name.
+     * The VCS revision resolved from [VCS information][vcsInfo]. It must neither be blank nor a "moving" VCS revision
+     * like a branch or tag name, but a fixed revision (e.g. the SHA1 of a Git commit).
      */
     val resolvedRevision: String
 ) : KnownProvenance {
@@ -91,12 +92,14 @@ private class ProvenanceDeserializer : StdDeserializer<Provenance>(Provenance::c
                 val sourceArtifact = jsonMapper.treeToValue<RemoteArtifact>(node["source_artifact"])
                 ArtifactProvenance(sourceArtifact)
             }
+
             node.has("vcs_info") -> {
                 val vcsInfo = jsonMapper.treeToValue<VcsInfo>(node["vcs_info"])
                 // For backward compatibility, if there is no resolved_revision use the revision from vcsInfo.
                 val resolvedRevision = node["resolved_revision"]?.textValue() ?: vcsInfo.revision
                 RepositoryProvenance(vcsInfo, resolvedRevision)
             }
+
             else -> UnknownProvenance
         }
     }

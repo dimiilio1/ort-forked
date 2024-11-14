@@ -24,11 +24,10 @@ import com.fasterxml.jackson.databind.JsonNode
 import java.time.Instant
 
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 
 import okhttp3.OkHttpClient
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.clients.clearlydefined.ClearlyDefinedService
 import org.ossreviewtoolkit.clients.clearlydefined.ComponentType
@@ -50,15 +49,15 @@ import org.ossreviewtoolkit.model.jsonMapper
 import org.ossreviewtoolkit.model.utils.toClearlyDefinedCoordinates
 import org.ossreviewtoolkit.model.utils.toClearlyDefinedSourceLocation
 import org.ossreviewtoolkit.scanner.CommandLinePathScannerWrapper
-import org.ossreviewtoolkit.scanner.ScanResultsStorage
 import org.ossreviewtoolkit.scanner.ScanStorageException
-import org.ossreviewtoolkit.scanner.ScannerCriteria
-import org.ossreviewtoolkit.scanner.ScannerWrapper
+import org.ossreviewtoolkit.scanner.ScannerMatcher
+import org.ossreviewtoolkit.scanner.ScannerWrapperFactory
 import org.ossreviewtoolkit.scanner.storages.utils.getScanCodeDetails
 import org.ossreviewtoolkit.utils.common.AlphaNumericComparator
 import org.ossreviewtoolkit.utils.common.collectMessages
 import org.ossreviewtoolkit.utils.common.withoutPrefix
-import org.ossreviewtoolkit.utils.ort.OkHttpClientHelper
+import org.ossreviewtoolkit.utils.ort.okHttpClient
+import org.ossreviewtoolkit.utils.ort.runBlocking
 import org.ossreviewtoolkit.utils.ort.showStackTrace
 
 import retrofit2.HttpException
@@ -73,22 +72,17 @@ class ClearlyDefinedStorage(
     /** The configuration for this storage implementation. */
     config: ClearlyDefinedStorageConfiguration,
     client: OkHttpClient? = null
-) : ScanResultsStorage() {
-    private companion object : Logging
-
+) : AbstractPackageBasedScanStorage() {
     constructor(serverUrl: String, client: OkHttpClient? = null) : this(
         ClearlyDefinedStorageConfiguration(serverUrl), client
     )
 
     /** The service for interacting with ClearlyDefined. */
     private val service by lazy {
-        ClearlyDefinedService.create(config.serverUrl, client ?: OkHttpClientHelper.buildClient())
+        ClearlyDefinedService.create(config.serverUrl, client ?: okHttpClient)
     }
 
-    override fun readInternal(id: Identifier): Result<List<ScanResult>> =
-        runBlocking(Dispatchers.IO) { readFromClearlyDefined(Package.EMPTY.copy(id = id)) }
-
-    override fun readInternal(pkg: Package, scannerCriteria: ScannerCriteria): Result<List<ScanResult>> =
+    override fun readInternal(pkg: Package, scannerMatcher: ScannerMatcher?): Result<List<ScanResult>> =
         runBlocking(Dispatchers.IO) { readFromClearlyDefined(pkg) }
 
     override fun addInternal(id: Identifier, scanResult: ScanResult): Result<Unit> =
@@ -108,13 +102,7 @@ class ClearlyDefinedStorage(
         return runCatching {
             logger.debug { "Looking up ClearlyDefined scan results for '$coordinates'." }
 
-            val tools = service.harvestTools(
-                coordinates.type,
-                coordinates.provider,
-                coordinates.namespace ?: "-",
-                coordinates.name,
-                coordinates.revision.orEmpty()
-            )
+            val tools = service.harvestTools(coordinates)
 
             val toolVersionsByName = tools.mapNotNull { it.withoutPrefix("$coordinates/") }
                 .groupBy({ it.substringBefore('/') }, { it.substringAfter('/') })
@@ -122,11 +110,11 @@ class ClearlyDefinedStorage(
 
             val supportedScanners = toolVersionsByName.mapNotNull { (name, versions) ->
                 // For the ClearlyDefined tool names see https://github.com/clearlydefined/service#tool-name-registry.
-                ScannerWrapper.ALL[name]?.let { factory ->
-                    val scanner = factory.create(emptyMap())
+                ScannerWrapperFactory.ALL[name]?.let { factory ->
+                    val scanner = factory.create(emptyMap(), emptyMap())
                     (scanner as? CommandLinePathScannerWrapper)?.let { cliScanner -> cliScanner to versions.last() }
-                }.also {
-                    if (it == null) logger.debug { "Unsupported tool '$name' for coordinates '$coordinates'." }
+                }.also { factory ->
+                    factory ?: logger.debug { "Unsupported tool '$name' for coordinates '$coordinates'." }
                 }
             }
 
@@ -187,16 +175,7 @@ class ClearlyDefinedStorage(
      * and return it as a [JsonNode].
      */
     private suspend fun loadToolData(coordinates: Coordinates, name: String, version: String): JsonNode {
-        val toolData = service.harvestToolData(
-            coordinates.type,
-            coordinates.provider,
-            coordinates.namespace ?: "-",
-            coordinates.name,
-            coordinates.revision.orEmpty(),
-            name,
-            version
-        )
-
+        val toolData = service.harvestToolData(coordinates, name, version)
         return toolData.use { jsonMapper.readTree(it.byteStream()) }
     }
 

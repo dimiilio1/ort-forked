@@ -31,10 +31,13 @@ ort:
   enableRepositoryPackageConfigurations: true
   enableRepositoryPackageCurations: true
 
+  # Force overwriting of any existing output files.
+  forceOverwrite: true
+
   licenseFilePatterns:
     licenseFilenames: ['license*']
     patentFilenames: ['patents']
-    rootLicenseFilenames: ['readme*']
+    otherLicenseFilenames: ['readme*']
 
   # Package configurations have to be unique by ID and provenance. Ensure that different providers do not provide
   # configurations for the same package, see https://github.com/oss-review-toolkit/ort/issues/6972 for details.
@@ -42,36 +45,37 @@ ort:
   - type: DefaultDir
   - type: Dir
     id: SomeConfigDir
-    config:
+    options:
       path: '/some-path/'
       mustExist: true
   - type: OrtConfig
 
-  # Providers are listed from highest to lower priority. Technically, they are applied in reverse order: The provider
-  # with the highest priority is applied last, so it can override any previously applied curations.
+  # Package curation providers are listed from highest to lowest priority. Technically, they are applied in reverse
+  # order: The provider with the highest priority is applied last, so it can overwrite any previously applied curations.
   packageCurationProviders:
   - type: DefaultFile
   - type: DefaultDir
   - type: File
     id: SomeCurationsFile
-    config:
+    options:
       path: '/some-path/curations.yml'
       mustExist: true
   - type: File
     id: SomeCurationsDir
-    config:
+    options:
       path: '/some-path/curations-dir'
       mustExist: false
   - type: OrtConfig
     enabled: '${USE_ORT_CONFIG_CURATIONS:-true}'
   - type: ClearlyDefined
-    config:
+    options:
       serverUrl: 'https://api.clearlydefined.io'
       minTotalLicenseScore: 80
   - type: SW360
-    config:
+    options:
       restUrl: 'https://your-sw360-rest-url'
       authUrl: 'https://your-authentication-url'
+    secrets:
       username: username
       password: password
       clientId: clientId
@@ -100,6 +104,12 @@ ort:
         # another package manager generates files that this package manager requires to run correctly.
         mustRunAfter: [NPM]
 
+      GradleInspector:
+        options:
+          # An optional path to the Java home to use for Gradle project analysis. By default the Java version that ORT
+          # itself is run with will be used.
+          javaHome: "/path/to/java/home"
+
       Yarn2:
         options:
           # If set to true, disable verification of HTTPS certificate of remote registries. Useful when using a proxy to
@@ -113,34 +123,36 @@ ort:
           lockfileName: "lockfile.lock"
 
   advisor:
-    nexusIq:
-      serverUrl: 'https://rest-api-url-of-your-nexus-iq-server'
-      browseUrl: 'https://web-browsing-url-of-your-nexus-iq-server'
-      username: username
-      password: password
+    # A flag to control whether excluded scopes and paths should be skipped when giving the advice.
+    skipExcluded: true
 
-    ossIndex:
-      username: username
-      password: password
+    config:
+      GitHubDefects:
+        options:
+          endpointUrl: 'https://api.github.com/graphql'
+          labelFilter: '!duplicate, !enhancement, !invalid, !question, !documentation, *'
+          maxNumberOfIssuesPerRepository: 50
+          parallelRequests: 5
+        secrets:
+          token: githubAccessToken
 
-    vulnerableCode:
-      serverUrl: 'http://localhost:8000'
-      apiKey: 0123456789012345678901234567890123456789
+      OssIndex:
+        options:
+          serverUrl: 'https://ossindex.sonatype.org/'
+        secrets:
+          username: username
+          password: password
 
-    gitHubDefects:
-      token: githubAccessToken
-      labelFilter: ['!duplicate', '!enhancement', '!invalid', '!question', '!documentation', '*']
-      maxNumberOfIssuesPerRepository: 50
-      parallelRequests: 5
+      OSV:
+        options:
+          serverUrl: 'https://api.osv.dev'
 
-    osv:
-      serverUrl: 'https://api.osv.dev'
-
-    options:
-      # A map of maps from advice provider names to provider-specific key-value pairs. This map can be used to provide
-      # configuration information for external advisor plugins.
-      CustomAdvisor:
-        apiKey: '<some_api_key>'
+      VulnerableCode:
+        options:
+          serverUrl: 'http://localhost:8000'
+          readTimeout: 40
+        secrets:
+          apiKey: 0123456789012345678901234567890123456789
 
   downloader:
     allowMovingRevisions: true
@@ -150,10 +162,14 @@ ort:
       - 'category-a'
       - 'category-b'
 
+    # A flag to control whether excluded scopes and paths should be skipped during the download.
+    skipExcluded: true
+
     sourceCodeOrigins: [VCS, ARTIFACT]
 
   scanner:
     skipConcluded: true
+    skipExcluded: true
 
     archive:
       enabled: true
@@ -169,13 +185,16 @@ ort:
           schema: public
           username: username
           password: password
-          sslmode: required
+          sslmode: require
           sslcert: /defaultdir/postgresql.crt
           sslkey: /defaultdir/postgresql.pk8
           sslrootcert: /defaultdir/root.crt
-          parallelTransactions: 5
-
-    createMissingArchives: false
+          connectionTimeout: 30000
+          idleTimeout: 600000
+          keepaliveTime: 0
+          maxLifetime: 1800000
+          maximumPoolSize: 10
+          minimumIdle: 600000
 
     # Map scanner license findings to valid SPDX licenses. Note that these mappings are only applied in new scans,
     # stored scan results are not affected.
@@ -195,50 +214,70 @@ ort:
           schema: public
           username: username
           password: password
-          sslmode: required
+          sslmode: require
           sslcert: /defaultdir/postgresql.crt
           sslkey: /defaultdir/postgresql.pk8
           sslrootcert: /defaultdir/root.crt
-          parallelTransactions: 5
+          connectionTimeout: 30000
+          idleTimeout: 600000
+          keepaliveTime: 0
+          maxLifetime: 1800000
+          maximumPoolSize: 10
+          minimumIdle: 600000
 
-    options:
-      # A map of maps from scanner class names to scanner-specific key-value pairs.
+    config:
+      # A map from scanner plugin types to the plugin configuration.
       ScanCode:
-        # Command line options that affect the ScanCode output. If changed, stored scan results that were created with
-        # different options are not reused.
-        commandLine: '--copyright --license --info --strip-root --timeout 300'
+        options:
+          # Command line options that affect the ScanCode output. If changed, stored scan results that were created with
+          # different options are not reused.
+          commandLine: '--copyright --license --info --strip-root --timeout 300'
 
-        # Command line options that do not affect the ScanCode output.
-        commandLineNonConfig: '--processes 4'
+          # Command line options that do not affect the ScanCode output.
+          commandLineNonConfig: '--processes 4'
 
-        # Criteria for matching stored scan results. These can be configured for any scanner that uses semantic
-        # versioning. Note that the 'maxVersion' is exclusive and not part of the range of accepted versions.
-        minVersion: '3.2.1-rc2'
-        maxVersion: '32.0.0'
+          # Use per-file license findings instead of per-line ones.
+          preferFileLicense: false
+
+          # Criteria for matching stored scan results. These can be configured for any scanner that uses semantic
+          # versioning. Note that the 'maxVersion' is exclusive and not part of the range of accepted versions.
+          minVersion: '3.2.1-rc2'
+          maxVersion: '32.0.0'
 
       FossId:
-        serverUrl: 'https://fossid.example.com/instance/'
-        user: user
-        apiKey: XYZ
+        options:
+          serverUrl: 'https://fossid.example.com/instance/'
 
-        namingProjectPattern: '$Var1_$Var2'
-        namingScanPattern: '$Var1_#projectBaseCode_$Var3'
-        namingVariableVar1: myOrg
-        namingVariableVar2: myTeam
-        namingVariableVar3: myUnit
+          namingProjectPattern: '$Var1_$Var2'
+          namingScanPattern: '$Var1_#projectBaseCode_$Var3'
+          namingVariableVar1: myOrg
+          namingVariableVar2: myTeam
+          namingVariableVar3: myUnit
 
-        waitForResult: false
+          waitForResult: false
 
-        keepFailedScans: false
-        deltaScans: true
-        deltaScanLimit: 10
+          keepFailedScans: false
+          deltaScans: true
+          deltaScanLimit: 10
 
-        detectLicenseDeclarations: true
-        detectCopyrightStatements: true
+          detectLicenseDeclarations: true
+          detectCopyrightStatements: true
 
-        timeout: 60
+          timeout: 60
 
-        urlMappingExample: "https://my-repo.example.org(?<repoPath>.*) -> ssh://my-mapped-repo.example.org${repoPath}"
+          urlMappingExample: "https://my-repo.example.org(?<repoPath>.*) -> ssh://my-mapped-repo.example.org${repoPath}"
+
+          sensitivity: 10
+
+        secrets:
+          user: user
+          apiKey: XYZ
+
+      SCANOSS:
+        options:
+          apiUrl: 'https://api.osskb.org/'
+        secrets:
+          apiKey: 'your API key'
 
     storages:
       local:
@@ -256,6 +295,16 @@ ort:
               key1: value1
               key2: value2
 
+      aws:
+        backend:
+          s3FileStorage:
+            accessKeyId: "accessKey"
+            awsRegion: "us-east-1"
+            bucketName: "ort-scan-results"
+            compression: false
+            customEndpoint: "http://localhost:4567"
+            secretAccessKey: "secret"
+
       clearlyDefined:
         serverUrl: 'https://api.clearlydefined.io'
 
@@ -265,10 +314,16 @@ ort:
           schema: public
           username: username
           password: password
-          sslmode: required
+          sslmode: require
           sslcert: /defaultdir/postgresql.crt
           sslkey: /defaultdir/postgresql.pk8
           sslrootcert: /defaultdir/root.crt
+          connectionTimeout: 30000
+          idleTimeout: 600000
+          keepaliveTime: 0
+          maxLifetime: 1800000
+          maximumPoolSize: 10
+          minimumIdle: 600000
         type: PROVENANCE_BASED
 
       sw360Configuration:
@@ -281,7 +336,7 @@ ort:
         token: token
 
     # Storage readers are listed from highest to lower priority, i.e. the first match wins.
-    storageReaders: [local, postgres, http, clearlyDefined]
+    storageReaders: [local, postgres, http, aws, clearlyDefined]
 
     # For storage writers no priority is implied by the order; scan results are stored for all writers.
     storageWriters: [postgres]
@@ -300,17 +355,29 @@ ort:
           schema: public
           username: username
           password: password
-          sslmode: required
+          sslmode: require
           sslcert: /defaultdir/postgresql.crt
           sslkey: /defaultdir/postgresql.pk8
           sslrootcert: /defaultdir/root.crt
+          connectionTimeout: 30000
+          idleTimeout: 600000
+          keepaliveTime: 0
+          maxLifetime: 1800000
+          maximumPoolSize: 10
+          minimumIdle: 600000
 
   reporter:
-    options:
+    config:
+      CycloneDx:
+        options:
+          schema.version: 1.6
+
       FossId:
-        serverUrl: 'https://fossid.example.com/instance/'
-        user: user
-        apiKey: XYZ
+        options:
+          serverUrl: 'https://fossid.example.com/instance/'
+        secrets:
+          user: user
+          apiKey: XYZ
 
   notifier:
     mail:

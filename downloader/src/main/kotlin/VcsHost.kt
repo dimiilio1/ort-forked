@@ -39,7 +39,7 @@ enum class VcsHost(
     /**
      * The hostname of VCS host.
      */
-    protected val hostname: String,
+    val hostname: String,
 
     /**
      * The VCS types the host supports.
@@ -318,7 +318,7 @@ enum class VcsHost(
         private val SVN_BRANCH_OR_TAG_PATTERN = Regex("(.*svn.*)/(branches|tags)/([^/]+)/?(.*)")
         private val SVN_TRUNK_PATTERN = Regex("(.*svn.*)/(trunk)/?(.*)")
         private val GIT_REVISION_FRAGMENT = Regex("git.+#[a-fA-F0-9]{7,}")
-        private val GIT_PROJECT_NAME = Regex("/([^/]+)\\.git")
+        private val GIT_PROJECT_NAME = Regex("/([^/]+)\\.git$")
 
         /**
          * Return the applicable [VcsHost] for the given [url], or null if no applicable host is found.
@@ -334,7 +334,7 @@ enum class VcsHost(
          * Return all [VcsInfo] that can be parsed from the [vcsUrl] without actually making a network request.
          */
         fun parseUrl(vcsUrl: String): VcsInfo {
-            val projectUrl = vcsUrl.takeUnless { it.isBlank() } ?: return VcsInfo.EMPTY
+            val projectUrl = vcsUrl.ifBlank { return VcsInfo.EMPTY }
             val unknownVcsInfo = VcsInfo.EMPTY.copy(url = projectUrl)
             val projectUri = projectUrl.toUri().getOrElse { return unknownVcsInfo }
 
@@ -425,6 +425,7 @@ enum class VcsHost(
          */
         fun toArchiveDownloadUrl(vcsInfo: VcsInfo): String? {
             val normalizedVcsInfo = vcsInfo.normalize()
+            if (normalizedVcsInfo.revision.isEmpty()) return null
             val host = entries.find { it.isApplicable(normalizedVcsInfo) } ?: return null
 
             return normalizedVcsInfo.url.toUri {
@@ -518,7 +519,7 @@ enum class VcsHost(
      */
     fun toArchiveDownloadUrl(vcsInfo: VcsInfo): String? {
         val normalizedVcsInfo = vcsInfo.normalize()
-        if (!isApplicable(normalizedVcsInfo)) return null
+        if (normalizedVcsInfo.revision.isEmpty() || !isApplicable(normalizedVcsInfo)) return null
 
         return normalizedVcsInfo.url.toUri {
             val userOrOrg = getUserOrOrgInternal(it) ?: return@toUri null

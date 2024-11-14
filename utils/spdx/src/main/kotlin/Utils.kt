@@ -30,7 +30,6 @@ import org.ossreviewtoolkit.utils.common.Os
 import org.ossreviewtoolkit.utils.common.PATH_STRING_COMPARATOR
 import org.ossreviewtoolkit.utils.common.VCS_DIRECTORIES
 import org.ossreviewtoolkit.utils.common.calculateHash
-import org.ossreviewtoolkit.utils.common.encodeHex
 import org.ossreviewtoolkit.utils.common.isSymbolicLink
 import org.ossreviewtoolkit.utils.common.realFile
 import org.ossreviewtoolkit.utils.spdx.SpdxConstants.LICENSE_REF_PREFIX
@@ -62,7 +61,7 @@ val scanCodeLicenseTextDir by lazy {
 fun calculatePackageVerificationCode(sha1sums: Sequence<String>, excludes: Sequence<String> = emptySequence()): String {
     val sha1sum = sha1sums.sorted().fold(MessageDigest.getInstance("SHA-1")) { digest, sha1sum ->
         digest.apply { update(sha1sum.toByteArray()) }
-    }.digest().encodeHex()
+    }.digest().toHexString()
 
     return if (excludes.none()) {
         sha1sum
@@ -78,7 +77,7 @@ fun calculatePackageVerificationCode(sha1sums: Sequence<String>, excludes: Seque
  */
 @JvmName("calculatePackageVerificationCodeForFiles")
 fun calculatePackageVerificationCode(files: Sequence<File>, excludes: Sequence<String> = emptySequence()): String =
-    calculatePackageVerificationCode(files.map { calculateHash(it).encodeHex() }, excludes)
+    calculatePackageVerificationCode(files.map { calculateHash(it).toHexString() }, excludes)
 
 /**
  * Calculate the [SPDX package verification code][1] for all files in a [directory]. If [directory] points to a file
@@ -117,12 +116,6 @@ fun getLicenseText(
     licenseTextDirectories: List<File> = emptyList()
 ): String? = getLicenseTextReader(id, handleExceptions, addScanCodeLicenseTextsDir(licenseTextDirectories))?.invoke()
 
-fun hasLicenseText(
-    id: String,
-    handleExceptions: Boolean = false,
-    licenseTextDirectories: List<File> = emptyList()
-): Boolean = getLicenseTextReader(id, handleExceptions, addScanCodeLicenseTextsDir(licenseTextDirectories)) != null
-
 fun getLicenseTextReader(
     id: String,
     handleExceptions: Boolean = false,
@@ -130,8 +123,12 @@ fun getLicenseTextReader(
 ): (() -> String)? {
     return if (id.startsWith(LICENSE_REF_PREFIX)) {
         getLicenseTextResource(id)?.let { { it.readText() } }
-            ?: addScanCodeLicenseTextsDir(licenseTextDirectories).firstNotNullOfOrNull {
-                getLicenseTextFile(id, it)?.let { file -> { file.readText() } }
+            ?: addScanCodeLicenseTextsDir(licenseTextDirectories).firstNotNullOfOrNull { dir ->
+                getLicenseTextFile(id, dir)?.let { file ->
+                    {
+                        file.readText().removeYamlFrontMatter()
+                    }
+                }
             }
     } else {
         SpdxLicense.forId(id.removeSuffix("+"))?.let { { it.text } }
@@ -141,23 +138,33 @@ fun getLicenseTextReader(
 
 private fun getLicenseTextResource(id: String): URL? = object {}.javaClass.getResource("/licenserefs/$id")
 
-private val LICENSE_REF_FILENAME_REGEX by lazy { Regex("^LicenseRef-\\w+-") }
+private val LICENSE_REF_FILENAME_REGEX by lazy { Regex("^$LICENSE_REF_PREFIX\\w+-") }
 
 private fun getLicenseTextFile(id: String, dir: File): File? =
     id.replace(LICENSE_REF_FILENAME_REGEX, "").let { idWithoutLicenseRefNamespace ->
         listOfNotNull(
             id,
-            id.removePrefix("LicenseRef-"),
+            id.removePrefix(LICENSE_REF_PREFIX),
             idWithoutLicenseRefNamespace,
             "$idWithoutLicenseRefNamespace.LICENSE",
             "x11-xconsortium_veillard.LICENSE".takeIf {
-                // Work around for https://github.com/nexB/scancode-toolkit/issues/2813.
+                // Work around for https://github.com/aboutcode-org/scancode-toolkit/issues/2813.
                 id == "LicenseRef-scancode-x11-xconsortium-veillard"
             }
         ).firstNotNullOfOrNull { filename ->
             dir.resolve(filename).takeIf { it.isFile }
         }
     }
+
+internal fun String.removeYamlFrontMatter(): String {
+    val lines = lines()
+
+    // Remove any YAML front matter enclosed by "---" from ScanCode license files.
+    val licenseLines = lines.takeUnless { it.first() == "---" }
+        ?: lines.drop(1).dropWhile { it != "---" }.drop(1)
+
+    return licenseLines.dropWhile { it.isEmpty() }.joinToString("\n").trimEnd()
+}
 
 private fun addScanCodeLicenseTextsDir(licenseTextDirectories: List<File>): List<File> =
     (listOfNotNull(scanCodeLicenseTextDir) + licenseTextDirectories).distinct()

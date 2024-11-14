@@ -21,8 +21,9 @@
 
 package org.ossreviewtoolkit.model.utils
 
-import org.ossreviewtoolkit.model.Identifier
-import org.ossreviewtoolkit.model.Package
+import java.io.File
+
+import org.ossreviewtoolkit.model.HashAlgorithm
 import org.ossreviewtoolkit.utils.common.percentEncode
 
 /**
@@ -59,39 +60,21 @@ enum class PurlType(private val value: String) {
 }
 
 /**
- * Map a [Package]'s type to the string representation of the respective [PurlType], or fall back to [PurlType.GENERIC]
- * if the [Package]'s type has no direct equivalent.
+ * Extra data than can be appended to a "clean" purl via qualifiers or a subpath.
  */
-fun Identifier.getPurlType() =
-    when (type.lowercase()) {
-        "bower" -> PurlType.BOWER
-        "carthage" -> PurlType.CARTHAGE
-        "composer" -> PurlType.COMPOSER
-        "conan" -> PurlType.CONAN
-        "crate" -> PurlType.CARGO
-        "go" -> PurlType.GOLANG
-        "gem" -> PurlType.GEM
-        "hackage" -> PurlType.HACKAGE
-        "maven" -> PurlType.MAVEN
-        "npm" -> PurlType.NPM
-        "nuget" -> PurlType.NUGET
-        "pod" -> PurlType.COCOAPODS
-        "pub" -> PurlType.PUB
-        "pypi" -> PurlType.PYPI
-        "spm" -> PurlType.SWIFT
-        else -> PurlType.GENERIC
-    }.toString()
+data class PurlExtras(
+    /**
+     * Extra qualifying data as key / value pairs. Needs to be percent-encoded when used in a query string.
+     */
+    val qualifiers: Map<String, String>,
 
-/**
- * Create the canonical [package URL](https://github.com/package-url/purl-spec) ("purl") based on the properties of
- * the [Identifier]. Some issues remain with this specification
- * (see e.g. https://github.com/package-url/purl-spec/issues/33).
- *
- * This implementation uses the package type as 'type' purl element as it is used
- * [in the documentation](https://github.com/package-url/purl-spec/blob/master/README.rst#purl).
- * E.g. 'maven' for Gradle projects.
- */
-fun Identifier.toPurl() = if (this == Identifier.EMPTY) "" else createPurl(getPurlType(), namespace, name, version)
+    /**
+     * A subpath relative to the root of the package.
+     */
+    val subpath: String
+) {
+    constructor(vararg qualifiers: Pair<String, String>, subpath: String = "") : this(qualifiers.toMap(), subpath)
+}
 
 /**
  * Create the canonical [package URL](https://github.com/package-url/purl-spec) ("purl") based on given properties:
@@ -112,28 +95,47 @@ internal fun createPurl(
 ): String =
     buildString {
         append("pkg:")
-        append(type)
+        append(type.lowercase())
+        append('/')
 
         if (namespace.isNotEmpty()) {
+            append(namespace.trim('/').split('/').joinToString("/") { it.percentEncode() })
             append('/')
-            append(namespace.percentEncode())
         }
 
-        append('/')
-        append(name.percentEncode())
+        append(name.trim('/').percentEncode())
 
-        append('@')
-        append(version.percentEncode())
+        if (version.isNotEmpty()) {
+            append('@')
 
-        qualifiers.onEachIndexed { index, entry ->
+            // See https://github.com/package-url/purl-spec/blob/master/PURL-SPECIFICATION.rst#character-encoding which
+            // says "the '#', '?', '@' and ':' characters must NOT be encoded when used as separators".
+            val isChecksum = HashAlgorithm.VERIFIABLE.any { version.startsWith("${it.name.lowercase()}:") }
+            if (isChecksum) append(version) else append(version.percentEncode())
+        }
+
+        qualifiers.filterValues { it.isNotEmpty() }.toSortedMap().onEachIndexed { index, entry ->
             if (index == 0) append("?") else append("&")
-            append(entry.key.percentEncode())
+
+            val key = entry.key.lowercase()
+            append(key)
+
             append("=")
-            append(entry.value.percentEncode())
+
+            if (key in KNOWN_QUALIFIER_KEYS) append(entry.value) else append(entry.value.percentEncode())
         }
 
         if (subpath.isNotEmpty()) {
-            val value = subpath.split('/').joinToString("/", prefix = "#") { it.percentEncode() }
+            val value = subpath.trim('/').split('/')
+                .filter { it.isNotEmpty() }
+                .joinToString("/", prefix = "#") {
+                    // Instead of just discarding "." and "..", resolve them by normalizing.
+                    File(it).normalize().path.percentEncode()
+                }
+
             append(value)
         }
     }
+
+// See https://github.com/package-url/purl-spec/blob/master/PURL-SPECIFICATION.rst#known-qualifiers-keyvalue-pairs.
+private val KNOWN_QUALIFIER_KEYS = setOf("repository_url", "download_url", "vcs_url", "file_name", "checksum")

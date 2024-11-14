@@ -28,14 +28,15 @@ import io.kotest.matchers.shouldBe
 
 import java.io.IOException
 
+import org.ossreviewtoolkit.downloader.DefaultWorkingTreeCache
 import org.ossreviewtoolkit.model.ArtifactProvenance
 import org.ossreviewtoolkit.model.Hash
 import org.ossreviewtoolkit.model.RemoteArtifact
 import org.ossreviewtoolkit.model.RepositoryProvenance
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
-import org.ossreviewtoolkit.scanner.utils.DefaultWorkingTreeCache
 import org.ossreviewtoolkit.utils.common.Os
+import org.ossreviewtoolkit.utils.test.ExpensiveTag
 
 class DefaultNestedProvenanceResolverFunTest : WordSpec() {
     private val workingTreeCache = DefaultWorkingTreeCache()
@@ -204,7 +205,7 @@ class DefaultNestedProvenanceResolverFunTest : WordSpec() {
                 }
             }
 
-            "work for Subversion tags".config(enabled = false /* This needs fixing, see ORT issue 6160. */) {
+            "work for Subversion tags".config(tags = setOf(ExpensiveTag)) {
                 val provenance = RepositoryProvenance(
                     vcsInfo = VcsInfo(
                         type = VcsType.SUBVERSION,
@@ -223,7 +224,7 @@ class DefaultNestedProvenanceResolverFunTest : WordSpec() {
 
 internal class DummyNestedProvenanceStorage : NestedProvenanceStorage {
     override fun readNestedProvenance(root: RepositoryProvenance): NestedProvenanceResolutionResult? = null
-    override fun putNestedProvenance(root: RepositoryProvenance, result: NestedProvenanceResolutionResult) {
+    override fun writeNestedProvenance(root: RepositoryProvenance, result: NestedProvenanceResolutionResult) {
         /** no-op */
     }
 }

@@ -25,12 +25,15 @@ import org.ossreviewtoolkit.model.LicenseSource
 import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.Project
 import org.ossreviewtoolkit.model.Severity
-import org.ossreviewtoolkit.model.Vulnerability
-import org.ossreviewtoolkit.model.VulnerabilityReference
 import org.ossreviewtoolkit.model.config.Excludes
 import org.ossreviewtoolkit.model.licenses.LicenseView
 import org.ossreviewtoolkit.model.licenses.ResolvedLicense
 import org.ossreviewtoolkit.model.licenses.ResolvedLicenseInfo
+import org.ossreviewtoolkit.model.vulnerabilities.Cvss2Rating
+import org.ossreviewtoolkit.model.vulnerabilities.Cvss3Rating
+import org.ossreviewtoolkit.model.vulnerabilities.Cvss4Rating
+import org.ossreviewtoolkit.model.vulnerabilities.Vulnerability
+import org.ossreviewtoolkit.model.vulnerabilities.VulnerabilityReference
 import org.ossreviewtoolkit.utils.spdx.SpdxExpression
 import org.ossreviewtoolkit.utils.spdx.SpdxLicenseReferenceExpression
 
@@ -54,7 +57,10 @@ open class PackageRule(
     private val licenseRules = mutableListOf<LicenseRule>()
 
     @Suppress("UNUSED") // This is intended to be used by rule implementations.
-    val uncuratedPkg: Package by lazy { ruleSet.ortResult.getUncuratedPackageOrProject(pkg.metadata.id)!! }
+    val uncuratedPkg: Package by lazy {
+        @Suppress("UnsafeCallOnNullableType")
+        ruleSet.ortResult.getUncuratedPackageOrProject(pkg.metadata.id)!!
+    }
 
     override val description = "Evaluating rule '$name' for package '${pkg.metadata.id.toCoordinates()}'."
 
@@ -73,28 +79,48 @@ open class PackageRule(
 
             override fun matches(): Boolean {
                 val run = ruleSet.ortResult.advisor ?: return false
-                return run.results.getVulnerabilities(pkg.metadata.id).isNotEmpty()
+                return run.getVulnerabilities(pkg.metadata.id).isNotEmpty()
             }
         }
     }
 
     /**
      * A [RuleMatcher] that checks whether any vulnerability for the [package][pkg] has a
-     * [reference][Vulnerability.references] with a [severity][VulnerabilityReference.severity] that equals or is
-     * greater than [threshold] according to the [scoringSystem] and the belonging [severityComparator].
+     * [reference][Vulnerability.references] with a [score][VulnerabilityReference.score] that equals or is
+     * greater than [scoreThreshold] according to the [scoringSystem]. If the reference provides no score but a
+     * [severity][VulnerabilityReference.severity], the threshold is mapped to a qualitative rating for comparison.
      */
-    fun hasVulnerability(threshold: String, scoringSystem: String, severityComparator: (String, String) -> Boolean) =
+    fun hasVulnerability(scoreThreshold: Float, scoringSystem: String) =
         object : RuleMatcher {
-            override val description = "hasVulnerability($threshold, $scoringSystem)"
+            override val description = "hasVulnerability($scoreThreshold, $scoringSystem)"
 
             override fun matches(): Boolean {
                 val run = ruleSet.ortResult.advisor ?: return false
-                return run.results.getVulnerabilities(pkg.metadata.id)
-                    .filter { vulnerability -> !ruleSet.resolutionProvider.isResolved(vulnerability) }
+                val matchingSystems = run.getVulnerabilities(pkg.metadata.id).asSequence()
+                    .filter { !ruleSet.resolutionProvider.isResolved(it) }
                     .flatMap { it.references }
-                    .filter { reference -> reference.scoringSystem == scoringSystem }
-                    .mapNotNull { reference -> reference.severity }
-                    .any { severityComparator(it, threshold) }
+                    .filter { it.scoringSystem == scoringSystem }
+
+                val scores = matchingSystems.mapNotNull { it.score }
+                if (scores.any()) return scores.any { it >= scoreThreshold }
+
+                // Fall back to a more coarse comparison of qualitative severity ratings if no scores are available.
+                val severityThreshold = VulnerabilityReference.getQualitativeRating(scoringSystem, scoreThreshold)
+                    ?: return false
+
+                val severities = matchingSystems
+                    .mapNotNull { it.severity }
+                    .mapNotNull { severity ->
+                        val system = scoringSystem.uppercase()
+                        when {
+                            Cvss2Rating.PREFIXES.any { system.startsWith(it) } -> enumValueOf<Cvss2Rating>(severity)
+                            Cvss3Rating.PREFIXES.any { system.startsWith(it) } -> enumValueOf<Cvss3Rating>(severity)
+                            Cvss4Rating.PREFIXES.any { system.startsWith(it) } -> enumValueOf<Cvss4Rating>(severity)
+                            else -> null
+                        }
+                    }
+
+                return severities.any { it.ordinal >= severityThreshold.ordinal }
             }
         }
 

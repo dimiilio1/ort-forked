@@ -24,8 +24,6 @@ import java.time.temporal.ChronoUnit
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 
-import org.apache.logging.log4j.kotlin.Logging
-
 import org.ossreviewtoolkit.model.OrtResult
 import org.ossreviewtoolkit.model.SourceCodeOrigin.ARTIFACT
 import org.ossreviewtoolkit.model.SourceCodeOrigin.VCS
@@ -44,11 +42,13 @@ import org.ossreviewtoolkit.utils.spdx.model.SpdxRelationship
 /**
  * A class for mapping [OrtResult]s to [SpdxDocument]s.
  */
-internal object SpdxDocumentModelMapper : Logging {
+internal object SpdxDocumentModelMapper {
     data class SpdxDocumentParams(
         val documentName: String,
         val documentComment: String,
         val creationInfoComment: String,
+        val creationInfoPerson: String,
+        val creationInfoOrganization: String,
         val fileInformationEnabled: Boolean
     )
 
@@ -160,12 +160,18 @@ internal object SpdxDocumentModelMapper : Logging {
             }
         }
 
+        val creators = listOfNotNull(
+            params.creationInfoPerson.takeUnless { it.isEmpty() }?.let { "${SpdxConstants.PERSON} $it" },
+            params.creationInfoOrganization.takeUnless { it.isEmpty() }?.let { "${SpdxConstants.ORGANIZATION} $it" },
+            "${SpdxConstants.TOOL} $ORT_NAME-${Environment.ORT_VERSION}"
+        )
+
         return SpdxDocument(
             comment = params.documentComment,
             creationInfo = SpdxCreationInfo(
                 comment = params.creationInfoComment,
                 created = Instant.now().truncatedTo(ChronoUnit.SECONDS),
-                creators = listOf("${SpdxConstants.TOOL} $ORT_NAME-${Environment.ORT_VERSION}"),
+                creators = creators,
                 licenseListVersion = SpdxLicense.LICENSE_LIST_VERSION.substringBefore("-")
             ),
             documentNamespace = "spdx://${UUID.randomUUID()}",

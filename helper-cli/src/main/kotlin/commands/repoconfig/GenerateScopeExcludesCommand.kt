@@ -19,12 +19,14 @@
 
 package org.ossreviewtoolkit.helper.commands.repoconfig
 
-import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.parameters.options.convert
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.types.file
 
+import org.apache.logging.log4j.kotlin.logger
+
+import org.ossreviewtoolkit.helper.utils.OrtHelperCommand
 import org.ossreviewtoolkit.helper.utils.minimize
 import org.ossreviewtoolkit.helper.utils.readOrtResult
 import org.ossreviewtoolkit.helper.utils.replaceScopeExcludes
@@ -37,7 +39,7 @@ import org.ossreviewtoolkit.model.config.ScopeExcludeReason
 import org.ossreviewtoolkit.model.readValue
 import org.ossreviewtoolkit.utils.common.expandTilde
 
-internal class GenerateScopeExcludesCommand : CliktCommand(
+internal class GenerateScopeExcludesCommand : OrtHelperCommand(
     help = "Generate scope excludes based on common default for the package managers. The generated scope excludes " +
         "get written to the given repository configuration file, replacing any existing scope excludes."
 ) {
@@ -45,7 +47,7 @@ internal class GenerateScopeExcludesCommand : CliktCommand(
         "--ort-file", "-i",
         help = "The ORT file to generate scope excludes for."
     ).convert { it.expandTilde() }
-        .file(mustExist = true, canBeFile = true, canBeDir = false, mustBeWritable = false, mustBeReadable = false)
+        .file(mustExist = true, canBeFile = true, canBeDir = false, mustBeWritable = false, mustBeReadable = true)
         .convert { it.absoluteFile.normalize() }
         .required()
 
@@ -53,7 +55,7 @@ internal class GenerateScopeExcludesCommand : CliktCommand(
         "--repository-configuration-file",
         help = "The repository configuration file to write the generated scope excludes to."
     ).convert { it.expandTilde() }
-        .file(mustExist = true, canBeFile = true, canBeDir = false, mustBeWritable = false, mustBeReadable = false)
+        .file(mustExist = false, canBeFile = true, canBeDir = false, mustBeWritable = false, mustBeReadable = false)
         .convert { it.absoluteFile.normalize() }
         .required()
 
@@ -61,8 +63,13 @@ internal class GenerateScopeExcludesCommand : CliktCommand(
         val ortResult = readOrtResult(ortFile)
         val scopeExcludes = ortResult.generateScopeExcludes()
 
-        repositoryConfigurationFile
-            .readValue<RepositoryConfiguration>()
+        val repositoryConfiguration = if (repositoryConfigurationFile.isFile) {
+            repositoryConfigurationFile.readValue<RepositoryConfiguration>()
+        } else {
+            RepositoryConfiguration()
+        }
+
+        repositoryConfiguration
             .replaceScopeExcludes(scopeExcludes)
             .sortScopeExcludes()
             .write(repositoryConfigurationFile)
@@ -70,9 +77,11 @@ internal class GenerateScopeExcludesCommand : CliktCommand(
 }
 
 private fun OrtResult.generateScopeExcludes(): List<ScopeExclude> {
-    val projectScopes = getProjects().flatMap { project ->
+    val projectScopes = getProjects().flatMapTo(mutableSetOf()) { project ->
         dependencyNavigator.scopeNames(project)
     }
+
+    logger.info { "Found the following scopes: ${projectScopes.joinToString()}" }
 
     return getProjects().flatMap { project ->
         getScopeExcludesForPackageManager(project.id.type)
@@ -131,6 +140,11 @@ private fun getScopeExcludesForPackageManager(packageManagerName: String): List<
         )
         "Gradle" -> listOf(
             ScopeExclude(
+                pattern = "annotationProcessor",
+                reason = ScopeExcludeReason.BUILD_DEPENDENCY_OF,
+                comment = "Packages to process code annotations only."
+            ),
+            ScopeExclude(
                 pattern = ".*AnnotationProcessor.*",
                 reason = ScopeExcludeReason.BUILD_DEPENDENCY_OF,
                 comment = "Packages to process code annotations only."
@@ -139,6 +153,16 @@ private fun getScopeExcludesForPackageManager(packageManagerName: String): List<
                 pattern = "checkstyle",
                 reason = ScopeExcludeReason.DEV_DEPENDENCY_OF,
                 comment = "Packages for static code analysis only."
+            ),
+            ScopeExclude(
+                pattern = ".*debug.*",
+                reason = ScopeExcludeReason.DEV_DEPENDENCY_OF,
+                comment = "Packages for debug builds."
+            ),
+            ScopeExclude(
+                pattern = ".*Debug.*",
+                reason = ScopeExcludeReason.DEV_DEPENDENCY_OF,
+                comment = "Packages for debug builds."
             ),
             ScopeExclude(
                 pattern = "detekt",
@@ -171,7 +195,7 @@ private fun getScopeExcludesForPackageManager(packageManagerName: String): List<
                 comment = "Packages for code coverage (testing) only."
             ),
             ScopeExclude(
-                pattern = "kapt.*",
+                pattern = ".*kapt.*",
                 reason = ScopeExcludeReason.BUILD_DEPENDENCY_OF,
                 comment = "Packages to process code annotations only."
             ),
@@ -199,6 +223,11 @@ private fun getScopeExcludesForPackageManager(packageManagerName: String): List<
                 pattern = "lint.*",
                 reason = ScopeExcludeReason.DEV_DEPENDENCY_OF,
                 comment = "Packages for static code analysis only."
+            ),
+            ScopeExclude(
+                pattern = "lombok",
+                reason = ScopeExcludeReason.DEV_DEPENDENCY_OF,
+                comment = "Packages from Project Lombok only."
             ),
             ScopeExclude(
                 pattern = "pmd",
@@ -238,6 +267,28 @@ private fun getScopeExcludesForPackageManager(packageManagerName: String): List<
                 pattern = "devDependencies",
                 reason = ScopeExcludeReason.DEV_DEPENDENCY_OF,
                 comment = "Packages for development only."
+            )
+        )
+        "Poetry" -> listOf(
+            ScopeExclude(
+                pattern = "dev",
+                reason = ScopeExcludeReason.DEV_DEPENDENCY_OF,
+                comment = "Packages for development only."
+            ),
+            ScopeExclude(
+                pattern = "docs",
+                reason = ScopeExcludeReason.DOCUMENTATION_DEPENDENCY_OF,
+                comment = "Packages for building the documentation only."
+            ),
+            ScopeExclude(
+                pattern = "lint",
+                reason = ScopeExcludeReason.DEV_DEPENDENCY_OF,
+                comment = "Packages for static code analysis only."
+            ),
+            ScopeExclude(
+                pattern = "test",
+                reason = ScopeExcludeReason.TEST_DEPENDENCY_OF,
+                comment = "Packages for testing only."
             )
         )
         "SBT" -> listOf(

@@ -28,7 +28,7 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 
 import io.mockk.clearAllMocks
-import io.mockk.every
+import io.mockk.coEvery
 import io.mockk.mockkObject
 
 import org.ossreviewtoolkit.clients.fossid.model.status.ScanStatus
@@ -51,7 +51,7 @@ class FossId2021dot2Test : StringSpec({
         server.start()
 
         mockkObject(FossIdServiceWithVersion)
-        every { FossIdServiceWithVersion.instance(any()) } answers {
+        coEvery { FossIdServiceWithVersion.create(any()) } answers {
             VersionedFossIdService2021dot2(firstArg(), "2021.2.2")
         }
 
@@ -73,9 +73,10 @@ class FossId2021dot2Test : StringSpec({
     }
 
     "Scan status can be queried (2021.2)" {
-        // because the service caches the version, we must recreate it
-        service = FossIdServiceWithVersion.instance(service)
-        service.checkScanStatus("", "", SCAN_CODE_2021_2).shouldNotBeNull().run {
+        // Recreate the version as the service caches it.
+        service = FossIdServiceWithVersion.create(service)
+
+        service.checkScanStatus("", "", SCAN_CODE_2021_2).shouldNotBeNull {
             checkResponse("get scan status")
 
             data.shouldNotBeNull().status shouldBe ScanStatus.FINISHED

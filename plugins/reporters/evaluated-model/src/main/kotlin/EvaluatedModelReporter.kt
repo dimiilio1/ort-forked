@@ -22,49 +22,66 @@ package org.ossreviewtoolkit.plugins.reporters.evaluatedmodel
 import java.io.File
 
 import org.ossreviewtoolkit.model.FileFormat
+import org.ossreviewtoolkit.plugins.api.OrtPlugin
+import org.ossreviewtoolkit.plugins.api.OrtPluginOption
+import org.ossreviewtoolkit.plugins.api.PluginDescriptor
 import org.ossreviewtoolkit.reporter.Reporter
+import org.ossreviewtoolkit.reporter.ReporterFactory
 import org.ossreviewtoolkit.reporter.ReporterInput
+
+data class EvaluatedModelReporterConfig(
+    /**
+     * Controls whether subtrees occurring multiple times in the dependency tree are stripped.
+     */
+    @OrtPluginOption(
+        defaultValue = "false"
+    )
+    val deduplicateDependencyTree: Boolean,
+
+    /**
+     * The list of file formats to generate, defaults to JSON. Supported formats are JSON and YAML.
+     */
+    @OrtPluginOption(
+        defaultValue = "JSON",
+        aliases = ["output.file.formats"]
+    )
+    val outputFileFormats: List<String>
+)
 
 /**
  * A [Reporter] that generates an [EvaluatedModel].
- *
- * This reporter supports the following options:
- * - *output.file.formats*: The list of [FileFormat]s to generate, defaults to [FileFormat.JSON].
- * - *deduplicateDependencyTree*: Controls whether subtrees occurring multiple times in the dependency tree are
- *   stripped.
  */
-class EvaluatedModelReporter : Reporter {
+@OrtPlugin(
+    displayName = "Evaluated Model Reporter",
+    description = "Generates an evaluated model of the ORT result.",
+    factory = ReporterFactory::class
+)
+class EvaluatedModelReporter(
+    override val descriptor: PluginDescriptor = EvaluatedModelReporterFactory.descriptor,
+    private val config: EvaluatedModelReporterConfig
+) : Reporter {
     companion object {
         const val OPTION_OUTPUT_FILE_FORMATS = "output.file.formats"
 
         const val OPTION_DEDUPLICATE_DEPENDENCY_TREE = "deduplicateDependencyTree"
     }
 
-    override val type = "EvaluatedModel"
+    override fun generateReport(input: ReporterInput, outputDir: File): List<Result<File>> {
+        val evaluatedModel = EvaluatedModel.create(input, config.deduplicateDependencyTree)
 
-    override fun generateReport(input: ReporterInput, outputDir: File, options: Map<String, String>): List<File> {
-        val evaluatedModel = EvaluatedModel.create(input, options[OPTION_DEDUPLICATE_DEPENDENCY_TREE].toBoolean())
+        val outputFileFormats = config.outputFileFormats.map { FileFormat.forExtension(it) }
 
-        val outputFiles = mutableListOf<File>()
-        val outputFileFormats = options[OPTION_OUTPUT_FILE_FORMATS]
-            ?.split(',')
-            ?.mapTo(mutableSetOf()) { FileFormat.forExtension(it) }
-            ?: setOf(FileFormat.JSON)
-
-        outputFileFormats.forEach { fileFormat ->
-            val outputFile = outputDir.resolve("evaluated-model.${fileFormat.fileExtension}")
-
-            outputFile.bufferedWriter().use {
-                when (fileFormat) {
-                    FileFormat.JSON -> evaluatedModel.toJson(it)
-                    FileFormat.YAML -> evaluatedModel.toYaml(it)
-                    else -> throw IllegalArgumentException("Unsupported Evaluated Model file format '$fileFormat'.")
+        return outputFileFormats.map { fileFormat ->
+            runCatching {
+                outputDir.resolve("evaluated-model.${fileFormat.fileExtension}").apply {
+                    bufferedWriter().use {
+                        when (fileFormat) {
+                            FileFormat.JSON -> evaluatedModel.toJson(it)
+                            FileFormat.YAML -> evaluatedModel.toYaml(it)
+                        }
+                    }
                 }
             }
-
-            outputFiles += outputFile
         }
-
-        return outputFiles
     }
 }

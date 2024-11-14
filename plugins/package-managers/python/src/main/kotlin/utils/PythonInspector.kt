@@ -27,9 +27,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNamingStrategy
 import kotlinx.serialization.json.decodeFromStream
 
-import org.apache.logging.log4j.kotlin.Logging
-
 import org.ossreviewtoolkit.utils.common.CommandLineTool
+import org.ossreviewtoolkit.utils.common.safeDeleteRecursively
 import org.ossreviewtoolkit.utils.ort.createOrtTempFile
 
 import org.semver4j.RangesList
@@ -40,14 +39,20 @@ private val json = Json {
     namingStrategy = JsonNamingStrategy.SnakeCase
 }
 
-internal object PythonInspector : CommandLineTool, Logging {
+internal object PythonInspector : CommandLineTool {
     override fun command(workingDir: File?) = "python-inspector"
 
     override fun transformVersion(output: String) = output.removePrefix("Python-inspector version: ")
 
     override fun getVersionRequirement(): RangesList = RangesListFactory.create("[0.9.2,)")
 
-    fun inspect(workingDir: File, definitionFile: File, pythonVersion: String, operatingSystem: String): Result {
+    fun inspect(
+        workingDir: File,
+        definitionFile: File,
+        pythonVersion: String,
+        operatingSystem: String,
+        analyzeSetupPyInsecurely: Boolean
+    ): Result {
         val outputFile = createOrtTempFile(prefix = "python-inspector", suffix = ".json")
 
         val commandLineOptions = buildList {
@@ -60,7 +65,9 @@ internal object PythonInspector : CommandLineTool, Logging {
             add("--json-pdt")
             add(outputFile.absolutePath)
 
-            add("--analyze-setup-py-insecurely")
+            if (analyzeSetupPyInsecurely) {
+                add("--analyze-setup-py-insecurely")
+            }
 
             if (definitionFile.name == "setup.py") {
                 add("--setup-py")
@@ -86,7 +93,7 @@ internal object PythonInspector : CommandLineTool, Logging {
             run(workingDir, *commandLineOptions.toTypedArray())
             outputFile.inputStream().use { json.decodeFromStream(it) }
         } finally {
-            outputFile.delete()
+            outputFile.parentFile.safeDeleteRecursively()
         }
     }
 

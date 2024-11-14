@@ -65,11 +65,10 @@ class GitLabLicenseModelReporterFunTest : WordSpec({
 })
 
 private fun TestConfiguration.generateReport(ortResult: OrtResult, skipExcluded: Boolean): String =
-    GitLabLicenseModelReporter().generateReport(
+    GitLabLicenseModelReporter(config = GitLabLicenseModelReporterConfig(skipExcluded = skipExcluded)).generateReport(
         input = ReporterInput(ortResult = ortResult),
-        outputDir = tempdir(),
-        options = mapOf(GitLabLicenseModelReporter.OPTION_SKIP_EXCLUDED to skipExcluded.toString())
-    ).single().readText().normalizeLineBreaks()
+        outputDir = tempdir()
+    ).single().getOrThrow().readText().normalizeLineBreaks()
 
 private fun createOrtResult(): OrtResult {
     return OrtResult(

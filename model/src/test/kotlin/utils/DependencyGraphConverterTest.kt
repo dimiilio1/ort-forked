@@ -28,6 +28,7 @@ import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldContainOnly
 import io.kotest.matchers.ints.shouldBeLessThan
 import io.kotest.matchers.nulls.beNull
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNot
@@ -49,7 +50,6 @@ import org.ossreviewtoolkit.model.config.Excludes
 import org.ossreviewtoolkit.model.config.ScopeExclude
 import org.ossreviewtoolkit.model.config.ScopeExcludeReason
 import org.ossreviewtoolkit.model.readValue
-import org.ossreviewtoolkit.utils.test.shouldNotBeNull
 
 class DependencyGraphConverterTest : WordSpec({
     "convertToDependencyGraphs" should {
@@ -161,7 +161,7 @@ class DependencyGraphConverterTest : WordSpec({
                 graph.dependencies[node]?.forEach(::collectIssues)
             }
 
-            graph.nodes?.forEach(::collectIssues)
+            graph.nodes.forEach(::collectIssues)
             issues shouldNot beEmpty()
         }
 
@@ -181,10 +181,7 @@ class DependencyGraphConverterTest : WordSpec({
             val convertedResult = DependencyGraphConverter.convert(mixedResult)
 
             convertedResult.dependencyGraphs["Gradle"] shouldNotBeNull {
-                nodes shouldNotBeNull {
-                    this shouldNot beEmpty()
-                }
-
+                nodes shouldNot beEmpty()
                 scopes.keys shouldNot beEmpty()
             }
         }

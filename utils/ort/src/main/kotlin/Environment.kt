@@ -19,7 +19,9 @@
 
 package org.ossreviewtoolkit.utils.ort
 
+import java.io.File
 import java.lang.Runtime
+import java.util.jar.JarFile
 
 import org.ossreviewtoolkit.utils.common.Os
 
@@ -28,14 +30,19 @@ import org.ossreviewtoolkit.utils.common.Os
  */
 data class Environment(
     /**
-     * The version of ORT used.
+     * The version of the OSS Review Toolkit as a string.
      */
     val ortVersion: String = ORT_VERSION,
 
     /**
-     * The version of Java used.
+     * The version of Java used to build ORT.
      */
-    val javaVersion: String = System.getProperty("java.version"),
+    val buildJdk: String = BUILD_JDK,
+
+    /**
+     * The version of Java used to run ORT.
+     */
+    val javaVersion: String = JAVA_VERSION,
 
     /**
      * Name of the operating system, defaults to [Os.name].
@@ -71,15 +78,34 @@ data class Environment(
         val ORT_VERSION by lazy { this::class.java.`package`.implementationVersion ?: "IDE-SNAPSHOT" }
 
         /**
+         * The version of Java used to build ORT.
+         */
+        val BUILD_JDK: String by lazy {
+            runCatching {
+                val codeSource = this::class.java.protectionDomain.codeSource
+                JarFile(codeSource?.location?.file).use {
+                    it.manifest.mainAttributes.getValue("Build-Jdk")
+                }
+            }.getOrDefault(JAVA_VERSION)
+        }
+
+        /**
+         * The version of Java used to run ORT.
+         */
+        val JAVA_VERSION: String by lazy { System.getProperty("java.version") }
+
+        /**
          * A string that is supposed to be used as the User Agent when using ORT as an HTTP client.
          */
         val ORT_USER_AGENT = "$ORT_NAME/$ORT_VERSION"
 
         private val RELEVANT_VARIABLES = listOf(
             // Windows variables.
+            "USERPROFILE",
             "OS",
             "COMSPEC",
             // Unix variables.
+            "HOME",
             "OSTYPE",
             "HOSTTYPE",
             "SHELL",
@@ -92,4 +118,38 @@ data class Environment(
             "GOPATH"
         )
     }
+}
+
+/**
+ * The directory to store ORT (read-write) data in, like archives, caches, configuration, and tools. Defaults to the
+ * ".ort" directory below the current user's home directory.
+ */
+val ortDataDirectory by lazy {
+    Os.env[ORT_DATA_DIR_ENV_NAME]?.takeUnless {
+        it.isEmpty()
+    }?.let {
+        File(it)
+    } ?: Os.userHomeDirectory.resolve(".ort")
+}
+
+/**
+ * The directory to store ORT (read-only) configuration in. Defaults to the "config" directory below the data directory.
+ */
+val ortConfigDirectory by lazy {
+    Os.env[ORT_CONFIG_DIR_ENV_NAME]?.takeUnless {
+        it.isEmpty()
+    }?.let {
+        File(it)
+    } ?: ortDataDirectory.resolve("config")
+}
+
+/**
+ * The directory to store ORT (read-write) tools in. Defaults to the "tools" directory below the data directory.
+ */
+val ortToolsDirectory by lazy {
+    Os.env[ORT_TOOLS_DIR_ENV_NAME]?.takeUnless {
+        it.isEmpty()
+    }?.let {
+        File(it)
+    } ?: ortDataDirectory.resolve("tools")
 }

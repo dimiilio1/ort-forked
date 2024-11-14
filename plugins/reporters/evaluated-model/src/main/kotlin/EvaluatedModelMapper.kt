@@ -29,15 +29,18 @@ import org.ossreviewtoolkit.model.PackageLinkage
 import org.ossreviewtoolkit.model.Project
 import org.ossreviewtoolkit.model.Provenance
 import org.ossreviewtoolkit.model.RemoteArtifact
+import org.ossreviewtoolkit.model.Repository
+import org.ossreviewtoolkit.model.ResolvedConfiguration
 import org.ossreviewtoolkit.model.RuleViolation
 import org.ossreviewtoolkit.model.ScanResult
 import org.ossreviewtoolkit.model.TextLocation
 import org.ossreviewtoolkit.model.VcsInfo
-import org.ossreviewtoolkit.model.Vulnerability
-import org.ossreviewtoolkit.model.VulnerabilityReference
+import org.ossreviewtoolkit.model.config.Excludes
 import org.ossreviewtoolkit.model.config.IssueResolution
 import org.ossreviewtoolkit.model.config.LicenseFindingCuration
 import org.ossreviewtoolkit.model.config.PathExclude
+import org.ossreviewtoolkit.model.config.RepositoryConfiguration
+import org.ossreviewtoolkit.model.config.Resolutions
 import org.ossreviewtoolkit.model.config.RuleViolationResolution
 import org.ossreviewtoolkit.model.config.ScopeExclude
 import org.ossreviewtoolkit.model.config.VulnerabilityResolution
@@ -45,7 +48,9 @@ import org.ossreviewtoolkit.model.licenses.LicenseView
 import org.ossreviewtoolkit.model.toYaml
 import org.ossreviewtoolkit.model.utils.FindingCurationMatcher
 import org.ossreviewtoolkit.model.utils.FindingsMatcher
-import org.ossreviewtoolkit.model.utils.RootLicenseMatcher
+import org.ossreviewtoolkit.model.utils.PathLicenseMatcher
+import org.ossreviewtoolkit.model.utils.filterByVcsPath
+import org.ossreviewtoolkit.model.vulnerabilities.Vulnerability
 import org.ossreviewtoolkit.reporter.ReporterInput
 import org.ossreviewtoolkit.reporter.StatisticsCalculator.getStatistics
 import org.ossreviewtoolkit.utils.ort.ProcessedDeclaredLicense
@@ -73,7 +78,7 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
     private val vulnerabilitiesResolutions = mutableListOf<VulnerabilityResolution>()
 
     private val curationsMatcher = FindingCurationMatcher()
-    private val findingsMatcher = FindingsMatcher(RootLicenseMatcher(input.ortConfig.licenseFilePatterns))
+    private val findingsMatcher = FindingsMatcher(PathLicenseMatcher(input.ortConfig.licenseFilePatterns))
 
     private data class PackageExcludeInfo(
         var id: Identifier,
@@ -110,7 +115,7 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
             addRuleViolation(ruleViolation)
         }
 
-        input.ortResult.advisor?.results?.advisorResults?.forEach { (id, results) ->
+        input.ortResult.advisor?.results?.forEach { (id, results) ->
             val pkg = packages.getValue(id)
 
             results.forEach { result ->
@@ -143,8 +148,8 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
             ruleViolations = ruleViolations,
             vulnerabilitiesResolutions = vulnerabilitiesResolutions,
             vulnerabilities = vulnerabilities,
-            statistics = with(input) { getStatistics(ortResult, resolutionProvider, licenseInfoResolver, ortConfig) },
-            repository = input.ortResult.repository,
+            statistics = with(input) { getStatistics(ortResult, licenseInfoResolver, ortConfig) },
+            repository = input.ortResult.repository.deduplicateResolutionsAndExcludes(),
             severeIssueThreshold = input.ortConfig.severeIssueThreshold,
             severeRuleViolationThreshold = input.ortConfig.severeRuleViolationThreshold,
             repositoryConfiguration = input.ortResult.repository.config.toYaml(),
@@ -219,7 +224,7 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
         if (input.ortResult.isProject(id)) {
             input.ortResult.repository.config.curations.licenseFindings
         } else {
-            input.packageConfigurationProvider.getPackageConfigurations(id, provenance)
+            input.ortResult.getPackageConfigurations(id, provenance)
                 .flatMap { it.licenseFindingCurations }
         }
 
@@ -227,7 +232,7 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
         if (input.ortResult.isProject(id)) {
             input.ortResult.getExcludes().paths
         } else {
-            input.packageConfigurationProvider.getPackageConfigurations(id, provenance)
+            input.ortResult.getPackageConfigurations(id, provenance)
                 .flatMap { it.pathExcludes }
         }
 
@@ -273,9 +278,7 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
 
         issues += addAnalyzerIssues(project.id, evaluatedPackage)
 
-        input.ortResult.getScanResultsForId(project.id).mapTo(scanResults) { result ->
-            convertScanResult(result, findings, evaluatedPackage)
-        }
+        scanResults += convertScanResultsForPackage(evaluatedPackage, findings)
 
         findings.filter { it.type == EvaluatedFindingType.LICENSE }.mapNotNullTo(detectedLicenses) { it.license }
 
@@ -338,9 +341,7 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
 
         issues += addAnalyzerIssues(pkg.id, evaluatedPackage)
 
-        input.ortResult.getScanResultsForId(pkg.id).mapTo(scanResults) { result ->
-            convertScanResult(result, findings, evaluatedPackage)
-        }
+        scanResults += convertScanResultsForPackage(evaluatedPackage, findings)
 
         findings.filter { it.type == EvaluatedFindingType.LICENSE }.mapNotNullTo(detectedLicenses) { it.license }
 
@@ -396,24 +397,29 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
     private fun addVulnerability(pkg: EvaluatedPackage, vulnerability: Vulnerability) {
         val resolutions = addResolutions(vulnerability)
 
-        val evaluatedReferences = vulnerability.references.map {
-            EvaluatedVulnerabilityReference(
-                it.url,
-                it.scoringSystem,
-                it.severity,
-                VulnerabilityReference.getSeverityString(it.scoringSystem, it.severity)
-            )
-        }
-
         vulnerabilities += EvaluatedVulnerability(
             pkg = pkg,
             id = vulnerability.id,
             summary = vulnerability.summary,
             description = vulnerability.description,
-            references = evaluatedReferences,
+            references = vulnerability.references,
             resolutions = resolutions
         )
     }
+
+    private fun convertScanResultsForPackage(
+        pkg: EvaluatedPackage,
+        findings: MutableList<EvaluatedFinding>
+    ): List<EvaluatedScanResult> =
+        input.ortResult.getScanResultsForId(pkg.id).map { scanResult ->
+            // If a VCS path curation has been applied after the scanning stage, it is possible to apply that curation
+            // without re-scanning in case the new VCS path is a subdirectory of the scanned VCS path. So, filter by VCS
+            // path to enable the user to see the effect on the detected license with a shorter turn around time /
+            // without re-scanning.
+            scanResult.filterByVcsPath(input.ortResult.getPackage(pkg.id)?.metadata?.vcsProcessed?.path.orEmpty())
+        }.map { scanResult ->
+            convertScanResult(scanResult, findings, pkg)
+        }
 
     private fun convertScanResult(
         result: ScanResult,
@@ -431,21 +437,19 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
                 calculatePackageVerificationCode(fileList.files.map { it.sha1 }.asSequence())
             }.orEmpty(),
             issues = issues
-        )
-
-        val actualScanResult = scanResults.addIfRequired(evaluatedScanResult)
+        ).run { scanResults.addIfRequired(this) }
 
         issues += addIssues(
             result.summary.issues,
             EvaluatedIssueType.SCANNER,
             pkg,
-            actualScanResult,
+            evaluatedScanResult,
             null
         )
 
-        addLicensesAndCopyrights(pkg.id, result, actualScanResult, findings)
+        addLicensesAndCopyrights(pkg.id, result, evaluatedScanResult, findings)
 
-        return actualScanResult
+        return evaluatedScanResult
     }
 
     private fun addDependencyTree(project: Project, pkg: EvaluatedPackage, deduplicateDependencyTree: Boolean) {
@@ -601,6 +605,7 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
                 message = issue.message,
                 severity = issue.severity,
                 resolutions = resolutions,
+                isExcluded = input.ortResult.isExcluded(issue, pkg.id),
                 pkg = pkg,
                 scanResult = scanResult,
                 path = path,
@@ -614,19 +619,19 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
     }
 
     private fun addResolutions(issue: Issue): List<IssueResolution> {
-        val matchingResolutions = input.resolutionProvider.getIssueResolutionsFor(issue)
+        val matchingResolutions = input.ortResult.getResolutionsFor(issue)
 
         return issueResolutions.addIfRequired(matchingResolutions)
     }
 
     private fun addResolutions(ruleViolation: RuleViolation): List<RuleViolationResolution> {
-        val matchingResolutions = input.resolutionProvider.getRuleViolationResolutionsFor(ruleViolation)
+        val matchingResolutions = input.ortResult.getResolutionsFor(ruleViolation)
 
         return ruleViolationResolutions.addIfRequired(matchingResolutions)
     }
 
     private fun addResolutions(vulnerability: Vulnerability): List<VulnerabilityResolution> {
-        val matchingResolutions = input.resolutionProvider.getVulnerabilityResolutionsFor(vulnerability)
+        val matchingResolutions = input.ortResult.getResolutionsFor(vulnerability)
 
         return vulnerabilitiesResolutions.addIfRequired(matchingResolutions)
     }
@@ -717,9 +722,9 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
         )
 
     /**
-     * Adds the [value] to this list if the list does not already contain an equal item. Returns the item that is
-     * contained in the list. This is important to make sure that there is only one instance of equal items used in the
-     * model, because when Jackson generates IDs each instance gets a new ID, no matter if they are equal or not.
+     * Add the [value] to this list if the list does not already contain an equal item. Return the item contained in the
+     * list. This is important to make sure that there is only one instance of equal items used in the model, because
+     * when Jackson generates IDs each instance gets a new ID, no matter if they are equal or not.
      */
     private fun <T> MutableList<T>.addIfRequired(value: T): T = find { it == value } ?: value.also { add(it) }
 
@@ -728,4 +733,28 @@ internal class EvaluatedModelMapper(private val input: ReporterInput) {
      */
     private fun <T> MutableList<T>.addIfRequired(values: Collection<T>): List<T> =
         values.map { addIfRequired(it) }.distinct()
+
+    /**
+     * Return a copy of the [RepositoryConfiguration] with [Resolutions] and [Excludes] that refer to the same instances
+     * as the [ResolvedConfiguration] for equal entries. This is required for the [EvaluatedModel] to contain indexed
+     * entries instead of duplicate ones.
+     */
+    private fun Repository.deduplicateResolutionsAndExcludes(): Repository {
+        val resolutions = with(config.resolutions) {
+            copy(
+                issues = issues.map { issueResolutions.addIfRequired(it) },
+                ruleViolations = ruleViolations.map { ruleViolationResolutions.addIfRequired(it) },
+                vulnerabilities = vulnerabilities.map { vulnerabilitiesResolutions.addIfRequired(it) }
+            )
+        }
+
+        val excludes = with(config.excludes) {
+            copy(
+                paths = paths.map { pathExcludes.addIfRequired(it) },
+                scopes = scopes.map { scopeExcludes.addIfRequired(it) }
+            )
+        }
+
+        return copy(config = config.copy(excludes = excludes, resolutions = resolutions))
+    }
 }

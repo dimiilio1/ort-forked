@@ -23,8 +23,6 @@ import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 
-import org.apache.logging.log4j.kotlin.Logging
-
 import org.ossreviewtoolkit.utils.common.safeMkdirs
 
 /**
@@ -37,19 +35,17 @@ open class LocalFileStorage(
      */
     val directory: File
 ) : FileStorage {
-    private companion object : Logging
-
     /**
      * Return the internally used path, which might differ from the provided [path] e.g. in case a suffix is added to
      * denote a compression scheme.
      */
     open fun transformPath(path: String): String = path
 
-    override fun exists(path: String) = directory.resolve(path).exists()
+    override fun exists(path: String) = directory.resolve(transformPath(path)).exists()
 
     @Synchronized
     override fun read(path: String): InputStream {
-        val file = directory.resolve(path)
+        val file = directory.resolve(transformPath(path))
 
         require(file.canonicalFile.startsWith(directory.canonicalFile)) {
             "Path '$path' is not in directory '${directory.invariantSeparatorsPath}'."
@@ -63,7 +59,7 @@ open class LocalFileStorage(
      * output stream for writing to the file.
      */
     protected open fun safeOutputStream(path: String): OutputStream {
-        val file = directory.resolve(path)
+        val file = directory.resolve(transformPath(path))
 
         require(file.canonicalFile.startsWith(directory.canonicalFile)) {
             "Path '$path' is not in directory '${directory.invariantSeparatorsPath}'."
@@ -80,4 +76,7 @@ open class LocalFileStorage(
             inputStream.use { it.copyTo(outputStream) }
         }
     }
+
+    @Synchronized
+    override fun delete(path: String): Boolean = directory.resolve(transformPath(path)).delete()
 }

@@ -29,7 +29,7 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 
 import org.ossreviewtoolkit.model.OrtResult
-import org.ossreviewtoolkit.model.utils.DefaultResolutionProvider
+import org.ossreviewtoolkit.plugins.api.PluginConfig
 import org.ossreviewtoolkit.reporter.ReporterInput
 import org.ossreviewtoolkit.utils.common.normalizeLineBreaks
 import org.ossreviewtoolkit.utils.common.unpackZip
@@ -49,7 +49,7 @@ class OpossumReporterFunTest : WordSpec({
                 isObject shouldBe true
                 get("metadata").get("projectId").asText() shouldBe "0"
                 get("attributionBreakpoints").size() shouldBe 4
-                get("externalAttributionSources").size() shouldBe 6
+                get("externalAttributionSources").size() shouldBe 7
                 get("resourcesToAttributions").fieldNames().asSequence() shouldContain
                     "/analyzer/src/funTest/assets/projects/synthetic/gradle/lib/build.gradle/" +
                     "compile/org.apache.commons/commons-text@1.1/dependencies/org.apache.commons/commons-lang3@3.5"
@@ -59,13 +59,11 @@ class OpossumReporterFunTest : WordSpec({
 })
 
 private fun TestConfiguration.generateReport(ortResult: OrtResult): String {
-    val input = ReporterInput(
-        ortResult = ortResult,
-        resolutionProvider = DefaultResolutionProvider(ortResult.getResolutions())
-    )
-
+    val input = ReporterInput(ortResult)
     val outputDir = tempdir()
-    OpossumReporter().generateReport(input, outputDir, emptyMap()).single().unpackZip(outputDir)
+
+    OpossumReporterFactory().create(PluginConfig())
+        .generateReport(input, outputDir).single().getOrThrow().unpackZip(outputDir)
 
     return outputDir.resolve("input.json").readText()
 }

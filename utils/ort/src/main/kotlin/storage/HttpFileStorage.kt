@@ -30,7 +30,7 @@ import okhttp3.Headers.Companion.toHeaders
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.utils.ort.OkHttpClientHelper
 import org.ossreviewtoolkit.utils.ort.execute
@@ -67,8 +67,6 @@ class HttpFileStorage(
      */
     private val cacheMaxAgeInSeconds: Int = 0
 ) : FileStorage {
-    private companion object : Logging
-
     private val httpClient by lazy {
         OkHttpClientHelper.buildClient {
             val connectionPool = ConnectionPool(
@@ -82,10 +80,13 @@ class HttpFileStorage(
         }
     }
 
-    override fun exists(path: String): Boolean {
-        val request = Request.Builder()
+    private fun requestBuilder(): Request.Builder =
+        Request.Builder()
             .headers(headers.toHeaders())
             .cacheControl(CacheControl.Builder().maxAge(cacheMaxAgeInSeconds, TimeUnit.SECONDS).build())
+
+    override fun exists(path: String): Boolean {
+        val request = requestBuilder()
             .head()
             .url(urlForPath(path))
             .build()
@@ -94,9 +95,7 @@ class HttpFileStorage(
     }
 
     override fun read(path: String): InputStream {
-        val request = Request.Builder()
-            .headers(headers.toHeaders())
-            .cacheControl(CacheControl.Builder().maxAge(cacheMaxAgeInSeconds, TimeUnit.SECONDS).build())
+        val request = requestBuilder()
             .get()
             .url(urlForPath(path))
             .build()
@@ -114,13 +113,12 @@ class HttpFileStorage(
         }
 
         response.close()
-        throw IOException("Could not read from '${request.url}': ${response.code} - ${response.message}")
+        throw IOException("Could not read from ${request.url}: ${response.code} - ${response.message}")
     }
 
     override fun write(path: String, inputStream: InputStream) {
         inputStream.use {
-            val request = Request.Builder()
-                .headers(headers.toHeaders())
+            val request = requestBuilder()
                 .put(it.readBytes().toRequestBody())
                 .url(urlForPath(path))
                 .build()
@@ -130,7 +128,7 @@ class HttpFileStorage(
             return httpClient.execute(request).use { response ->
                 if (!response.isSuccessful) {
                     throw IOException(
-                        "Could not store file at '${request.url}': ${response.code} - ${response.message}"
+                        "Could not store file at ${request.url}: ${response.code} - ${response.message}"
                     )
                 }
             }
@@ -138,4 +136,16 @@ class HttpFileStorage(
     }
 
     private fun urlForPath(path: String) = "$url/$path$query"
+
+    override fun delete(path: String): Boolean {
+        val request = requestBuilder()
+            .delete()
+            .url(urlForPath(path))
+            .build()
+
+        logger.debug { "Deleting file from storage: ${request.url}" }
+
+        val response = httpClient.execute(request)
+        return response.isSuccessful
+    }
 }

@@ -47,7 +47,6 @@ import org.apache.maven.project.ProjectBuildingException
 import org.eclipse.aether.artifact.DefaultArtifact
 import org.eclipse.aether.repository.RemoteRepository
 
-import org.ossreviewtoolkit.analyzer.managers.utils.MavenSupport
 import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.Issue
 import org.ossreviewtoolkit.model.Package
@@ -57,7 +56,8 @@ import org.ossreviewtoolkit.model.Scope
 import org.ossreviewtoolkit.model.Severity
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.utils.DependencyGraphBuilder
-import org.ossreviewtoolkit.utils.test.shouldNotBeNull
+import org.ossreviewtoolkit.plugins.packagemanagers.gradlemodel.dependencyType
+import org.ossreviewtoolkit.plugins.packagemanagers.maven.utils.MavenSupport
 
 /**
  * A test class to test the integration of the [Gradle] package manager with [DependencyGraphBuilder]. This class
@@ -79,9 +79,7 @@ class GradleDependencyHandlerTest : WordSpec({
                 .addDependency(scope2, dep1)
                 .build()
 
-            graph.nodes shouldNotBeNull {
-                this shouldHaveSize 3
-            }
+            graph.nodes shouldHaveSize 3
 
             val scopes = graph.createScopes()
             scopes.map { it.name } should containExactlyInAnyOrder(scope1, scope2)
@@ -131,7 +129,7 @@ class GradleDependencyHandlerTest : WordSpec({
 
             val scopes = graph.createScopes()
 
-            scopeDependencies(scopes, scope).single { it.id.type == NAME }
+            scopeDependencies(scopes, scope).single { it.id.type == "Gradle" }
         }
 
         "collect information about packages" {
@@ -173,10 +171,8 @@ class GradleDependencyHandlerTest : WordSpec({
                 .build()
 
             graph.scopeRoots should beEmpty()
-            graph.nodes shouldNotBeNull {
-                this shouldHaveSize 5
-                all { it.fragment == 0 } shouldBe true
-            }
+            graph.nodes shouldHaveSize 5
+            graph.nodes.all { it.fragment == 0 } shouldBe true
 
             val scopes = graph.createScopes()
             val scopeDependencies1 = scopeDependencies(scopes, scope1)
@@ -312,22 +308,19 @@ class GradleDependencyHandlerTest : WordSpec({
             val issues = mutableListOf<Issue>()
 
             every { maven.parsePackage(any(), any(), useReposFromDependencies = false) } throws exception
-            val handler = GradleDependencyHandler(NAME, maven)
+            val handler = GradleDependencyHandler("Gradle", maven)
 
             handler.createPackage(dep, issues) should beNull()
 
             issues should haveSize(1)
             with(issues.first()) {
-                source shouldBe NAME
+                source shouldBe "Gradle"
                 severity shouldBe Severity.ERROR
                 message should contain("${dep.groupId}:${dep.artifactId}:${dep.version}")
             }
         }
     }
 })
-
-/** The name of the package manager. */
-private const val NAME = "GradleTest"
 
 /** Remote repositories used by the test. */
 private val remoteRepositories = listOf(mockk<RemoteRepository>())
@@ -361,7 +354,7 @@ private fun createDependency(
  * this class.
  */
 private fun createGraphBuilder(): DependencyGraphBuilder<OrtDependency> {
-    val dependencyHandler = GradleDependencyHandler(NAME, createMavenSupport())
+    val dependencyHandler = GradleDependencyHandler("Gradle", createMavenSupport())
     dependencyHandler.repositories = remoteRepositories
     return DependencyGraphBuilder(dependencyHandler)
 }
@@ -390,19 +383,9 @@ private fun createMavenSupport(): MavenSupport {
 }
 
 /**
- * Determine the type of the [Identifier] for this dependency.
- */
-private fun OrtDependency.type(): String =
-    if (localPath != null) {
-        NAME
-    } else {
-        "Maven"
-    }
-
-/**
  * Returns an [Identifier] for this [OrtDependency].
  */
-private fun OrtDependency.toId() = Identifier(type(), groupId, artifactId, version)
+private fun OrtDependency.toId() = Identifier(dependencyType, groupId, artifactId, version)
 
 /**
  * Return the package references from the given [scopes] associated with the scope with the given [scopeName].

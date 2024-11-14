@@ -22,13 +22,13 @@ package org.ossreviewtoolkit.helper.commands
 import com.fasterxml.jackson.databind.PropertyNamingStrategies
 import com.fasterxml.jackson.module.kotlin.readValue
 
-import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.parameters.options.convert
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.types.file
 
+import org.ossreviewtoolkit.helper.utils.OrtHelperCommand
 import org.ossreviewtoolkit.helper.utils.writeOrtResult
 import org.ossreviewtoolkit.model.AnalyzerResult
 import org.ossreviewtoolkit.model.AnalyzerRun
@@ -51,15 +51,15 @@ import org.ossreviewtoolkit.model.config.ScopeExclude
 import org.ossreviewtoolkit.model.config.ScopeExcludeReason
 import org.ossreviewtoolkit.model.mapper
 import org.ossreviewtoolkit.model.orEmpty
-import org.ossreviewtoolkit.model.utils.addPackageCurations
 import org.ossreviewtoolkit.plugins.packagecurationproviders.api.PackageCurationProviderFactory
 import org.ossreviewtoolkit.utils.common.expandTilde
+import org.ossreviewtoolkit.utils.config.setPackageCurations
 import org.ossreviewtoolkit.utils.ort.Environment
 import org.ossreviewtoolkit.utils.ort.ORT_CONFIG_FILENAME
 import org.ossreviewtoolkit.utils.ort.ortConfigDirectory
 
-internal class CreateAnalyzerResultFromPackageListCommand : CliktCommand(
-    "A command which turns a package list file into an analyzer result."
+internal class CreateAnalyzerResultFromPackageListCommand : OrtHelperCommand(
+    help = "A command which turns a package list file into an analyzer result."
 ) {
     private val packageListFile by option(
         "--package-list-file", "-i",
@@ -79,7 +79,7 @@ internal class CreateAnalyzerResultFromPackageListCommand : CliktCommand(
 
     private val configFile by option(
         "--config",
-        help = "The path to the ORT configuration file that configures the scan results storage."
+        help = "The path to the ORT configuration file that configures the package curation providers."
     ).convert { it.expandTilde() }
         .file(mustExist = true, canBeFile = true, canBeDir = false, mustBeWritable = false, mustBeReadable = true)
         .convert { it.absoluteFile.normalize() }
@@ -127,7 +127,7 @@ internal class CreateAnalyzerResultFromPackageListCommand : CliktCommand(
                     )
                 )
             )
-        ).addPackageCurations(packageCurationProviders)
+        ).setPackageCurations(packageCurationProviders)
 
         writeOrtResult(ortResult, ortFile)
     }

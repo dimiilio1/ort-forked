@@ -23,12 +23,13 @@ package org.ossreviewtoolkit.plugins.packagemanagers.spdx
 
 import java.io.File
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.analyzer.AbstractPackageManagerFactory
 import org.ossreviewtoolkit.analyzer.PackageManager
+import org.ossreviewtoolkit.analyzer.PackageManagerDependency
 import org.ossreviewtoolkit.analyzer.PackageManagerResult
-import org.ossreviewtoolkit.analyzer.managers.utils.PackageManagerDependencyHandler
+import org.ossreviewtoolkit.analyzer.toPackageReference
 import org.ossreviewtoolkit.downloader.VersionControlSystem
 import org.ossreviewtoolkit.model.Hash
 import org.ossreviewtoolkit.model.HashAlgorithm
@@ -63,7 +64,6 @@ import org.ossreviewtoolkit.utils.spdx.model.SpdxPackage
 import org.ossreviewtoolkit.utils.spdx.model.SpdxRelationship
 import org.ossreviewtoolkit.utils.spdx.toSpdx
 
-private const val MANAGER_NAME = "SpdxDocumentFile"
 private const val DEFAULT_SCOPE_NAME = "default"
 
 private val SPDX_LINKAGE_RELATIONSHIPS = mapOf(
@@ -71,14 +71,7 @@ private val SPDX_LINKAGE_RELATIONSHIPS = mapOf(
     SpdxRelationship.Type.STATIC_LINK to PackageLinkage.STATIC
 )
 
-private val SPDX_SCOPE_RELATIONSHIPS = listOf(
-    SpdxRelationship.Type.BUILD_DEPENDENCY_OF,
-    SpdxRelationship.Type.DEV_DEPENDENCY_OF,
-    SpdxRelationship.Type.OPTIONAL_DEPENDENCY_OF,
-    SpdxRelationship.Type.PROVIDED_DEPENDENCY_OF,
-    SpdxRelationship.Type.RUNTIME_DEPENDENCY_OF,
-    SpdxRelationship.Type.TEST_DEPENDENCY_OF
-)
+private val SPDX_SCOPE_RELATIONSHIPS = SpdxRelationship.Type.entries.filter { it.name.endsWith("_DEPENDENCY_OF") }
 
 private val SPDX_VCS_PREFIXES = mapOf(
     "git+" to VcsType.GIT,
@@ -133,7 +126,7 @@ private fun SpdxPackage.getRemoteArtifact(): RemoteArtifact? =
         SPDX_VCS_PREFIXES.any { (prefix, _) -> downloadLocation.startsWith(prefix) } -> null
         else -> {
             if (downloadLocation.endsWith(".git")) {
-                SpdxDocumentFile.logger.warn {
+                logger.warn {
                     "The download location $downloadLocation of SPDX package '$spdxId' looks like a Git repository " +
                         "URL but it lacks the 'git+' prefix and thus will be treated as an artifact URL."
                 }
@@ -234,7 +227,7 @@ private fun getLinkageForDependency(
 
             relationId == dependency.spdxId && relation.spdxElementId == dependant
         }
-    }.takeUnless { it.isEmpty() }?.single() ?: PackageLinkage.DYNAMIC
+    }.singleOrNull() ?: PackageLinkage.DYNAMIC
 
 /**
  * Return true if the [relation] as defined in [relationships] describes an [SPDX_LINKAGE_RELATIONSHIPS] in the
@@ -266,10 +259,8 @@ class SpdxDocumentFile(
     analysisRoot: File,
     analyzerConfig: AnalyzerConfiguration,
     repoConfig: RepositoryConfiguration
-) : PackageManager(managerName, analysisRoot, analyzerConfig, repoConfig) {
-    internal companion object : Logging
-
-    class Factory : AbstractPackageManagerFactory<SpdxDocumentFile>(MANAGER_NAME) {
+) : PackageManager(managerName, "SpdxDocument", analysisRoot, analyzerConfig, repoConfig) {
+    class Factory : AbstractPackageManagerFactory<SpdxDocumentFile>("SpdxDocumentFile") {
         override val globsForDefinitionFiles = listOf("*.spdx.yml", "*.spdx.yaml", "*.spdx.json")
 
         override fun create(
@@ -297,7 +288,7 @@ class SpdxDocumentFile(
      * Create a [Package] out of this [SpdxPackage].
      */
     private fun SpdxPackage.toPackage(definitionFile: File?, doc: SpdxResolvedDocument): Package {
-        val packageDescription = description.takeUnless { it.isEmpty() } ?: summary
+        val packageDescription = description.ifEmpty { summary }
 
         // If the VCS information cannot be determined from the VCS working tree itself, fall back to try getting it
         // from the download location.
@@ -344,29 +335,40 @@ class SpdxDocumentFile(
     /**
      * Return the dependencies of the package with the given [pkgId] defined in [doc] of the
      * [SpdxRelationship.Type.DEPENDENCY_OF] type. Identified dependencies are mapped to ORT [Package]s and then
-     * added to [packages].
+     * added to [packages]. The [ancestorIds] set contains the IDs of the package that have already been encountered;
+     * it is used to detect circular dependencies.
      */
     private fun getDependencies(
         pkgId: String,
         doc: SpdxResolvedDocument,
-        packages: MutableSet<Package>
-    ): Set<PackageReference> =
-        getDependencies(pkgId, doc, packages, SpdxRelationship.Type.DEPENDENCY_OF) { target ->
+        packages: MutableSet<Package>,
+        ancestorIds: MutableSet<String>
+    ): Set<PackageReference> {
+        logger.debug { "Retrieving dependencies for package '$pkgId'." }
+
+        if (!ancestorIds.add(pkgId)) {
+            logger.warn { "A cycle was detected in the dependencies for packages $ancestorIds." }
+            return emptySet()
+        }
+
+        return getDependencies(pkgId, doc, packages, ancestorIds, SpdxRelationship.Type.DEPENDENCY_OF) { target ->
             val issues = mutableListOf<Issue>()
             getPackageManagerDependency(target, doc) ?: doc.getSpdxPackageForId(target, issues)?.let { dependency ->
                 packages += dependency.toPackage(doc.getDefinitionFile(target), doc)
 
                 PackageReference(
                     id = dependency.toIdentifier(),
-                    dependencies = getDependencies(target, doc, packages),
+                    dependencies = getDependencies(target, doc, packages, ancestorIds),
                     linkage = getLinkageForDependency(dependency, pkgId, doc.relationships),
                     issues = issues
                 )
             }
-        }
+        }.also { ancestorIds.remove(pkgId) }
+    }
 
     internal fun getPackageManagerDependency(pkgId: String, doc: SpdxResolvedDocument): PackageReference? {
-        val spdxPackage = doc.getSpdxPackageForId(pkgId, mutableListOf()) ?: return null
+        val issues = mutableListOf<Issue>()
+        val spdxPackage = doc.getSpdxPackageForId(pkgId, issues) ?: return null
         val definitionFile = doc.getDefinitionFile(pkgId) ?: return null
 
         if (spdxPackage.packageFilename.isBlank()) return null
@@ -381,12 +383,12 @@ class SpdxDocumentFile(
                 if (files.any { it.canonicalPath == packageFile.canonicalPath }) {
                     // TODO: The data from the spdxPackage is currently ignored, check if some fields need to be
                     //       preserved somehow.
-                    return PackageManagerDependencyHandler.createPackageManagerDependency(
+                    return PackageManagerDependency(
                         packageManager = factory.type,
                         definitionFile = VersionControlSystem.getPathInfo(packageFile).path,
                         scope = scope,
                         linkage = PackageLinkage.PROJECT_STATIC // TODO: Set linkage based on SPDX reference type.
-                    )
+                    ).toPackageReference(issues)
                 }
             }
         }
@@ -398,11 +400,13 @@ class SpdxDocumentFile(
      * Return the dependencies of the package with the given [pkgId] defined in [doc] of the given
      * [dependencyOfRelation] type. Optionally, the [SpdxRelationship.Type.DEPENDS_ON] type is handled by
      * [dependsOnCase]. Identified dependencies are mapped to ORT [Package]s and then added to [packages].
+     * Use the given [ancestorIds] set to detect cyclic dependencies.
      */
     private fun getDependencies(
         pkgId: String,
         doc: SpdxResolvedDocument,
         packages: MutableSet<Package>,
+        ancestorIds: MutableSet<String>,
         dependencyOfRelation: SpdxRelationship.Type,
         dependsOnCase: (String) -> PackageReference? = { null }
     ): Set<PackageReference> =
@@ -428,13 +432,7 @@ class SpdxDocumentFile(
                             packages += dependency.toPackage(doc.getDefinitionFile(source), doc)
                             PackageReference(
                                 id = dependency.toIdentifier(),
-                                dependencies = getDependencies(
-                                    source,
-                                    doc,
-                                    packages,
-                                    SpdxRelationship.Type.DEPENDENCY_OF,
-                                    dependsOnCase
-                                ),
+                                dependencies = getDependencies(source, doc, packages, ancestorIds),
                                 issues = issues,
                                 linkage = getLinkageForDependency(dependency, target, doc.relationships)
                             )
@@ -469,7 +467,7 @@ class SpdxDocumentFile(
         relation: SpdxRelationship.Type,
         packages: MutableSet<Package>
     ): Scope? =
-        getDependencies(projectPackageId, spdxDocument, packages, relation).takeUnless {
+        getDependencies(projectPackageId, spdxDocument, packages, mutableSetOf(), relation).takeUnless {
             it.isEmpty()
         }?.let {
             Scope(
@@ -524,7 +522,7 @@ class SpdxDocumentFile(
 
         scopes += Scope(
             name = DEFAULT_SCOPE_NAME,
-            dependencies = getDependencies(projectPackage.spdxId, transitiveDocument, packages)
+            dependencies = getDependencies(projectPackage.spdxId, transitiveDocument, packages, mutableSetOf())
         )
 
         val project = Project(
@@ -538,7 +536,7 @@ class SpdxDocumentFile(
             scopeDependencies = scopes
         )
 
-        return listOf(ProjectAnalyzerResult(project, packages))
+        return listOf(ProjectAnalyzerResult(project, packages, transitiveDocument.getIssuesWithoutSpdxPackage()))
     }
 
     /**

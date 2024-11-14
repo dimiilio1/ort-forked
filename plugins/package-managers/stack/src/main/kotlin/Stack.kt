@@ -19,16 +19,16 @@
 
 package org.ossreviewtoolkit.plugins.packagemanagers.stack
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties
-import com.fasterxml.jackson.module.kotlin.readValue
-
 import java.io.File
 import java.io.IOException
 
-import org.apache.logging.log4j.kotlin.Logging
+import okhttp3.OkHttpClient
+
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.analyzer.AbstractPackageManagerFactory
 import org.ossreviewtoolkit.analyzer.PackageManager
+import org.ossreviewtoolkit.analyzer.PackageManager.Companion.processPackageVcs
 import org.ossreviewtoolkit.analyzer.parseAuthorString
 import org.ossreviewtoolkit.downloader.VersionControlSystem
 import org.ossreviewtoolkit.model.Identifier
@@ -40,9 +40,9 @@ import org.ossreviewtoolkit.model.RemoteArtifact
 import org.ossreviewtoolkit.model.Scope
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
+import org.ossreviewtoolkit.model.collectDependencies
 import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
 import org.ossreviewtoolkit.model.config.RepositoryConfiguration
-import org.ossreviewtoolkit.model.jsonMapper
 import org.ossreviewtoolkit.model.utils.toPurl
 import org.ossreviewtoolkit.utils.common.CommandLineTool
 import org.ossreviewtoolkit.utils.common.ProcessCapture
@@ -56,9 +56,7 @@ import org.semver4j.RangesListFactory
 private const val EXTERNAL_SCOPE_NAME = "external"
 private const val TEST_SCOPE_NAME = "test"
 private const val BENCH_SCOPE_NAME = "bench"
-
-private const val HACKAGE_PACKAGE_TYPE = "hackage"
-private const val PROJECT_PACKAGE_TYPE = "project package"
+private val SCOPE_NAMES = setOf(EXTERNAL_SCOPE_NAME, TEST_SCOPE_NAME, BENCH_SCOPE_NAME)
 
 /**
  * The [Stack](https://haskellstack.org/) package manager for Haskell.
@@ -68,9 +66,7 @@ class Stack(
     analysisRoot: File,
     analyzerConfig: AnalyzerConfiguration,
     repoConfig: RepositoryConfiguration
-) : PackageManager(name, analysisRoot, analyzerConfig, repoConfig), CommandLineTool {
-    private companion object : Logging
-
+) : PackageManager(name, "Stack", analysisRoot, analyzerConfig, repoConfig), CommandLineTool {
     class Factory : AbstractPackageManagerFactory<Stack>("Stack") {
         override val globsForDefinitionFiles = listOf("stack.yaml")
 
@@ -81,27 +77,9 @@ class Stack(
         ) = Stack(type, analysisRoot, analyzerConfig, repoConfig)
     }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    private data class Location(
-        val url: String,
-        val type: String
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    private data class Dependency(
-        val name: String,
-        val version: String,
-        val license: String,
-        val location: Location? = null,
-        val dependencies: List<String> = emptyList()
-    )
-
     override fun command(workingDir: File?) = "stack"
 
     override fun transformVersion(output: String) =
-        // The version string can be something like:
-        // Version 1.7.1 x86_64
-        // Version 2.1.1, Git revision f612ea85316bbc327a64e4ad8d9f0b150dc12d4b (7648 commits) x86_64 hpack-0.31.2
         output.removePrefix("Version ").substringBefore(',').substringBefore(' ')
 
     override fun getVersionRequirement(): RangesList = RangesListFactory.create(">=2.1.1")
@@ -109,6 +87,49 @@ class Stack(
     override fun beforeResolution(definitionFiles: List<File>) = checkVersion()
 
     override fun resolveDependencies(definitionFile: File, labels: Map<String, String>): List<ProjectAnalyzerResult> {
+        val workingDir = definitionFile.parentFile
+
+        val dependenciesForScopeName = SCOPE_NAMES.associateWith { listDependencies(workingDir, it) }
+
+        val packageForName = dependenciesForScopeName.values.flatten()
+            .distinctBy { it.name }
+            .filterNot { it.isProject() } // Do not add the project as a package.
+            .associate { it.name to it.toPackage() }
+
+        val scopes = dependenciesForScopeName.mapTo(mutableSetOf()) { (name, dependencies) ->
+            dependencies.toScope(name, packageForName)
+        }
+
+        val referencedPackages = scopes.collectDependencies()
+        val packages = packageForName.values.filterTo(mutableSetOf()) { it.id in referencedPackages }
+        val project = getProject(definitionFile, scopes)
+
+        return listOf(ProjectAnalyzerResult(project, packages))
+    }
+
+    private fun runStack(workingDir: File, vararg command: String): ProcessCapture {
+        // Delete any left-overs from interrupted stack runs.
+        workingDir.resolve(".stack-work").safeDeleteRecursively()
+
+        return run(workingDir, *command)
+    }
+
+    private fun listDependencies(workingDir: File, scope: String): List<Dependency> {
+        val scopeOptions = listOfNotNull(
+            "--$scope",
+            // Disable the default inclusion of external dependencies if another scope than "external" is specified.
+            "--no-$EXTERNAL_SCOPE_NAME".takeIf { scope != EXTERNAL_SCOPE_NAME }
+        )
+
+        val dependenciesJson = runStack(
+            // Use a hints file for global packages to not require installing the Glasgow Haskell Compiler (GHC).
+            workingDir, "ls", "dependencies", "json", "--global-hints", *scopeOptions.toTypedArray()
+        ).stdout
+
+        return dependenciesJson.parseDependencies()
+    }
+
+    private fun getProject(definitionFile: File, scopes: Set<Scope>): Project {
         val workingDir = definitionFile.parentFile
 
         // Parse project information from the *.cabal file.
@@ -122,97 +143,10 @@ class Stack(
             else -> throw IOException("Multiple *.cabal files found in '$cabalFiles'.")
         }
 
-        val projectPackage = parseCabalFile(cabalFile.readText())
-        val projectId = projectPackage.id.copy(type = managerName)
+        val projectPackage = parseCabalFile(cabalFile.readText(), managerName)
 
-        // Parse package information from the stack.yaml file.
-        fun runStack(vararg command: String): ProcessCapture {
-            // Delete any left-overs from interrupted stack runs.
-            workingDir.resolve(".stack-work").safeDeleteRecursively()
-
-            return run(workingDir, *command)
-        }
-
-        fun listDependencies(scope: String): List<Dependency> {
-            val scopeOptions = listOfNotNull(
-                "--$scope",
-                // Disable the default inclusion of external dependencies if another scope than "external" is specified.
-                "--no-$EXTERNAL_SCOPE_NAME".takeIf { scope != EXTERNAL_SCOPE_NAME }
-            )
-
-            val dependenciesJson = runStack(
-                // Use a hints file for global packages to not require installing the Glasgow Haskell Compiler (GHC).
-                "ls", "dependencies", "json", "--global-hints", *scopeOptions.toTypedArray()
-            ).stdout
-
-            return jsonMapper.readValue(dependenciesJson)
-        }
-
-        val allDependencies = mutableSetOf<Dependency>()
-
-        val externalDependencyList = listDependencies(EXTERNAL_SCOPE_NAME).also { allDependencies += it }
-        val testDependencyList = listDependencies(TEST_SCOPE_NAME).also { allDependencies += it }
-        val benchDependencyList = listDependencies(BENCH_SCOPE_NAME).also { allDependencies += it }
-
-        val dependencyPackageMap = mutableMapOf<Dependency, Package>()
-
-        allDependencies.forEach { dependency ->
-            val id = Identifier(
-                type = "Hackage",
-                namespace = "",
-                name = dependency.name,
-                version = dependency.version
-            )
-
-            val fallback = Package.EMPTY.copy(
-                id = id,
-                purl = id.toPurl(),
-                declaredLicenses = setOf(dependency.license)
-            )
-
-            val pkg = when (dependency.location?.type) {
-                null, HACKAGE_PACKAGE_TYPE -> {
-                    // Enrich the package with additional metadata from Hackage.
-                    downloadCabalFile(id)?.let {
-                        parseCabalFile(it)
-                    } ?: fallback
-                }
-
-                PROJECT_PACKAGE_TYPE -> {
-                    // Do not add the project as a package.
-                    null
-                }
-
-                else -> fallback
-            }
-
-            // Do not add the Glasgow Haskell Compiler (GHC) as a package.
-            if (pkg != null && pkg.id.name != "ghc") dependencyPackageMap[dependency] = pkg
-        }
-
-        fun List<String>.toPackageReferences(): Set<PackageReference> =
-            mapNotNullTo(mutableSetOf()) { name ->
-                // TODO: Stack identifies dependencies only by name. Find out how dependencies with the same name but in
-                //       different namespaces should be handled.
-                dependencyPackageMap.entries.find { (dependency, _) -> dependency.name == name }?.let { entry ->
-                    val pkg = entry.value
-                    val dependencies = entry.key.dependencies.toPackageReferences()
-
-                    pkg.toReference().copy(dependencies = dependencies)
-                }
-            }
-
-        fun List<Dependency>.getProjectDependencies(): List<String> =
-            single { it.location?.type == PROJECT_PACKAGE_TYPE }.dependencies
-
-        val scopes = setOf(
-            Scope(EXTERNAL_SCOPE_NAME, externalDependencyList.getProjectDependencies().toPackageReferences()),
-            Scope(TEST_SCOPE_NAME, testDependencyList.getProjectDependencies().toPackageReferences()),
-            Scope(BENCH_SCOPE_NAME, benchDependencyList.getProjectDependencies().toPackageReferences())
-        )
-
-        val project = Project(
-            id = projectId,
+        return Project(
+            id = projectPackage.id,
             definitionFilePath = VersionControlSystem.getPathInfo(definitionFile).path,
             authors = projectPackage.authors,
             declaredLicenses = projectPackage.declaredLicenses,
@@ -221,141 +155,180 @@ class Stack(
             homepageUrl = projectPackage.homepageUrl,
             scopeDependencies = scopes
         )
-
-        return listOf(ProjectAnalyzerResult(project, dependencyPackageMap.values.toSet()))
     }
 
-    private fun getPackageUrl(name: String, version: String) = "https://hackage.haskell.org/package/$name-$version"
-
-    private fun downloadCabalFile(pkgId: Identifier): String? {
-        val url = "${getPackageUrl(pkgId.name, pkgId.version)}/src/${pkgId.name}.cabal"
-
-        return okHttpClient.downloadText(url).onFailure {
-            logger.warn { "Unable to retrieve Hackage metadata for package '${pkgId.toCoordinates()}'." }
-        }.getOrNull()
-    }
-
-    private fun parseKeyValue(i: ListIterator<String>, keyPrefix: String = ""): Map<String, String> {
-        fun getIndentation(line: String) = line.takeWhile { it.isWhitespace() }.length
-
-        var indentation: Int? = null
-        val map = mutableMapOf<String, String>()
-
-        while (i.hasNext()) {
-            val line = i.next()
-
-            // Skip blank lines and comments.
-            if (line.isBlank() || line.trimStart().startsWith("--")) continue
-
-            if (indentation == null) {
-                indentation = getIndentation(line)
-            } else if (indentation != getIndentation(line)) {
-                // Stop if the indentation level changes.
-                i.previous()
-                break
-            }
-
-            val keyValue = line.split(':', limit = 2).map { it.trim() }
-            when (keyValue.size) {
-                1 -> {
-                    // Handle lines without a colon.
-                    val nestedMap = parseKeyValue(i, keyPrefix + keyValue[0].replace(" ", "-") + "-")
-                    map += nestedMap
-                }
-                2 -> {
-                    // Handle lines with a colon.
-                    val key = (keyPrefix + keyValue[0]).lowercase()
-
-                    val valueLines = mutableListOf<String>()
-
-                    var isBlock = false
-                    if (keyValue[1].isNotEmpty()) {
-                        if (keyValue[1] == "{") {
-                            // Support multi-line values that use curly braces instead of indentation.
-                            isBlock = true
-                        } else {
-                            valueLines += keyValue[1]
-                        }
-                    }
-
-                    // Parse a multi-line value.
-                    while (i.hasNext()) {
-                        var indentedLine = i.next()
-
-                        if (isBlock) {
-                            if (indentedLine == "}") {
-                                // Stop if a block closes.
-                                break
-                            }
-                        } else {
-                            if (indentedLine.isNotBlank() && getIndentation(indentedLine) <= indentation) {
-                                // Stop if the indentation level does not increase.
-                                i.previous()
-                                break
-                            }
-                        }
-
-                        indentedLine = indentedLine.trim()
-
-                        // Within a multi-line value, lines with only a dot mark empty lines.
-                        if (indentedLine == ".") {
-                            if (valueLines.isNotEmpty()) valueLines += ""
-                        } else {
-                            valueLines += indentedLine
-                        }
-                    }
-
-                    val trimmedValueLines = valueLines.dropWhile { it.isBlank() }.dropLastWhile { it.isBlank() }
-                    map[key] = trimmedValueLines.joinToString("\n")
-                }
-            }
-        }
-
-        return map
-    }
-
-    // TODO: Consider replacing this with a Haskell helper script that calls "readGenericPackageDescription" and dumps
-    //       it as JSON to the console.
-    private fun parseCabalFile(cabal: String): Package {
-        // For an example file see
-        // https://hackage.haskell.org/package/transformers-compat-0.5.1.4/src/transformers-compat.cabal
-        val map = parseKeyValue(cabal.lines().listIterator())
-
+    private fun Dependency.toPackage(): Package {
         val id = Identifier(
             type = "Hackage",
-            namespace = map["category"].orEmpty(),
-            name = map["name"].orEmpty(),
-            version = map["version"].orEmpty()
+            namespace = "",
+            name = name,
+            version = version
         )
 
-        val artifact = RemoteArtifact.EMPTY.copy(
-            url = "${getPackageUrl(id.name, id.version)}/${id.name}-${id.version}.tar.gz"
-        )
+        if (location == null || location.type == Location.TYPE_HACKAGE) {
+            okHttpClient.downloadCabalFile(id)?.let { return parseCabalFile(it, "Hackage") }
+        }
 
-        val vcsType = (map["source-repository-this-type"] ?: map["source-repository-head-type"]).orEmpty()
-        val vcsUrl = (map["source-repository-this-location"] ?: map["source-repository-head-location"]).orEmpty()
-        val vcs = VcsInfo(
-            type = VcsType.forName(vcsType),
-            revision = map["source-repository-this-tag"].orEmpty(),
-            url = vcsUrl
-        )
-
-        val homepageUrl = map["homepage"].orEmpty()
-
-        return Package(
+        return Package.EMPTY.copy(
             id = id,
-            authors = map["author"].orEmpty()
-                .split(',')
-                .map(String::trim)
-                .filter(String::isNotEmpty)
-                .mapNotNullTo(mutableSetOf(), ::parseAuthorString),
-            declaredLicenses = map["license"]?.let { setOf(it) } ?: emptySet(),
-            description = map["description"].orEmpty(),
-            homepageUrl = homepageUrl,
-            binaryArtifact = RemoteArtifact.EMPTY,
-            sourceArtifact = artifact,
-            vcs = vcs,
-            vcsProcessed = processPackageVcs(vcs, homepageUrl)
+            purl = id.toPurl(),
+            declaredLicenses = setOf(license)
         )
     }
+}
+
+private fun Dependency.isProject(): Boolean = location?.type == Location.TYPE_PROJECT
+
+private fun Collection<Dependency>.toScope(scopeName: String, packageForName: Map<String, Package>): Scope {
+    // TODO: Stack identifies dependencies only by name. Find out how dependencies with the same name but in
+    //       different namespaces should be handled.
+    val dependencyForName = associateBy { it.name }
+
+    return Scope(
+        name = scopeName,
+        dependencies = single { it.isProject() }.dependencies.mapTo(mutableSetOf()) { name ->
+            dependencyForName.getValue(name).toPackageReference(dependencyForName, packageForName)
+        }
+    )
+}
+
+private fun Dependency.toPackageReference(
+    dependencyForName: Map<String, Dependency>,
+    packageForName: Map<String, Package>
+): PackageReference =
+    PackageReference(
+        id = packageForName.getValue(name).id,
+        dependencies = dependencies.mapTo(mutableSetOf()) { name ->
+            dependencyForName.getValue(name).toPackageReference(dependencyForName, packageForName)
+        }
+    )
+
+private fun parseKeyValue(i: ListIterator<String>, keyPrefix: String = ""): Map<String, String> {
+    fun getIndentation(line: String) = line.takeWhile { it.isWhitespace() }.length
+
+    var indentation: Int? = null
+    val map = mutableMapOf<String, String>()
+
+    while (i.hasNext()) {
+        val line = i.next()
+
+        // Skip blank lines and comments.
+        if (line.isBlank() || line.trimStart().startsWith("--")) continue
+
+        if (indentation == null) {
+            indentation = getIndentation(line)
+        } else if (indentation != getIndentation(line)) {
+            // Stop if the indentation level changes.
+            i.previous()
+            break
+        }
+
+        val keyValue = line.split(':', limit = 2).map { it.trim() }
+        when (keyValue.size) {
+            1 -> {
+                // Handle lines without a colon.
+                val nestedMap = parseKeyValue(i, keyPrefix + keyValue[0].replace(" ", "-") + "-")
+                map += nestedMap
+            }
+
+            2 -> {
+                // Handle lines with a colon.
+                val key = (keyPrefix + keyValue[0]).lowercase()
+
+                val valueLines = mutableListOf<String>()
+
+                var isBlock = false
+                if (keyValue[1].isNotEmpty()) {
+                    if (keyValue[1] == "{") {
+                        // Support multi-line values that use curly braces instead of indentation.
+                        isBlock = true
+                    } else {
+                        valueLines += keyValue[1]
+                    }
+                }
+
+                // Parse a multi-line value.
+                while (i.hasNext()) {
+                    var indentedLine = i.next()
+
+                    if (isBlock) {
+                        if (indentedLine == "}") {
+                            // Stop if a block closes.
+                            break
+                        }
+                    } else {
+                        if (indentedLine.isNotBlank() && getIndentation(indentedLine) <= indentation) {
+                            // Stop if the indentation level does not increase.
+                            i.previous()
+                            break
+                        }
+                    }
+
+                    indentedLine = indentedLine.trim()
+
+                    // Within a multi-line value, lines with only a dot mark empty lines.
+                    if (indentedLine == ".") {
+                        if (valueLines.isNotEmpty()) valueLines += ""
+                    } else {
+                        valueLines += indentedLine
+                    }
+                }
+
+                val trimmedValueLines = valueLines.dropWhile { it.isBlank() }.dropLastWhile { it.isBlank() }
+                map[key] = trimmedValueLines.joinToString("\n")
+            }
+        }
+    }
+
+    return map
+}
+
+// TODO: Consider replacing this with a Haskell helper script that calls "readGenericPackageDescription" and dumps
+//       it as JSON to the console.
+private fun parseCabalFile(cabal: String, identifierType: String): Package {
+    // For an example file see
+    // https://hackage.haskell.org/package/transformers-compat-0.5.1.4/src/transformers-compat.cabal
+    val map = parseKeyValue(cabal.lines().listIterator())
+
+    val id = Identifier(
+        type = identifierType,
+        namespace = map["category"].orEmpty(),
+        name = map["name"].orEmpty(),
+        version = map["version"].orEmpty()
+    )
+
+    val artifact = RemoteArtifact.EMPTY.copy(
+        url = "${getPackageUrl(id.name, id.version)}/${id.name}-${id.version}.tar.gz"
+    )
+
+    val vcs = VcsInfo(
+        type = VcsType.forName((map["source-repository-this-type"] ?: map["source-repository-head-type"]).orEmpty()),
+        url = (map["source-repository-this-location"] ?: map["source-repository-head-location"]).orEmpty(),
+        path = (map["source-repository-this-subdir"] ?: map["source-repository-head-subdir"]).orEmpty(),
+        revision = map["source-repository-this-tag"].orEmpty()
+    )
+
+    val homepageUrl = map["homepage"].orEmpty()
+
+    return Package(
+        id = id,
+        authors = parseAuthorString(map["author"]).mapNotNullTo(mutableSetOf()) { it.name },
+        declaredLicenses = setOfNotNull(map["license"]),
+        description = map["description"].orEmpty(),
+        homepageUrl = homepageUrl,
+        binaryArtifact = RemoteArtifact.EMPTY,
+        sourceArtifact = artifact,
+        vcs = vcs,
+        vcsProcessed = processPackageVcs(vcs, homepageUrl)
+    )
+}
+
+private fun getPackageUrl(name: String, version: String) = "https://hackage.haskell.org/package/$name-$version"
+
+private fun OkHttpClient.downloadCabalFile(pkgId: Identifier): String? {
+    val url = "${getPackageUrl(pkgId.name, pkgId.version)}/src/${pkgId.name}.cabal"
+
+    return okHttpClient.downloadText(url).onFailure {
+        logger.warn { "Unable to retrieve Hackage metadata for package '${pkgId.toCoordinates()}'." }
+    }.getOrNull()
 }

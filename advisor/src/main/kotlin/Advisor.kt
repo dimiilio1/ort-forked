@@ -25,16 +25,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
-import org.ossreviewtoolkit.model.AdvisorRecord
 import org.ossreviewtoolkit.model.AdvisorResult
 import org.ossreviewtoolkit.model.AdvisorRun
 import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.OrtResult
 import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.config.AdvisorConfiguration
-import org.ossreviewtoolkit.utils.common.Plugin
+import org.ossreviewtoolkit.plugins.api.PluginConfig
 import org.ossreviewtoolkit.utils.ort.Environment
 
 /**
@@ -45,13 +44,6 @@ class Advisor(
     private val providerFactories: List<AdviceProviderFactory>,
     private val config: AdvisorConfiguration
 ) {
-    companion object : Logging {
-        /**
-         * All [advice provider factories][AdviceProviderFactory] available in the classpath, associated by their names.
-         */
-        val ALL by lazy { Plugin.getAll<AdviceProviderFactory>() }
-    }
-
     /**
      * Query the [advice providers][providerFactories] and add the result to the provided [ortResult]. Excluded packages
      * can optionally be [skipped][skipExcluded].
@@ -83,7 +75,10 @@ class Advisor(
             if (packages.isEmpty()) {
                 logger.info { "There are no packages to give advice for." }
             } else {
-                val providers = providerFactories.map { it.create(config) }
+                val providers = providerFactories.map {
+                    val providerConfig = config.config?.get(it.descriptor.id)
+                    it.create(PluginConfig(providerConfig?.options.orEmpty(), providerConfig?.secrets.orEmpty()))
+                }
 
                 providers.map { provider ->
                     async {
@@ -91,7 +86,7 @@ class Advisor(
 
                         logger.info {
                             "Found ${providerResults.values.flatMap { it.vulnerabilities }.distinct().size} distinct " +
-                                "vulnerabilities via ${provider.providerName}. "
+                                "vulnerabilities via ${provider.descriptor.displayName}. "
                         }
 
                         providerResults.keys.takeIf { it.isNotEmpty() }?.let { pkgs ->
@@ -111,10 +106,8 @@ class Advisor(
                 }
             }
 
-            val advisorRecord = AdvisorRecord(results)
-
             val endTime = Instant.now()
 
-            AdvisorRun(startTime, endTime, Environment(), config, advisorRecord)
+            AdvisorRun(startTime, endTime, Environment(), config, results)
         }
 }

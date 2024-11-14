@@ -24,35 +24,27 @@ package org.ossreviewtoolkit.helper.utils
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator
 
-import com.github.ajalt.clikt.core.CliktCommand
-
 import java.io.File
 import java.nio.file.Paths
-import java.sql.ResultSet
 
 import kotlin.io.path.createTempDirectory
 
-import org.apache.logging.log4j.kotlin.cachedLoggerOf
-
-import org.jetbrains.exposed.sql.transactions.TransactionManager
-
-import org.ossreviewtoolkit.analyzer.PackageManager
+import org.ossreviewtoolkit.analyzer.PackageManagerFactory
 import org.ossreviewtoolkit.downloader.Downloader
 import org.ossreviewtoolkit.model.ArtifactProvenance
 import org.ossreviewtoolkit.model.Identifier
-import org.ossreviewtoolkit.model.Issue
+import org.ossreviewtoolkit.model.KnownProvenance
 import org.ossreviewtoolkit.model.OrtResult
-import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.PackageCuration
 import org.ossreviewtoolkit.model.Project
 import org.ossreviewtoolkit.model.Provenance
-import org.ossreviewtoolkit.model.RemoteArtifact
 import org.ossreviewtoolkit.model.Repository
+import org.ossreviewtoolkit.model.RepositoryProvenance
 import org.ossreviewtoolkit.model.RuleViolation
 import org.ossreviewtoolkit.model.ScanResult
 import org.ossreviewtoolkit.model.Severity
+import org.ossreviewtoolkit.model.SourceCodeOrigin
 import org.ossreviewtoolkit.model.TextLocation
-import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.config.CopyrightGarbage
 import org.ossreviewtoolkit.model.config.Curations
 import org.ossreviewtoolkit.model.config.DownloaderConfiguration
@@ -68,26 +60,21 @@ import org.ossreviewtoolkit.model.config.ScopeExclude
 import org.ossreviewtoolkit.model.config.VulnerabilityResolution
 import org.ossreviewtoolkit.model.readValue
 import org.ossreviewtoolkit.model.utils.FindingCurationMatcher
-import org.ossreviewtoolkit.model.utils.PackageConfigurationProvider
 import org.ossreviewtoolkit.model.utils.createLicenseInfoResolver
+import org.ossreviewtoolkit.model.utils.filterByVcsPath
 import org.ossreviewtoolkit.model.writeValue
 import org.ossreviewtoolkit.model.yamlMapper
+import org.ossreviewtoolkit.plugins.packageconfigurationproviders.api.PackageConfigurationProvider
 import org.ossreviewtoolkit.utils.common.safeMkdirs
 import org.ossreviewtoolkit.utils.ort.CopyrightStatementsProcessor
 import org.ossreviewtoolkit.utils.spdx.SpdxExpression
 import org.ossreviewtoolkit.utils.spdx.SpdxSingleLicenseExpression
 
 /**
- * An extension property for adding a logger property to any [CliktCommand].
- */
-val CliktCommand.logger
-    inline get() = cachedLoggerOf(javaClass)
-
-/**
  * Return an approximated minimal sublist of [this] so that the result still matches the exact same entries of the given
  * [projectScopes].
  */
-internal fun List<ScopeExclude>.minimize(projectScopes: List<String>): List<ScopeExclude> {
+internal fun List<ScopeExclude>.minimize(projectScopes: Set<String>): List<ScopeExclude> {
     val scopeExcludes = associateWith { scopeExclude ->
         projectScopes.filter { scopeExclude.matches(it) }.toSet()
     }
@@ -96,21 +83,16 @@ internal fun List<ScopeExclude>.minimize(projectScopes: List<String>): List<Scop
 }
 
 /**
- * Fetches the sources from either the VCS or source artifact for the package denoted by
- * the given [id] depending on whether a scan result is present with matching [Provenance].
+ * Download the sources corresponding to the given [Identifier][id] and [source code origin][sourceCodeOrigin].
  */
-internal fun OrtResult.fetchScannedSources(id: Identifier): File {
+internal fun OrtResult.downloadSources(id: Identifier, sourceCodeOrigin: SourceCodeOrigin): File {
+    val config = DownloaderConfiguration(sourceCodeOrigins = listOf(sourceCodeOrigin))
     val tempDir = createTempDirectory(Paths.get("."), ORTH_NAME).toFile()
 
-    val pkg = getPackageOrProject(id)!!.metadata.let {
-        if (getProvenance(id) is ArtifactProvenance) {
-            it.copy(vcs = VcsInfo.EMPTY, vcsProcessed = VcsInfo.EMPTY)
-        } else {
-            it.copy(sourceArtifact = RemoteArtifact.EMPTY)
-        }
-    }
+    @Suppress("UnsafeCallOnNullableType")
+    val pkg = getPackageOrProject(id)!!.metadata
 
-    Downloader(DownloaderConfiguration()).download(pkg, tempDir)
+    Downloader(config).download(pkg, tempDir)
 
     return tempDir
 }
@@ -123,13 +105,11 @@ internal fun OrtResult.fetchScannedSources(id: Identifier): File {
 internal fun OrtResult.processAllCopyrightStatements(
     omitExcluded: Boolean = true,
     copyrightGarbage: Set<String> = emptySet(),
-    addAuthorsToCopyrights: Boolean = false,
-    packageConfigurationProvider: PackageConfigurationProvider = PackageConfigurationProvider.EMPTY
+    addAuthorsToCopyrights: Boolean = false
 ): List<ProcessedCopyrightStatement> {
     val result = mutableListOf<ProcessedCopyrightStatement>()
 
     val licenseInfoResolver = createLicenseInfoResolver(
-        packageConfigurationProvider = packageConfigurationProvider,
         copyrightGarbage = CopyrightGarbage(copyrightGarbage.toSortedSet()),
         addAuthorsToCopyrights = addAuthorsToCopyrights
     )
@@ -189,7 +169,13 @@ internal fun OrtResult.getLicenseFindingsById(
             packageConfigurationProvider.getPackageConfigurations(id, provenance).flatMap { it.licenseFindingCurations }
         }
 
-    getScanResultsForId(id).forEach { scanResult ->
+    getScanResultsForId(id).filter { it.provenance is KnownProvenance }.map {
+        // If a VCS path curation has been applied after the scanning stage, it is possible to apply that
+        // curation without re-scanning in case the new VCS path is a subdirectory of the scanned VCS path.
+        // So, filter by VCS path to enable the user to see the effect on the detected license with a shorter
+        // turn around time / without re-scanning.
+        it.filterByVcsPath(getPackage(id)?.metadata?.vcsProcessed?.path.orEmpty())
+    }.forEach { scanResult ->
         val findingsForProvenance = result.getOrPut(scanResult.provenance) { mutableMapOf() }
 
         scanResult.summary.licenseFindings.let { findings ->
@@ -223,6 +209,7 @@ internal fun OrtResult.getViolatedRulesByLicense(
     id: Identifier,
     severity: Collection<Severity> = Severity.entries
 ): Map<SpdxSingleLicenseExpression, List<String>> =
+    @Suppress("UnsafeCallOnNullableType")
     getRuleViolations()
         .filter { it.pkg == id && it.severity in severity && it.license != null }
         .groupBy { it.license!! }
@@ -231,32 +218,25 @@ internal fun OrtResult.getViolatedRulesByLicense(
 /**
  * Return the [Provenance] of the first scan result matching the given [id] or null if there is no match.
  */
-internal fun OrtResult.getProvenance(id: Identifier): Provenance? = getScanResultsForId(id).firstOrNull()?.provenance
+internal fun OrtResult.getScannedProvenance(id: Identifier): KnownProvenance? =
+    getScanResultsForId(id).firstNotNullOfOrNull { it.provenance as? KnownProvenance }
 
 /**
- * Return all issues from scan results. Issues for excludes [Project]s or [Package]s are not returned if and only if
- * the given [omitExcluded] is true.
+ * Return the [SourceCodeOrigin] for this provenance.
  */
-internal fun OrtResult.getScanIssues(omitExcluded: Boolean = false): List<Issue> {
-    val result = mutableListOf<Issue>()
-
-    getScanResults().forEach { (id, results) ->
-        if (!omitExcluded || !isExcluded(id)) {
-            results.forEach { scanResult ->
-                result += scanResult.summary.issues
-            }
-        }
+internal fun KnownProvenance?.getSourceCodeOrigin(): SourceCodeOrigin? =
+    when (this) {
+        is ArtifactProvenance -> SourceCodeOrigin.ARTIFACT
+        is RepositoryProvenance -> SourceCodeOrigin.VCS
+        else -> null
     }
-
-    return result
-}
 
 /**
  * Return all path excludes from this [OrtResult] represented as [RepositoryPathExcludes].
  */
 internal fun OrtResult.getRepositoryPathExcludes(): RepositoryPathExcludes {
     fun isDefinitionsFile(pathExclude: PathExclude) =
-        PackageManager.ENABLED_BY_DEFAULT.any {
+        PackageManagerFactory.ENABLED_BY_DEFAULT.any {
             it.matchersForDefinitionFiles.any { matcher ->
                 pathExclude.pattern.endsWith(matcher.toString())
             }
@@ -290,32 +270,6 @@ internal fun String.wrapAt(column: Int): String =
             appendLine(line)
         }
     }.trimEnd()
-
-/**
- * Execute the raw SQL statement and map it using [transform].
- */
-internal fun <T : Any> String.execAndMap(transform: (ResultSet) -> T): List<T> {
-    val result = mutableListOf<T>()
-    TransactionManager.current().exec(this) { resultSet ->
-        while (resultSet.next()) {
-            result += transform(resultSet)
-        }
-    }
-
-    return result
-}
-
-/**
- * Return all unresolved rule violations.
- */
-internal fun OrtResult.getUnresolvedRuleViolations(): List<RuleViolation> {
-    val resolutions = getResolutions().ruleViolations
-    val violations = evaluator?.violations.orEmpty()
-
-    return violations.filter { violation ->
-        !resolutions.any { it.matches(violation) }
-    }
-}
 
 /**
  * Return a copy of this [OrtResult] with the [Repository.config] with the content of the given

@@ -1,5 +1,4 @@
 # Ignore Docker-related files to avoid the cache being invalidated if the files are changed during development.
-.batect/
 .dockerignore
 Dockerfile*
 scripts/docker_*.sh
@@ -14,7 +13,6 @@ integrations/jenkins/Jenkinsfile
 .codecov.yml
 .commitlintrc.yml
 .editorconfig
-.jitpack.yml
 .mailmap
 .markdownlint-cli2.yaml
 .markdownlint.yaml

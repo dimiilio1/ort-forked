@@ -23,16 +23,20 @@ plugins {
 }
 
 dependencies {
-    api(project(":plugins:commands:command-api"))
+    api(projects.plugins.commands.commandApi)
 
-    implementation(project(":downloader"))
-    implementation(project(":model"))
-    implementation(project(":scanner"))
-    implementation(project(":utils:common-utils"))
-    implementation(project(":utils:ort-utils"))
-    implementation(project(":utils:spdx-utils"))
+    implementation(projects.downloader)
+    implementation(projects.model)
+    implementation(projects.scanner)
+    implementation(projects.utils.commonUtils)
+    implementation(projects.utils.ortUtils)
+    implementation(projects.utils.spdxUtils)
 
     implementation(libs.clikt)
-    implementation(libs.log4jApiKotlin)
-    implementation(libs.sw360Client)
+    implementation(libs.sw360Client) {
+        constraints {
+            implementation("commons-io:commons-io:2.17.0")
+                .because("commons-io 2.11.0 is vulnerable by CVE-2024-47554")
+        }
+    }
 }

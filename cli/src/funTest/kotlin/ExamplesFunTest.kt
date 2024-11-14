@@ -31,6 +31,7 @@ import io.kotest.matchers.collections.beEmpty
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldHaveSize
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNot
@@ -56,15 +57,15 @@ import org.ossreviewtoolkit.model.config.SendMailConfiguration
 import org.ossreviewtoolkit.model.licenses.LicenseClassifications
 import org.ossreviewtoolkit.model.readValue
 import org.ossreviewtoolkit.notifier.Notifier
+import org.ossreviewtoolkit.plugins.api.PluginConfig
 import org.ossreviewtoolkit.reporter.HowToFixTextProvider
-import org.ossreviewtoolkit.reporter.Reporter
+import org.ossreviewtoolkit.reporter.ReporterFactory
 import org.ossreviewtoolkit.reporter.ReporterInput
 import org.ossreviewtoolkit.utils.ort.ORT_PACKAGE_CURATIONS_FILENAME
 import org.ossreviewtoolkit.utils.ort.ORT_REPO_CONFIG_FILENAME
 import org.ossreviewtoolkit.utils.ort.ORT_RESOLUTIONS_FILENAME
 import org.ossreviewtoolkit.utils.spdx.toSpdx
 import org.ossreviewtoolkit.utils.test.getAssetFile
-import org.ossreviewtoolkit.utils.test.shouldNotBeNull
 
 class ExamplesFunTest : StringSpec({
     val examplesDir = File("../examples")
@@ -124,16 +125,14 @@ class ExamplesFunTest : StringSpec({
     }
 
     "The Asciidoctor PDF theme file is a valid" {
-        val reporter = Reporter.ALL.getValue("PdfTemplate")
+        val reporter = ReporterFactory.ALL.getValue("PdfTemplate")
         val outputDir = tempdir()
 
         takeExampleFile("asciidoctor-pdf-theme.yml")
 
-        val report = reporter.generateReport(
-            ReporterInput(OrtResult.EMPTY),
-            outputDir,
-            mapOf("pdf.theme.file" to examplesDir.resolve("asciidoctor-pdf-theme.yml").path)
-        )
+        val report = reporter.create(
+            PluginConfig(options = mapOf("pdf.theme.file" to examplesDir.resolve("asciidoctor-pdf-theme.yml").path))
+        ).generateReport(ReporterInput(OrtResult.EMPTY), outputDir)
 
         report shouldHaveSize 1
     }

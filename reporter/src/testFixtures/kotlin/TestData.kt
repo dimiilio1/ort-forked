@@ -24,7 +24,6 @@ import java.time.Instant
 
 import org.ossreviewtoolkit.model.AdvisorCapability
 import org.ossreviewtoolkit.model.AdvisorDetails
-import org.ossreviewtoolkit.model.AdvisorRecord
 import org.ossreviewtoolkit.model.AdvisorResult
 import org.ossreviewtoolkit.model.AdvisorRun
 import org.ossreviewtoolkit.model.AdvisorSummary
@@ -49,8 +48,6 @@ import org.ossreviewtoolkit.model.Scope
 import org.ossreviewtoolkit.model.TextLocation
 import org.ossreviewtoolkit.model.UnknownProvenance
 import org.ossreviewtoolkit.model.VcsInfo
-import org.ossreviewtoolkit.model.Vulnerability
-import org.ossreviewtoolkit.model.VulnerabilityReference
 import org.ossreviewtoolkit.model.config.AdvisorConfiguration
 import org.ossreviewtoolkit.model.config.Excludes
 import org.ossreviewtoolkit.model.config.PathExclude
@@ -58,6 +55,8 @@ import org.ossreviewtoolkit.model.config.PathExcludeReason
 import org.ossreviewtoolkit.model.config.RepositoryConfiguration
 import org.ossreviewtoolkit.model.config.ScopeExclude
 import org.ossreviewtoolkit.model.config.ScopeExcludeReason
+import org.ossreviewtoolkit.model.vulnerabilities.Vulnerability
+import org.ossreviewtoolkit.model.vulnerabilities.VulnerabilityReference
 import org.ossreviewtoolkit.utils.common.enumSetOf
 import org.ossreviewtoolkit.utils.ort.Environment
 import org.ossreviewtoolkit.utils.spdx.toSpdx
@@ -273,7 +272,7 @@ val ORT_RESULT = OrtResult(
                 provenance = ArtifactProvenance(
                     sourceArtifact = RemoteArtifact(
                         url = "https://example.com/license-file-1.0.tgz",
-                        hash = Hash(value = "", algorithm = HashAlgorithm.SHA1)
+                        hash = Hash.NONE
                     )
                 ),
                 scanner = ScannerDetails(name = "scanner", version = "1.0", configuration = ""),
@@ -306,7 +305,7 @@ val ORT_RESULT = OrtResult(
                 provenance = ArtifactProvenance(
                     sourceArtifact = RemoteArtifact(
                         url = "https://example.com/license-file-and-additional-licenses-1.0.tgz",
-                        hash = Hash(value = "", algorithm = HashAlgorithm.SHA1)
+                        hash = Hash.NONE
                     )
                 ),
                 scanner = ScannerDetails(name = "scanner", version = "1.0", configuration = ""),
@@ -347,7 +346,7 @@ val ORT_RESULT = OrtResult(
                 provenance = ArtifactProvenance(
                     sourceArtifact = RemoteArtifact(
                         url = "https://example.com/concluded-license-1.0.tgz",
-                        hash = Hash(value = "", algorithm = HashAlgorithm.SHA1)
+                        hash = Hash.NONE
                     )
                 ),
                 scanner = ScannerDetails(name = "scanner", version = "1.0", configuration = ""),
@@ -380,7 +379,7 @@ val ORT_RESULT = OrtResult(
                 provenance = ArtifactProvenance(
                     sourceArtifact = RemoteArtifact(
                         url = "https://example.com/declared-license-1.0.tgz",
-                        hash = Hash(value = "", algorithm = HashAlgorithm.SHA1)
+                        hash = Hash.NONE
                     )
                 ),
                 scanner = ScannerDetails(name = "scanner", version = "1.0", configuration = ""),
@@ -405,8 +404,10 @@ val ORT_RESULT = OrtResult(
 
 val VULNERABILITY = Vulnerability(
     id = "CVE-2021-1234",
+    summary = "A vulnerability summary",
+    description = "A vulnerability description",
     references = listOf(
-        VulnerabilityReference(URI("https://cves.example.org/cve1"), "Cvss2", "MEDIUM")
+        VulnerabilityReference(URI("https://cves.example.org/cve1"), "CVSSv2", "MEDIUM", 6.0f, null)
     )
 )
 
@@ -415,14 +416,12 @@ val ADVISOR_WITH_VULNERABILITIES = AdvisorRun(
     endTime = Instant.now(),
     environment = Environment(),
     config = AdvisorConfiguration(),
-    results = AdvisorRecord(
-        mapOf(
-            Identifier("NPM:@ort:declared-license:1.0") to listOf(
-                AdvisorResult(
-                    advisor = AdvisorDetails("VulnerableCode", enumSetOf(AdvisorCapability.VULNERABILITIES)),
-                    summary = AdvisorSummary(Instant.now(), Instant.now()),
-                    vulnerabilities = listOf(VULNERABILITY)
-                )
+    results = mapOf(
+        Identifier("NPM:@ort:declared-license:1.0") to listOf(
+            AdvisorResult(
+                advisor = AdvisorDetails("VulnerableCode", enumSetOf(AdvisorCapability.VULNERABILITIES)),
+                summary = AdvisorSummary(Instant.now(), Instant.now()),
+                vulnerabilities = listOf(VULNERABILITY)
             )
         )
     )

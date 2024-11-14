@@ -22,16 +22,24 @@ package org.ossreviewtoolkit.model
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonInclude
 
-import org.apache.logging.log4j.kotlin.Logging
+import java.lang.invoke.MethodHandles
+
+import org.apache.logging.log4j.kotlin.loggerOf
 
 import org.ossreviewtoolkit.model.ResolvedPackageCurations.Companion.REPOSITORY_CONFIGURATION_PROVIDER_ID
 import org.ossreviewtoolkit.model.config.Excludes
+import org.ossreviewtoolkit.model.config.IssueResolution
 import org.ossreviewtoolkit.model.config.LicenseFindingCuration
+import org.ossreviewtoolkit.model.config.PackageConfiguration
 import org.ossreviewtoolkit.model.config.RepositoryConfiguration
 import org.ossreviewtoolkit.model.config.Resolutions
+import org.ossreviewtoolkit.model.config.RuleViolationResolution
+import org.ossreviewtoolkit.model.config.VulnerabilityResolution
 import org.ossreviewtoolkit.model.config.orEmpty
+import org.ossreviewtoolkit.model.utils.ResolutionProvider
+import org.ossreviewtoolkit.model.vulnerabilities.Vulnerability
 import org.ossreviewtoolkit.utils.common.zipWithCollections
-import org.ossreviewtoolkit.utils.spdx.model.SpdxLicenseChoice
+import org.ossreviewtoolkit.utils.spdx.SpdxLicenseChoice
 
 /**
  * The common output format for the analyzer and scanner. It contains information about the scanned repository, and the
@@ -80,8 +88,8 @@ data class OrtResult(
      */
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
     val labels: Map<String, String> = emptyMap()
-) {
-    companion object : Logging {
+) : ResolutionProvider {
+    companion object {
         /**
          * A constant for an [OrtResult] with an empty repository and all other properties `null`.
          */
@@ -101,7 +109,7 @@ data class OrtResult(
     val dependencyNavigator: DependencyNavigator by lazy { CompatibilityDependencyNavigator.create(this) }
 
     private val advisorResultsById: Map<Identifier, List<AdvisorResult>> by lazy {
-        advisor?.results?.advisorResults.orEmpty()
+        advisor?.results.orEmpty()
     }
 
     /**
@@ -139,6 +147,33 @@ data class OrtResult(
             )
         }
     }
+
+    private val packageConfigurationsById: Map<Identifier, List<PackageConfiguration>> by lazy {
+        resolvedConfiguration.packageConfigurations.orEmpty().groupBy { it.id }
+    }
+
+    private val issuesWithExcludedAffectedPathById: Map<Identifier, Set<Issue>> by lazy {
+        buildMap<Identifier, MutableSet<Issue>> {
+            scanner?.getAllScanResults().orEmpty().forEach { (id, scanResults) ->
+                scanResults.forEach { scanResult ->
+                    val pathExcludes = getPathExcludes(id, scanResult.provenance)
+
+                    scanResult.summary.issues.forEach { issue ->
+                        if (issue.affectedPath != null && pathExcludes.any { it.matches(issue.affectedPath) }) {
+                            getOrPut(id) { mutableSetOf() } += issue
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun getPathExcludes(id: Identifier, provenance: Provenance) =
+        if (isProject(id)) {
+            repository.config.excludes.paths
+        } else {
+            getPackageConfigurations(id, provenance).flatMapTo(mutableSetOf()) { it.pathExcludes }
+        }
 
     /**
      * A map of projects and their excluded state. Calculating this map once brings massive performance improvements
@@ -226,22 +261,79 @@ data class OrtResult(
                 append(vcsPath)
                 append("/")
             }
+
             append(path)
         }
     }
 
     /**
-     * Return a map of all de-duplicated [Issue]s associated by [Identifier].
+     * Return a map of all de-duplicated [Issue]s associated by [Identifier]. If [omitExcluded] is set to true, excluded
+     * issues are omitted from the result. If [omitResolved] is set to true, resolved issues are omitted from the
+     * result. Issues with [severity][Issue.severity] below [minSeverity] are omitted from the result.
      */
     @JsonIgnore
-    fun getIssues(): Map<Identifier, Set<Issue>> {
-        val analyzerIssues = analyzer?.result?.getAllIssues().orEmpty()
-        val scannerIssues = scanner?.getIssues().orEmpty()
-        val advisorIssues = advisor?.results?.getIssues().orEmpty()
+    fun getIssues(
+        omitExcluded: Boolean = false,
+        omitResolved: Boolean = false,
+        minSeverity: Severity = Severity.entries.min()
+    ): Map<Identifier, Set<Issue>> =
+        getAnalyzerIssues()
+            .zipWithCollections(getScannerIssues())
+            .zipWithCollections(getAdvisorIssues())
+            .filterIssues(omitExcluded, omitResolved, minSeverity)
 
-        val analyzerAndScannerIssues = analyzerIssues.zipWithCollections(scannerIssues)
-        return analyzerAndScannerIssues.zipWithCollections(advisorIssues)
-    }
+    /**
+     * Return a map of all de-duplicated analyzer [Issue]s associated by [Identifier]. If [omitExcluded] is set to true,
+     * excluded issues are omitted from the result. If [omitResolved] is set to true, resolved issues are omitted from
+     * the result. Issues with [severity][Issue.severity] below [minSeverity] are omitted from the result.
+     */
+    fun getAnalyzerIssues(
+        omitExcluded: Boolean = false,
+        omitResolved: Boolean = false,
+        minSeverity: Severity = Severity.entries.min()
+    ): Map<Identifier, Set<Issue>> =
+        analyzer?.result?.getAllIssues().orEmpty().filterIssues(omitExcluded, omitResolved, minSeverity)
+
+    /**
+     * Return a map of all de-duplicated scanner [Issue]s associated by [Identifier]. If [omitExcluded] is set to true,
+     * excluded issues are omitted from the result. If [omitResolved] is set to true, resolved issues are omitted from
+     * the result. Issues with [severity][Issue.severity] below [minSeverity] are omitted from the result.
+     */
+    fun getScannerIssues(
+        omitExcluded: Boolean = false,
+        omitResolved: Boolean = false,
+        minSeverity: Severity = Severity.entries.min()
+    ): Map<Identifier, Set<Issue>> =
+        scanner?.getAllIssues().orEmpty().filterIssues(omitExcluded, omitResolved, minSeverity)
+
+    /**
+     * Return a map of all de-duplicated advisor [Issue]s associated by [Identifier]. If [omitExcluded] is set to true,
+     * excluded issues are omitted from the result. If [omitResolved] is set to true, resolved issues are omitted from
+     * the result. Issues with [severity][Issue.severity] below [minSeverity] are omitted from the result.
+     */
+    fun getAdvisorIssues(
+        omitExcluded: Boolean = false,
+        omitResolved: Boolean = false,
+        minSeverity: Severity = Severity.entries.min()
+    ): Map<Identifier, Set<Issue>> =
+        advisor?.getIssues().orEmpty().filterIssues(omitExcluded, omitResolved, minSeverity)
+
+    private fun Map<Identifier, Set<Issue>>.filterIssues(
+        omitExcluded: Boolean = false,
+        omitResolved: Boolean = false,
+        minSeverity: Severity = Severity.entries.min()
+    ): Map<Identifier, Set<Issue>> =
+        mapNotNull { (id, issues) ->
+            if (omitExcluded && isExcluded(id)) return@mapNotNull null
+
+            val filteredIssues = issues.filterTo(mutableSetOf()) {
+                (!omitResolved || !isResolved(it))
+                    && it.severity >= minSeverity
+                    && (!omitExcluded || it !in issuesWithExcludedAffectedPathById[id].orEmpty())
+            }
+
+            filteredIssues.takeUnless { it.isEmpty() }?.let { id to it }
+        }.toMap()
 
     /**
      * Return the label values corresponding to the given [key] split at the delimiter ',', or an empty set if the label
@@ -260,15 +352,18 @@ data class OrtResult(
         }
 
     /**
-     * Retrieve non-excluded issues which are not resolved by resolutions in the repository configuration of this
+     * Return all non-excluded issues which are not resolved by resolutions in the resolved configuration of this
      * [OrtResult] with severities equal to or over [minSeverity].
      */
     @JsonIgnore
     fun getOpenIssues(minSeverity: Severity = Severity.WARNING) =
-        getIssues()
-            .mapNotNull { (id, issues) -> issues.takeUnless { isExcluded(id) } }
-            .flatten()
-            .filter { issue -> issue.severity >= minSeverity && getResolutions().issues.none { it.matches(issue) } }
+        getIssues(omitExcluded = true, omitResolved = true, minSeverity = minSeverity).values.flatten().distinct()
+
+    /**
+     * Return a list of [PackageConfiguration]s for the given [packageId] and [provenance].
+     */
+    fun getPackageConfigurations(packageId: Identifier, provenance: Provenance): List<PackageConfiguration> =
+        packageConfigurationsById[packageId].orEmpty().filter { it.matches(packageId, provenance) }
 
     /**
      * Return all projects and packages that are likely to belong to one of the organizations of the given [names]. If
@@ -350,18 +445,14 @@ data class OrtResult(
 
     /**
      * Return the set of all project or package identifiers in the result, optionally [including those of subprojects]
-     * [includeSubProjects].
+     * [includeSubProjects] and optionally limited to only non-excluded ones if [omitExcluded] is true.
      */
     @JsonIgnore
-    fun getProjectsAndPackages(includeSubProjects: Boolean = true): Set<Identifier> {
-        val projectsAndPackages = mutableSetOf<Identifier>()
-        val projects = getProjects(includeSubProjects = includeSubProjects)
-
-        projects.mapTo(projectsAndPackages) { it.id }
-        getPackages().mapTo(projectsAndPackages) { it.metadata.id }
-
-        return projectsAndPackages
-    }
+    fun getProjectsAndPackages(includeSubProjects: Boolean = true, omitExcluded: Boolean = false): Set<Identifier> =
+        buildSet {
+            getProjects(includeSubProjects = includeSubProjects, omitExcluded = omitExcluded).mapTo(this) { it.id }
+            getPackages(omitExcluded = omitExcluded).mapTo(this) { it.metadata.id }
+        }
 
     /**
      * Return all [SpdxLicenseChoice]s applicable for the scope of the whole [repository].
@@ -374,33 +465,56 @@ data class OrtResult(
      * Return the [Resolutions] contained in the repository configuration of this [OrtResult].
      */
     @JsonIgnore
-    fun getResolutions(): Resolutions = repository.config.resolutions.orEmpty()
+    fun getRepositoryConfigResolutions(): Resolutions = repository.config.resolutions.orEmpty()
+
+    /**
+     * Return the [Resolutions] contained in the resolved configuration of this [OrtResult].
+     */
+    @JsonIgnore
+    fun getResolutions(): Resolutions = resolvedConfiguration.resolutions.orEmpty()
+
+    /**
+     * Return true if and only if [violation] is resolved in this [OrtResult].
+     */
+    override fun isResolved(violation: RuleViolation): Boolean =
+        getResolutions().ruleViolations.any { it.matches(violation) }
+
+    /**
+     * Return true if and only if [vulnerability] is resolved in this [OrtResult].
+     */
+    override fun isResolved(vulnerability: Vulnerability): Boolean =
+        getResolutions().vulnerabilities.any { it.matches(vulnerability) }
+
+    /**
+     * Return the resolutions matching [issue].
+     */
+    override fun getResolutionsFor(issue: Issue): List<IssueResolution> =
+        getResolutions().issues.filter { it.matches(issue) }
+
+    /**
+     * Return the resolutions matching [violation].
+     */
+    override fun getResolutionsFor(violation: RuleViolation): List<RuleViolationResolution> =
+        getResolutions().ruleViolations.filter { it.matches(violation) }
+
+    /**
+     * Return the resolutions matching [vulnerability].
+     */
+    override fun getResolutionsFor(vulnerability: Vulnerability): List<VulnerabilityResolution> =
+        getResolutions().vulnerabilities.filter { it.matches(vulnerability) }
 
     /**
      * Return all [RuleViolation]s contained in this [OrtResult]. Optionally exclude resolved violations with
      * [omitResolved] and remove violations below the [minSeverity].
      */
     @JsonIgnore
-    fun getRuleViolations(omitResolved: Boolean = false, minSeverity: Severity? = null): List<RuleViolation> {
-        val allViolations = evaluator?.violations.orEmpty()
-
-        val severeViolations = when (minSeverity) {
-            null -> allViolations
-            else -> allViolations.filter { it.severity >= minSeverity }
+    fun getRuleViolations(
+        omitResolved: Boolean = false,
+        minSeverity: Severity = Severity.entries.min()
+    ): List<RuleViolation> =
+        evaluator?.violations.orEmpty().filter {
+            (!omitResolved || !isResolved(it)) && it.severity >= minSeverity
         }
-
-        return if (omitResolved) {
-            val resolutions = getResolutions().ruleViolations
-
-            severeViolations.filter { violation ->
-                resolutions.none { resolution ->
-                    resolution.matches(violation)
-                }
-            }
-        } else {
-            severeViolations
-        }
-    }
 
     /**
      * Return the list of [ScanResult]s for the given [id].
@@ -445,16 +559,12 @@ data class OrtResult(
         omitResolved: Boolean = false,
         omitExcluded: Boolean = false
     ): Map<Identifier, List<Vulnerability>> {
-        val allVulnerabilities = advisor?.results?.getVulnerabilities().orEmpty()
+        val allVulnerabilities = advisor?.getVulnerabilities().orEmpty()
             .filterKeys { !omitExcluded || !isExcluded(it) }
 
         return if (omitResolved) {
-            val resolutions = getResolutions().vulnerabilities
-
             allVulnerabilities.mapValues { (_, vulnerabilities) ->
-                vulnerabilities.filter { vulnerability ->
-                    resolutions.none { it.matches(vulnerability) }
-                }
+                vulnerabilities.filter { !isResolved(it) }
             }.filterValues { it.isNotEmpty() }
         } else {
             allVulnerabilities
@@ -493,6 +603,13 @@ data class OrtResult(
         }
 
     /**
+     * Return `true` if and only if the given [issue] is excluded in context of the given [id]. This is the case when
+     * either [id] is excluded, or the [affected path][Issue.affectedPath] of [issue] is matched by a path exclude.
+     */
+    fun isExcluded(issue: Issue, id: Identifier): Boolean =
+        isExcluded(id) || issue in issuesWithExcludedAffectedPathById[id].orEmpty()
+
+    /**
      * Return `true` if all dependencies on the package or project identified by the given [id] are excluded. This is
      * the case if all [Project]s or [Scope]s that have a dependency on this [id] are excluded.
      *
@@ -502,7 +619,7 @@ data class OrtResult(
      *
      * Return `false` if there is no dependency on this [id].
      */
-    fun isPackageExcluded(id: Identifier): Boolean = packages[id]?.isExcluded ?: false
+    fun isPackageExcluded(id: Identifier): Boolean = packages[id]?.isExcluded == true
 
     /**
      * Return `true` if the [Project] with the given [id] is excluded.
@@ -513,7 +630,7 @@ data class OrtResult(
      *
      * Return `false` if no project with the given [id] is found.
      */
-    fun isProjectExcluded(id: Identifier): Boolean = projects[id]?.isExcluded ?: false
+    fun isProjectExcluded(id: Identifier): Boolean = projects[id]?.isExcluded == true
 
     /**
      * Return true if and only if the given [id] denotes a [Package] contained in this [OrtResult].
@@ -557,6 +674,8 @@ data class OrtResult(
         )
 }
 
+private val logger = loggerOf(MethodHandles.lookup().lookupClass())
+
 /**
  * Return a set containing exactly one [CuratedPackage] for each given [Package], derived from applying all
  * given [curations] to the packages they apply to. The given [curations] must be ordered highest-priority-first, which
@@ -577,7 +696,7 @@ private fun applyPackageCurations(
 
     return packages.mapTo(mutableSetOf()) { pkg ->
         curationsForId[pkg.id].orEmpty().asReversed().fold(pkg.toCuratedPackage()) { cur, packageCuration ->
-            OrtResult.logger.debug {
+            logger.debug {
                 "Applying curation '$packageCuration' to package '${pkg.id.toCoordinates()}'."
             }
 

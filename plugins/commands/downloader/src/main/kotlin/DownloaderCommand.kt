@@ -20,12 +20,14 @@
 package org.ossreviewtoolkit.plugins.commands.downloader
 
 import com.github.ajalt.clikt.core.ProgramResult
+import com.github.ajalt.clikt.core.terminal
 import com.github.ajalt.clikt.parameters.groups.default
 import com.github.ajalt.clikt.parameters.groups.mutuallyExclusiveOptions
 import com.github.ajalt.clikt.parameters.groups.required
 import com.github.ajalt.clikt.parameters.groups.single
 import com.github.ajalt.clikt.parameters.options.convert
 import com.github.ajalt.clikt.parameters.options.default
+import com.github.ajalt.clikt.parameters.options.deprecated
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
@@ -33,18 +35,35 @@ import com.github.ajalt.clikt.parameters.options.split
 import com.github.ajalt.clikt.parameters.options.switch
 import com.github.ajalt.clikt.parameters.types.enum
 import com.github.ajalt.clikt.parameters.types.file
+import com.github.ajalt.clikt.parameters.types.int
+import com.github.ajalt.mordant.animation.coroutines.animateInCoroutine
+import com.github.ajalt.mordant.animation.progress.MultiProgressBarAnimation
+import com.github.ajalt.mordant.animation.progress.addTask
+import com.github.ajalt.mordant.animation.progress.advance
+import com.github.ajalt.mordant.rendering.TextAlign
+import com.github.ajalt.mordant.rendering.Theme
+import com.github.ajalt.mordant.table.ColumnWidth
+import com.github.ajalt.mordant.widgets.EmptyWidget
+import com.github.ajalt.mordant.widgets.progress.percentage
+import com.github.ajalt.mordant.widgets.progress.progressBar
+import com.github.ajalt.mordant.widgets.progress.progressBarContextLayout
+import com.github.ajalt.mordant.widgets.progress.progressBarLayout
+import com.github.ajalt.mordant.widgets.progress.text
+import com.github.ajalt.mordant.widgets.progress.timeRemaining
 
 import java.io.File
 
 import kotlin.time.measureTime
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.downloader.DownloadException
 import org.ossreviewtoolkit.downloader.Downloader
@@ -81,14 +100,12 @@ import org.ossreviewtoolkit.utils.ort.ORT_CONFIG_FILENAME
 import org.ossreviewtoolkit.utils.ort.ORT_LICENSE_CLASSIFICATIONS_FILENAME
 import org.ossreviewtoolkit.utils.ort.ortConfigDirectory
 import org.ossreviewtoolkit.utils.ort.showStackTrace
-import org.ossreviewtoolkit.utils.spdx.model.SpdxLicenseChoice
+import org.ossreviewtoolkit.utils.spdx.SpdxLicenseChoice
 
 class DownloaderCommand : OrtCommand(
     name = "download",
     help = "Fetch source code from a remote location."
 ) {
-    private companion object : Logging
-
     private val input by mutuallyExclusiveOptions(
         option(
             "--ort-file", "-i",
@@ -192,12 +209,17 @@ class DownloaderCommand : OrtCommand(
     private val skipExcluded by option(
         "--skip-excluded",
         help = "Do not download excluded projects or packages. Works only with the '--ort-file' parameter."
-    ).flag()
+    ).flag().deprecated("Use the global option 'ort -P ort.downloader.skipExcluded=... download' instead.")
 
     private val dryRun by option(
         "--dry-run",
         help = "Do not actually download anything but just verify that all source code locations are valid."
     ).flag()
+
+    private val maxParallelDownloads by option(
+        "--max-parallel-downloads", "-p",
+        help = "The maximum number of parallel downloads to happen."
+    ).int().default(8)
 
     override fun run() {
         val failureMessages = mutableListOf<String>()
@@ -213,9 +235,8 @@ class DownloaderCommand : OrtCommand(
         echo("The $verb took $duration.")
 
         if (failureMessages.isNotEmpty()) {
-            logger.error {
-                "The following failure(s) occurred:\n" + failureMessages.joinToString("\n--\n")
-            }
+            echo(Theme.Default.danger("The following failure(s) occurred:"))
+            failureMessages.joinToString("\n--\n").forEach(::echo)
 
             throw ProgramResult(1)
         }
@@ -225,28 +246,36 @@ class DownloaderCommand : OrtCommand(
         val ortResult = readOrtResult(ortFile)
 
         if (ortResult.analyzer?.result == null) {
-            logger.warn {
-                "Cannot run the downloader as the provided ORT result file '${ortFile.canonicalPath}' does " +
-                    "not contain an analyzer result. Nothing will be downloaded."
-            }
+            echo(
+                Theme.Default.warning(
+                    "Cannot run the downloader as the provided ORT result file '${ortFile.canonicalPath}' does " +
+                        "not contain an analyzer result. Nothing will be downloaded."
+                )
+            )
 
             throw ProgramResult(0)
         }
 
+        val verb = if (dryRun) "Verifying" else "Downloading"
+
         echo(
-            "Downloading ${packageTypes.joinToString(" and ") { "${it}s" }} from ORT result file at " +
+            "$verb ${packageTypes.joinToString(" and ") { "${it}s" }} from ORT result file at " +
                 "'${ortFile.canonicalPath}'..."
         )
 
         val packages = mutableListOf<Package>().apply {
             if (PackageType.PROJECT in packageTypes) {
-                val projects = consolidateProjectPackagesByVcs(ortResult.getProjects(skipExcluded)).keys
-                echo("Found ${projects.size} project(s) in the ORT result.")
-                addAll(projects)
+                val projects = ortResult.getProjects(skipExcluded || ortConfig.downloader.skipExcluded)
+                val consolidatedProjects = consolidateProjectPackagesByVcs(projects).keys
+                echo("Found ${consolidatedProjects.size} project(s) in the ORT result.")
+                addAll(consolidatedProjects)
             }
 
             if (PackageType.PACKAGE in packageTypes) {
-                val packages = ortResult.getPackages(skipExcluded).map { it.metadata }
+                val packages = ortResult.getPackages(skipExcluded || ortConfig.downloader.skipExcluded).map {
+                    it.metadata
+                }
+
                 echo("Found ${packages.size} packages(s) the ORT result.")
                 addAll(packages)
             }
@@ -289,11 +318,11 @@ class DownloaderCommand : OrtCommand(
             }
         }
 
-        echo("Downloading ${packages.size} project(s) / package(s) in total.")
+        echo("$verb ${packages.size} project(s) / package(s) in total.")
 
         val packageDownloadDirs = packages.associateWith { outputDir.resolve(it.id.toPath()) }
 
-        runBlocking { downloadAllPackages(packageDownloadDirs, failureMessages) }
+        downloadAllPackages(packageDownloadDirs, failureMessages, maxParallelDownloads)
 
         if (archiveMode == ArchiveMode.BUNDLE && !dryRun) {
             val zipFile = outputDir.resolve("archive.zip")
@@ -311,21 +340,44 @@ class DownloaderCommand : OrtCommand(
         }
     }
 
-    private suspend fun downloadAllPackages(
+    @Suppress("ForbiddenMethodCall")
+    private fun downloadAllPackages(
         packageDownloadDirs: Map<Package, File>,
-        failureMessages: MutableList<String>
-    ) {
-        withContext(Dispatchers.IO) {
+        failureMessages: MutableList<String>,
+        maxParallelDownloads: Int
+    ) = runBlocking {
+        val parallelDownloads = packageDownloadDirs.size.coerceAtMost(maxParallelDownloads)
+
+        val overallLayout = progressBarLayout(alignColumns = false) {
+            text(if (dryRun) "Verifying" else "Downloading", align = TextAlign.LEFT)
+            progressBar()
+            percentage()
+            timeRemaining()
+        }
+
+        val taskLayout = progressBarContextLayout<Pair<Package, Int>> {
+            text(fps = animationFps, align = TextAlign.LEFT) { "> Package '${context.first.id.toCoordinates()}'..." }
+            cell(width = ColumnWidth.Expand()) { EmptyWidget }
+            text(fps = animationFps, align = TextAlign.RIGHT) { "${context.second.inc()}/${packageDownloadDirs.size}" }
+        }
+
+        val progress = MultiProgressBarAnimation(terminal).animateInCoroutine()
+        val overall = progress.addTask(overallLayout, total = packageDownloadDirs.size.toLong())
+        val tasks = List(parallelDownloads) { progress.addTask(taskLayout, context = Package.EMPTY to 0, total = 1) }
+
+        launch { progress.execute() }
+
+        @OptIn(ExperimentalCoroutinesApi::class)
+        withContext(Dispatchers.IO.limitedParallelism(parallelDownloads)) {
             packageDownloadDirs.entries.mapIndexed { index, (pkg, dir) ->
                 async {
-                    val progress = "${index + 1} of ${packageDownloadDirs.size}"
-
-                    val verb = if (dryRun) "Verifying" else "Starting"
-                    echo("$verb download for '${pkg.id.toCoordinates()}' ($progress).")
-
-                    downloadPackage(pkg, dir, failureMessages).also {
-                        if (!dryRun) echo("Finished download for ${pkg.id.toCoordinates()} ($progress).")
+                    with(tasks[index % parallelDownloads]) {
+                        reset { context = pkg to index }
+                        downloadPackage(pkg, dir, failureMessages)
+                        advance()
                     }
+
+                    overall.advance()
                 }
             }.awaitAll()
         }
@@ -377,8 +429,7 @@ class DownloaderCommand : OrtCommand(
 
         return licenseCategorizations
             .filter { it.id in effectiveLicenses }
-            .flatMap { it.categories }
-            .toSet()
+            .flatMapTo(mutableSetOf()) { it.categories }
     }
 
     private fun downloadFromProjectUrl(projectUrl: String, failureMessages: MutableList<String>) {
@@ -397,7 +448,8 @@ class DownloaderCommand : OrtCommand(
                 Package.EMPTY.copy(id = dummyId, sourceArtifact = RemoteArtifact.EMPTY.copy(url = projectUrl))
             } else {
                 val vcs = VersionControlSystem.forUrl(projectUrl)
-                val vcsType = vcsTypeOption?.let { VcsType.forName(it) } ?: (vcs?.type ?: VcsType.UNKNOWN)
+                val vcsType = listOfNotNull(vcsTypeOption, vcs?.type).map { VcsType.forName(it) }.firstOrNull()
+                    ?: VcsType.UNKNOWN
                 val vcsRevision = vcsRevisionOption ?: vcs?.getDefaultBranchName(projectUrl).orEmpty()
 
                 val vcsInfo = VcsInfo(

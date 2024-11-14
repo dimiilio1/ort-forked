@@ -29,12 +29,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.analyzer.PackageManager.Companion.excludes
 import org.ossreviewtoolkit.downloader.VersionControlSystem
@@ -47,18 +46,17 @@ import org.ossreviewtoolkit.model.config.Excludes
 import org.ossreviewtoolkit.model.config.RepositoryConfiguration
 import org.ossreviewtoolkit.model.orEmpty
 import org.ossreviewtoolkit.model.toYaml
-import org.ossreviewtoolkit.model.utils.PackageCurationProvider
-import org.ossreviewtoolkit.model.utils.addPackageCurations
+import org.ossreviewtoolkit.plugins.packagecurationproviders.api.PackageCurationProvider
 import org.ossreviewtoolkit.utils.common.CommandLineTool
 import org.ossreviewtoolkit.utils.common.VCS_DIRECTORIES
+import org.ossreviewtoolkit.utils.config.setPackageCurations
 import org.ossreviewtoolkit.utils.ort.Environment
+import org.ossreviewtoolkit.utils.ort.runBlocking
 
 /**
  * The class to run the analysis. The signatures of public functions in this class define the library API.
  */
 class Analyzer(private val config: AnalyzerConfiguration, private val labels: Map<String, String> = emptyMap()) {
-    internal companion object : Logging
-
     data class ManagedFileInfo(
         val absoluteProjectPath: File,
         val managedFiles: Map<PackageManager, List<File>>,
@@ -73,7 +71,7 @@ class Analyzer(private val config: AnalyzerConfiguration, private val labels: Ma
     @JvmOverloads
     fun findManagedFiles(
         absoluteProjectPath: File,
-        packageManagers: Collection<PackageManagerFactory> = PackageManager.ENABLED_BY_DEFAULT,
+        packageManagers: Collection<PackageManagerFactory> = PackageManagerFactory.ENABLED_BY_DEFAULT,
         repositoryConfiguration: RepositoryConfiguration = RepositoryConfiguration()
     ): ManagedFileInfo {
         require(absoluteProjectPath.isAbsolute)
@@ -89,13 +87,13 @@ class Analyzer(private val config: AnalyzerConfiguration, private val labels: Ma
             // If only one package manager is activated and the project path is in fact a file, assume that the file is
             // a definition file for that package manager. This is useful to limit analysis to a single project e.g. for
             // debugging purposes.
-            mutableMapOf(distinctPackageManagers.first() to listOf(absoluteProjectPath))
+            mapOf(distinctPackageManagers.first() to listOf(absoluteProjectPath))
         } else {
             PackageManager.findManagedFiles(
                 absoluteProjectPath,
                 distinctPackageManagers,
                 config.excludes(repositoryConfiguration)
-            ).toMutableMap()
+            )
         }
 
         // Associate mapped files by the package manager that manages them.
@@ -106,17 +104,16 @@ class Analyzer(private val config: AnalyzerConfiguration, private val labels: Ma
         }.toMap(mutableMapOf())
 
         // Check whether there are unmanaged files (because of deactivated, unsupported, or non-present package
-        // managers) which we need to attach to an artificial "unmanaged" project.
+        // managers) which need to get attached to an artificial "unmanaged" project.
         val managedDirs = managedFiles.values.flatten().mapNotNull { it.parentFile }
-        val hasOnlyManagedDirs = absoluteProjectPath in managedDirs || absoluteProjectPath.listFiles().orEmpty().all {
-            it in managedDirs || it.name in VCS_DIRECTORIES
-        }
+        val hasOnlyManagedDirs = absoluteProjectPath in managedDirs || absoluteProjectPath.walk().maxDepth(1)
+            .all { it.isDirectory && (it in managedDirs || it.name in VCS_DIRECTORIES) }
 
         if (!hasOnlyManagedDirs) {
-            val unmanagedPackageManagerFactory = PackageManager.ALL["Unmanaged"]
+            val unmanagedPackageManagerFactory = PackageManagerFactory.ALL["Unmanaged"]
             distinctPackageManagers.find { it == unmanagedPackageManagerFactory }
                 ?.create(absoluteProjectPath, config, repositoryConfiguration)
-                ?.run { managedFiles[this] = listOf(absoluteProjectPath) }
+                ?.also { managedFiles[it] = listOf(absoluteProjectPath) }
         }
 
         return ManagedFileInfo(absoluteProjectPath, managedFiles, repositoryConfiguration)
@@ -156,7 +153,7 @@ class Analyzer(private val config: AnalyzerConfiguration, private val labels: Ma
 
         val run = AnalyzerRun(startTime, endTime, Environment(toolVersions = toolVersions), config, analyzerResult)
 
-        return OrtResult(repository = repository, analyzer = run).addPackageCurations(packageCurationProviders)
+        return OrtResult(repository = repository, analyzer = run).setPackageCurations(packageCurationProviders)
     }
 
     private fun analyzeInParallel(managedFiles: Map<PackageManager, List<File>>): AnalyzerResult {
@@ -250,6 +247,7 @@ private class AnalyzerState {
                 result.dependencyGraph?.let {
                     builder.addDependencyGraph(manager.managerName, it).addPackages(result.sharedPackages)
                 }
+
                 _finishedPackageManagersState.value = (_finishedPackageManagersState.value + manager.managerName)
                     .toSortedSet(String.CASE_INSENSITIVE_ORDER)
             }
@@ -303,7 +301,7 @@ private class PackageManagerRunner(
                 val remaining = mustRunAfter - finishedPackageManagers
 
                 if (remaining.isNotEmpty()) {
-                    Analyzer.logger.info {
+                    logger.info {
                         "${manager.managerName} is waiting for the following package managers to complete: " +
                             remaining.joinToString(postfix = ".")
                     }
@@ -317,12 +315,12 @@ private class PackageManagerRunner(
     }
 
     private suspend fun run() {
-        Analyzer.logger.info { "Starting ${manager.managerName} analysis." }
+        logger.info { "Starting ${manager.managerName} analysis." }
 
         withContext(Dispatchers.IO) {
             val result = manager.resolveDependencies(definitionFiles, labels)
 
-            Analyzer.logger.info { "Finished ${manager.managerName} analysis." }
+            logger.info { "Finished ${manager.managerName} analysis." }
 
             onResult(result)
         }

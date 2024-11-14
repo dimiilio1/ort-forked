@@ -23,18 +23,24 @@ import io.kotest.core.spec.style.StringSpec
 import io.kotest.engine.spec.tempdir
 import io.kotest.matchers.shouldBe
 
+import org.ossreviewtoolkit.plugins.api.PluginConfig
 import org.ossreviewtoolkit.reporter.ORT_RESULT
 import org.ossreviewtoolkit.reporter.ReporterInput
-import org.ossreviewtoolkit.utils.test.getAssetAsString
+import org.ossreviewtoolkit.utils.test.getAssetFile
+import org.ossreviewtoolkit.utils.test.patchExpectedResult
 
 class HtmlTemplateReporterFunTest : StringSpec({
     "HTML report is created from default template" {
-        val expectedText = getAssetAsString("html-template-reporter-expected-result.html")
+        val expectedResultFile = getAssetFile("html-template-reporter-expected-result.html")
 
-        val reportContent =
-            HtmlTemplateReporter().generateReport(ReporterInput(ORT_RESULT), tempdir()).single().readText()
+        val reporter = HtmlTemplateReporterFactory().create(PluginConfig())
+        val reportContent = reporter.generateReport(ReporterInput(ORT_RESULT), tempdir())
+            .single().getOrThrow().readText()
 
-        reportContent.patchAsciiDocTemplateResult() shouldBe expectedText
+        reportContent.patchAsciiDocTemplateResult() shouldBe patchExpectedResult(
+            expectedResultFile,
+            custom = mapOf("<REPLACE_ASCIIDOCTOR_VERSION>" to reporter.asciidoctor.asciidoctorVersion())
+        )
     }
 })
 

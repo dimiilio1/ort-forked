@@ -25,13 +25,13 @@ import io.kotest.matchers.collections.containExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.nulls.beNull
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldNotContain
 
 import org.ossreviewtoolkit.utils.spdx.SpdxSingleLicenseExpression
-import org.ossreviewtoolkit.utils.test.shouldNotBeNull
 
 class LicenseClassificationsTest : WordSpec({
     "init()" should {
@@ -43,6 +43,7 @@ class LicenseClassificationsTest : WordSpec({
             val exception = shouldThrow<IllegalArgumentException> {
                 LicenseClassifications(categories = listOf(cat1, cat2, cat3))
             }
+
             exception.message shouldContain "[Category 1]"
         }
 
@@ -60,6 +61,7 @@ class LicenseClassificationsTest : WordSpec({
             val exception = shouldThrow<IllegalArgumentException> {
                 LicenseClassifications(categorizations = listOf(lic1, lic2, lic3))
             }
+
             exception.message shouldContain "[ASL-1]"
         }
 
@@ -79,6 +81,7 @@ class LicenseClassificationsTest : WordSpec({
             val exception = shouldThrow<IllegalArgumentException> {
                 LicenseClassifications(categories = listOf(cat1, cat2), categorizations = listOf(lic1, lic2, lic3))
             }
+
             exception.message shouldNotContain lic1.id.toString()
             exception.message shouldContain lic2.id.toString()
             exception.message shouldContain lic3.id.toString()

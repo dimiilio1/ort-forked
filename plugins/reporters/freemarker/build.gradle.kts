@@ -19,20 +19,22 @@
 
 plugins {
     // Apply precompiled plugins.
-    id("ort-library-conventions")
+    id("ort-plugin-conventions")
 }
 
 dependencies {
-    api(project(":model"))
-    api(project(":reporter"))
-    api(project(":utils:spdx-utils"))
+    api(projects.model)
+    api(projects.reporter)
+    api(projects.utils.spdxUtils)
 
-    implementation(project(":utils:common-utils"))
-    implementation(project(":utils:ort-utils"))
+    ksp(projects.reporter)
+
+    implementation(projects.utils.commonUtils)
+    implementation(projects.utils.ortUtils)
 
     implementation(libs.freemarker)
 
-    funTestImplementation(testFixtures(project(":reporter")))
+    funTestImplementation(testFixtures(projects.reporter))
 
     testImplementation(libs.mockk)
 }

@@ -24,40 +24,66 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.runBlocking
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.clients.fossid.FossIdRestService
 import org.ossreviewtoolkit.clients.fossid.generateReport
 import org.ossreviewtoolkit.clients.fossid.model.report.ReportType
 import org.ossreviewtoolkit.clients.fossid.model.report.SelectionType
 import org.ossreviewtoolkit.model.ScanResult
+import org.ossreviewtoolkit.plugins.api.OrtPlugin
+import org.ossreviewtoolkit.plugins.api.OrtPluginOption
+import org.ossreviewtoolkit.plugins.api.PluginDescriptor
+import org.ossreviewtoolkit.plugins.api.Secret
 import org.ossreviewtoolkit.reporter.Reporter
+import org.ossreviewtoolkit.reporter.ReporterFactory
 import org.ossreviewtoolkit.reporter.ReporterInput
 import org.ossreviewtoolkit.utils.common.collectMessages
+import org.ossreviewtoolkit.utils.ort.runBlocking
 import org.ossreviewtoolkit.utils.ort.showStackTrace
 
-class FossIdReporter : Reporter {
-    companion object : Logging {
-        /** Name of the configuration property for the server URL. */
-        const val SERVER_URL_PROPERTY = "serverUrl"
+data class FossIdReporterConfig(
+    /**
+     * The URL of the FossID server to connect to.
+     */
+    val serverUrl: String,
 
-        /** Name of the configuration property for the API key. */
-        const val API_KEY_PROPERTY = "apiKey"
+    /**
+     * The API key to use for authentication.
+     */
+    val apiKey: Secret,
 
-        /** Name of the configuration property for the username. */
-        const val USER_PROPERTY = "user"
+    /**
+     * The user to authenticate as.
+     */
+    val user: Secret,
 
-        /** Name of the configuration property for the report type. Default is [ReportType.HTML_DYNAMIC]. */
-        const val REPORT_TYPE_PROPERTY = "reportType"
+    /**
+     * The type of report to generate. Allowed values are "HTML_DYNAMIC", "HTML_STATIC", "SPDX_RDF", and "XLSX".
+     */
+    @OrtPluginOption(defaultValue = "HTML_DYNAMIC")
+    val reportType: String,
 
-        /**
-         * Name of the configuration property for the selection type.
-         * Default is [SelectionType.INCLUDE_ALL_LICENSES].
-         */
-        const val SELECTION_TYPE_PROPERTY = "selectionType"
+    /**
+     * The type of selection to use. Allowed values are "INCLUDE_ALL_LICENSES", "INCLUDE_COPYLEFT", "INCLUDE_FOSS", and
+     * "INCLUDE_MARKED_LICENSES".
+     */
+    @OrtPluginOption(defaultValue = "INCLUDE_ALL_LICENSES")
+    val selectionType: String
+)
 
+@OrtPlugin(
+    id = "FossID",
+    displayName = "FossID Reporter",
+    description = "Export reports from FossID.",
+    factory = ReporterFactory::class
+)
+class FossIdReporter(
+    override val descriptor: PluginDescriptor = FossIdReporterFactory.descriptor,
+    private val config: FossIdReporterConfig
+) : Reporter {
+    companion object {
         // TODO: The below should be unified with [FossId.SCAN_CODE_KEY], without creating a dependency between scanner
         //       and reporter.
         /**
@@ -66,50 +92,36 @@ class FossIdReporter : Reporter {
         const val SCAN_CODE_KEY = "scancode"
     }
 
-    override val type = "FossId"
-
-    override fun generateReport(input: ReporterInput, outputDir: File, options: Map<String, String>): List<File> {
-        val serverUrl = requireNotNull(options[SERVER_URL_PROPERTY]) {
-            "No FossID server URL configuration found."
-        }
-        val apiKey = requireNotNull(options[API_KEY_PROPERTY]) {
-            "No FossID API Key configuration found."
-        }
-        val user = requireNotNull(options[USER_PROPERTY]) {
-            "No FossID User configuration found."
-        }
-        val reportType = options[REPORT_TYPE_PROPERTY]?.let {
-            runCatching {
-                ReportType.valueOf(it)
-            }.getOrNull()
-        } ?: ReportType.HTML_DYNAMIC
-
-        val selectionType = options[SELECTION_TYPE_PROPERTY]?.let {
-            runCatching {
-                SelectionType.valueOf(it)
-            }.getOrNull()
-        } ?: SelectionType.INCLUDE_ALL_LICENSES
-
-        val service = FossIdRestService.create(serverUrl)
+    override fun generateReport(input: ReporterInput, outputDir: File): List<Result<File>> {
+        val reportType = ReportType.valueOf(config.reportType)
+        val selectionType = SelectionType.valueOf(config.selectionType)
 
         return runBlocking(Dispatchers.IO) {
+            val service = FossIdRestService.create(config.serverUrl)
             val scanResults = input.ortResult.getScanResults().values.flatten()
             val scanCodes = scanResults.flatMapTo(mutableSetOf()) {
-                it.additionalData[SCAN_CODE_KEY].orEmpty().split(',')
+                it.additionalData[SCAN_CODE_KEY]?.split(',').orEmpty()
             }
 
             scanCodes.map { scanCode ->
                 async {
                     logger.info { "Generating report for scan $scanCode." }
-                    service.generateReport(user, apiKey, scanCode, reportType, selectionType, outputDir)
-                        .onFailure {
-                            it.showStackTrace()
-                            logger.info {
-                                "Error during report generation: ${it.collectMessages()}."
-                            }
-                        }.getOrNull()
+
+                    service.generateReport(
+                        config.user.value,
+                        config.apiKey.value,
+                        scanCode,
+                        reportType,
+                        selectionType,
+                        outputDir
+                    ).onFailure {
+                        it.showStackTrace()
+                        logger.info {
+                            "Error during report generation: ${it.collectMessages()}."
+                        }
+                    }
                 }
-            }.awaitAll().filterNotNull()
+            }.awaitAll()
         }
     }
 }

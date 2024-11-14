@@ -26,40 +26,45 @@ import kotlinx.serialization.json.encodeToStream
 
 import org.ossreviewtoolkit.model.DependencyNode
 import org.ossreviewtoolkit.model.licenses.LicenseView
+import org.ossreviewtoolkit.plugins.api.OrtPlugin
+import org.ossreviewtoolkit.plugins.api.PluginDescriptor
 import org.ossreviewtoolkit.reporter.Reporter
+import org.ossreviewtoolkit.reporter.ReporterFactory
 import org.ossreviewtoolkit.reporter.ReporterInput
 
-class TrustSourceReporter : Reporter {
+@OrtPlugin(
+    displayName = "TrustSource Reporter",
+    description = "Generates a report in the TrustSource format.",
+    factory = ReporterFactory::class
+)
+class TrustSourceReporter(override val descriptor: PluginDescriptor = TrustSourceReporterFactory.descriptor) :
+    Reporter {
     companion object {
         val JSON = Json { encodeDefaults = false }
     }
 
-    override val type = "TrustSource"
-
     private val reportFilename = "trustsource-report.json"
 
-    override fun generateReport(input: ReporterInput, outputDir: File, options: Map<String, String>): List<File> {
+    override fun generateReport(input: ReporterInput, outputDir: File): List<Result<File>> {
         val outputFile = outputDir.resolve(reportFilename)
 
         val nav = input.ortResult.dependencyNavigator
-        val modules = input.ortResult.getProjects().map { project ->
-            val tsModuleDependencies = nav.scopeNames(project)
-                .flatMap { traverseDeps(input, nav.directDependencies(project, it)) }
-
-            TrustSourceModule(
-                module = project.id.name,
-                moduleId = "${project.id.type}:${project.id.name}",
-                dependencies = tsModuleDependencies
-            )
+        val scans = input.ortResult.getProjects().map { project ->
+            val deps = nav.scopeNames(project).flatMap { traverseDeps(input, nav.directDependencies(project, it)) }
+            NewScan(module = project.id.name, dependencies = deps)
         }
 
-        outputFile.outputStream().use { JSON.encodeToStream(modules, it) }
+        val reportFileResult = runCatching {
+            outputFile.apply {
+                outputStream().use { JSON.encodeToStream(scans, it) }
+            }
+        }
 
-        return listOf(outputFile)
+        return listOf(reportFileResult)
     }
 }
 
-private fun traverseDeps(input: ReporterInput, deps: Sequence<DependencyNode>): List<TrustSourceDependency> {
+private fun traverseDeps(input: ReporterInput, deps: Sequence<DependencyNode>): List<Dependency> {
     val tsDeps = deps.map { dep ->
         val pkg = input.ortResult.getPackage(dep.id)
 
@@ -69,27 +74,32 @@ private fun traverseDeps(input: ReporterInput, deps: Sequence<DependencyNode>): 
             input.ortResult.getPackageLicenseChoices(dep.id),
             input.ortResult.getRepositoryLicenseChoices()
         )
+
         val licenses = effectiveLicense?.decompose()?.map {
             val name = it.toString()
             val url = it.getLicenseUrl().orEmpty()
-
-            TrustSourceLicense(name, url)
+            License(name, url)
         }
 
-        TrustSourceDependency(
-            key = "${dep.id.type}:${dep.id.name}",
+        val checksum = pkg?.metadata?.binaryArtifact?.hash?.let { mapOf(it.algorithm.name to it.value) }
+
+        val depPkg = pkg?.metadata?.sourceArtifact?.let {
+            Package(
+                sourcesUrl = it.url,
+                sourcesChecksum = mapOf(it.hash.algorithm.name to it.hash.value)
+            )
+        }
+
+        Dependency(
             name = dep.id.name,
-            repoUrl = pkg?.metadata?.sourceArtifact?.url.orEmpty(),
+            purl = pkg?.metadata?.purl.orEmpty(),
+            repositoryUrl = pkg?.metadata?.vcs?.url.orEmpty(),
             homepageUrl = pkg?.metadata?.homepageUrl.orEmpty(),
             description = pkg?.metadata?.description.orEmpty(),
-            checksum = "",
-            private = false,
-
-            versions = listOf(dep.id.version),
-
+            checksum = checksum.orEmpty(),
             dependencies = dep.visitDependencies { traverseDeps(input, it) },
             licenses = licenses.orEmpty(),
-            meta = TrustSourceMeta()
+            pkg = depPkg
         )
     }
 

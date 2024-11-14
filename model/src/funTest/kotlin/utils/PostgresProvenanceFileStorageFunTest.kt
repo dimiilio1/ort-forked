@@ -20,6 +20,7 @@
 package org.ossreviewtoolkit.model.utils
 
 import io.kotest.core.spec.style.WordSpec
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 
 import java.io.ByteArrayInputStream
@@ -33,9 +34,8 @@ import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
 import org.ossreviewtoolkit.model.config.FileArchiverConfiguration
 import org.ossreviewtoolkit.utils.test.PostgresListener
-import org.ossreviewtoolkit.utils.test.shouldNotBeNull
 
-private val SOURCE_ARTIFACT_PROVENANCE = ArtifactProvenance(sourceArtifact = RemoteArtifact("url", Hash.create("hash")))
+private val SOURCE_ARTIFACT_PROVENANCE = ArtifactProvenance(RemoteArtifact("https://example.com/", Hash.NONE))
 private val VCS_PROVENANCE = RepositoryProvenance(
     vcsInfo = VcsInfo(
         type = VcsType.GIT,

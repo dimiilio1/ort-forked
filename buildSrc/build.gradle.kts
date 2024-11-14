@@ -17,15 +17,6 @@
  * License-Filename: LICENSE
  */
 
-import org.gradle.accessors.dm.LibrariesForLibs
-
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
-
-private val Project.libs: LibrariesForLibs
-    get() = extensions.getByType()
-
 plugins {
     // Use Kotlin DSL to write precompiled script plugins.
     `kotlin-dsl`
@@ -39,31 +30,13 @@ repositories {
 dependencies {
     implementation(files(libs.javaClass.superclass.protectionDomain.codeSource.location))
 
-    implementation(libs.detekt)
-    implementation(libs.dokkatoo)
-    implementation(libs.graalVmNativeImage)
     implementation(libs.jgit)
-    implementation(libs.kotlin)
-}
-
-val javaVersion = JavaVersion.current()
-val maxKotlinJvmTarget = runCatching { JvmTarget.fromTarget(javaVersion.majorVersion) }
-    .getOrDefault(enumValues<JvmTarget>().max())
-
-tasks.withType<JavaCompile>().configureEach {
-    // Align this with Kotlin to avoid errors, see https://youtrack.jetbrains.com/issue/KT-48745.
-    sourceCompatibility = maxKotlinJvmTarget.target
-    targetCompatibility = maxKotlinJvmTarget.target
-}
-
-tasks.withType<KotlinCompile>().configureEach {
-    val customCompilerArgs = listOf(
-        "-opt-in=kotlin.ExperimentalStdlibApi"
-    )
-
-    compilerOptions {
-        freeCompilerArgs.addAll(customCompilerArgs)
-        languageVersion = KotlinVersion.KOTLIN_1_9
-        jvmTarget = maxKotlinJvmTarget
-    }
+    implementation(libs.plugin.dependencyAnalysis)
+    implementation(libs.plugin.detekt)
+    implementation(libs.plugin.dokkatoo)
+    implementation(libs.plugin.graalVmNativeImage)
+    implementation(libs.plugin.kotlin)
+    implementation(libs.plugin.ksp)
+    implementation(libs.plugin.mavenPublish)
+    implementation(libs.plugin.reproducibleBuilds)
 }

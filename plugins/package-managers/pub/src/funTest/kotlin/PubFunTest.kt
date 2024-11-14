@@ -21,34 +21,36 @@ package org.ossreviewtoolkit.plugins.packagemanagers.pub
 
 import io.kotest.core.spec.style.WordSpec
 import io.kotest.matchers.collections.beEmpty
+import io.kotest.matchers.collections.shouldHaveSize
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
-import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.haveSubstring
 
-import org.ossreviewtoolkit.analyzer.managers.analyze
-import org.ossreviewtoolkit.analyzer.managers.create
-import org.ossreviewtoolkit.analyzer.managers.resolveSingleProject
+import org.ossreviewtoolkit.analyzer.analyze
+import org.ossreviewtoolkit.analyzer.create
+import org.ossreviewtoolkit.analyzer.resolveSingleProject
 import org.ossreviewtoolkit.model.AnalyzerResult
 import org.ossreviewtoolkit.model.Hash
-import org.ossreviewtoolkit.model.HashAlgorithm
+import org.ossreviewtoolkit.model.collectDependencies
+import org.ossreviewtoolkit.model.config.PackageManagerConfiguration
 import org.ossreviewtoolkit.model.toYaml
+import org.ossreviewtoolkit.plugins.packagemanagers.gradleinspector.OPTION_JAVA_VERSION
 import org.ossreviewtoolkit.utils.test.getAssetFile
 import org.ossreviewtoolkit.utils.test.matchExpectedResult
-import org.ossreviewtoolkit.utils.test.shouldNotBeNull
 
 class PubFunTest : WordSpec({
     "Pub" should {
         "resolve dart http dependencies correctly" {
             val definitionFile = getAssetFile("projects/external/dart-http/pubspec.yaml")
             val expectedResultFile = getAssetFile("projects/external/dart-http-expected-output.yml")
-            val lockFile = definitionFile.resolveSibling("pubspec.lock").also {
+            val lockfile = definitionFile.resolveSibling("pubspec.lock").also {
                 getAssetFile("projects/external/dart-http-pubspec.lock").copyTo(it, overwrite = true)
             }
 
             val result = try {
                 create("Pub", allowDynamicVersions = true).resolveSingleProject(definitionFile)
             } finally {
-                lockFile.delete()
+                lockfile.delete()
             }
 
             result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
@@ -69,7 +71,7 @@ class PubFunTest : WordSpec({
 
             val ortResult = analyze(definitionFile.parentFile)
 
-            ortResult.analyzer.shouldNotBeNull {
+            ortResult.analyzer shouldNotBeNull {
                 result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
             }
         }
@@ -82,9 +84,14 @@ class PubFunTest : WordSpec({
                 "projects/synthetic/pub-expected-output-with-flutter-android-and-cocoapods.yml"
             )
 
-            val ortResult = analyze(definitionFile.parentFile)
+            val ortResult = analyze(
+                definitionFile.parentFile,
+                packageManagerConfiguration = mapOf(
+                    "GradleInspector" to PackageManagerConfiguration(options = mapOf(OPTION_JAVA_VERSION to "17"))
+                )
+            )
 
-            ortResult.analyzer.shouldNotBeNull {
+            ortResult.analyzer shouldNotBeNull {
                 result.patchPackages().reduceToPubProjects().toYaml() should
                     matchExpectedResult(expectedResultFile, definitionFile)
             }
@@ -97,7 +104,7 @@ class PubFunTest : WordSpec({
 
             with(result) {
                 packages should beEmpty()
-                issues.size shouldBe 1
+                issues shouldHaveSize 1
                 issues.first().message should haveSubstring("IllegalArgumentException: No lockfile found in")
             }
         }
@@ -107,7 +114,7 @@ class PubFunTest : WordSpec({
 private fun AnalyzerResult.reduceToPubProjects(): AnalyzerResult {
     val pubProjects = projects.filterTo(mutableSetOf()) { it.id.type == "Pub" }
     val scopes = pubProjects.flatMap { it.scopes }
-    val dependencies = scopes.flatMap { it.collectDependencies() }
+    val dependencies = scopes.collectDependencies()
 
     return AnalyzerResult(
         projects = pubProjects,
@@ -122,8 +129,8 @@ private fun AnalyzerResult.patchPackages(): AnalyzerResult {
         pkg.takeUnless { it.id.toCoordinates().startsWith("Maven:com.android.tools.build:aapt2:") }
             ?: pkg.copy(
                 binaryArtifact = pkg.binaryArtifact.copy(
-                    url = "***",
-                    hash = Hash("***", HashAlgorithm.SHA1)
+                    url = "https://example.com/",
+                    hash = Hash.NONE
                 )
             )
     }

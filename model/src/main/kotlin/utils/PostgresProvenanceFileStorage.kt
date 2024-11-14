@@ -23,8 +23,6 @@ import java.io.InputStream
 
 import javax.sql.DataSource
 
-import org.apache.logging.log4j.kotlin.Logging
-
 import org.jetbrains.exposed.dao.id.IntIdTable
 import org.jetbrains.exposed.sql.Column
 import org.jetbrains.exposed.sql.Database
@@ -35,7 +33,7 @@ import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.count
 import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insert
-import org.jetbrains.exposed.sql.select
+import org.jetbrains.exposed.sql.selectAll
 
 import org.ossreviewtoolkit.model.ArtifactProvenance
 import org.ossreviewtoolkit.model.KnownProvenance
@@ -59,8 +57,6 @@ class PostgresProvenanceFileStorage(
      */
     tableName: String
 ) : ProvenanceFileStorage {
-    private companion object : Logging
-
     private val table = ProvenanceFileTable(tableName)
 
     /** Stores the database connection used by this object. */
@@ -81,7 +77,7 @@ class PostgresProvenanceFileStorage(
 
     override fun hasData(provenance: KnownProvenance): Boolean =
         database.transaction {
-            table.slice(table.provenance.count()).select {
+            table.select(table.provenance.count()).where {
                 table.provenance eq provenance.storageKey()
             }.first()[table.provenance.count()].toInt()
         } == 1
@@ -101,7 +97,7 @@ class PostgresProvenanceFileStorage(
 
     override fun getData(provenance: KnownProvenance): InputStream? {
         val bytes = database.transaction {
-            table.select {
+            table.selectAll().where {
                 table.provenance eq provenance.storageKey()
             }.map {
                 it[table.zipData]

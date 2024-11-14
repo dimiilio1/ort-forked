@@ -16,6 +16,7 @@ analyzer:
   end_time: "1970-01-01T00:00:00Z"
   environment:
     ort_version: "HEAD"
+    build_jdk: "<REPLACE_JDK>"
     java_version: "<REPLACE_JAVA>"
     os: "<REPLACE_OS>"
     processors: "<REPLACE_PROCESSORS>"
@@ -188,6 +189,7 @@ scanner:
   end_time: "1970-01-01T00:00:00Z"
   environment:
     ort_version: "HEAD"
+    build_jdk: "<REPLACE_JDK>"
     java_version: "<REPLACE_JAVA>"
     os: "<REPLACE_OS>"
     processors: "<REPLACE_PROCESSORS>"
@@ -196,7 +198,6 @@ scanner:
     tool_versions: {}
   config:
     skip_concluded: false
-    create_missing_archives: false
     detected_license_mapping:
       LicenseRef-scancode-agpl-generic-additional-terms: "NOASSERTION"
       LicenseRef-scancode-generic-cla: "NOASSERTION"
@@ -213,7 +214,6 @@ scanner:
       LicenseRef-scancode-unknown: "NOASSERTION"
       LicenseRef-scancode-unknown-license-reference: "NOASSERTION"
       LicenseRef-scancode-unknown-spdx: "NOASSERTION"
-    options: {}
     ignore_patterns:
     - "**/*.ort.yml"
     - "**/*.spdx.yml"
@@ -368,24 +368,24 @@ scanner:
           start_line: -1
           end_line: -1
   scanners:
-    "Gradle:org.ossreviewtoolkit:nested-fake-project:1.0.0":
-      - "FakeScanner"
-    "Gradle:org.ossreviewtoolkit.gradle.example:lib:1.0.0":
-      - "FakeScanner"
-    "Ant:junit:junit:4.12":
-      - "Dummy"
-    "Maven:com.foobar:foobar:1.0":
-      - "Dummy"
-    "Maven:com.h2database:h2:1.4.200":
-      - "Dummy"
-    "Maven:org.apache.commons:commons-lang3:3.5":
-      - "Dummy"
-    "Maven:org.apache.commons:commons-text:1.1":
-      - "Dummy"
-    "Maven:org.example.test:example-component:1.11":
-      - "Dummy"
-    "Maven:org.hamcrest:hamcrest-core:1.3":
-      - "Dummy"
+    Ant:junit:junit:4.12:
+    - "Dummy"
+    Gradle:org.ossreviewtoolkit:nested-fake-project:1.0.0:
+    - "FakeScanner"
+    Gradle:org.ossreviewtoolkit.gradle.example:lib:1.0.0:
+    - "FakeScanner"
+    Maven:com.foobar:foobar:1.0:
+    - "Dummy"
+    Maven:com.h2database:h2:1.4.200:
+    - "Dummy"
+    Maven:org.apache.commons:commons-lang3:3.5:
+    - "Dummy"
+    Maven:org.apache.commons:commons-text:1.1:
+    - "Dummy"
+    Maven:org.example.test:example-component:1.11:
+    - "Dummy"
+    Maven:org.hamcrest:hamcrest-core:1.3:
+    - "Dummy"
   files:
   - provenance:
       source_artifact:

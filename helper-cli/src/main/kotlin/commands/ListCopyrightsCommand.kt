@@ -19,13 +19,13 @@
 
 package org.ossreviewtoolkit.helper.commands
 
-import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.parameters.options.convert
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.types.file
 
+import org.ossreviewtoolkit.helper.utils.OrtHelperCommand
 import org.ossreviewtoolkit.helper.utils.processAllCopyrightStatements
 import org.ossreviewtoolkit.helper.utils.readOrtResult
 import org.ossreviewtoolkit.model.Identifier
@@ -34,8 +34,9 @@ import org.ossreviewtoolkit.model.config.orEmpty
 import org.ossreviewtoolkit.model.readValue
 import org.ossreviewtoolkit.plugins.packageconfigurationproviders.dir.DirPackageConfigurationProvider
 import org.ossreviewtoolkit.utils.common.expandTilde
+import org.ossreviewtoolkit.utils.config.setPackageConfigurations
 
-internal class ListCopyrightsCommand : CliktCommand(
+internal class ListCopyrightsCommand : OrtHelperCommand(
     help = "Lists the copyright findings."
 ) {
     private val ortFile by option(
@@ -77,13 +78,11 @@ internal class ListCopyrightsCommand : CliktCommand(
 
     override fun run() {
         val ortResult = readOrtResult(ortFile)
+            .setPackageConfigurations(DirPackageConfigurationProvider(packageConfigurationsDir))
         val copyrightGarbage = copyrightGarbageFile?.readValue<CopyrightGarbage>().orEmpty()
-        val packageConfigurationProvider = DirPackageConfigurationProvider(packageConfigurationsDir)
 
-        val copyrightStatements = ortResult.processAllCopyrightStatements(
-            copyrightGarbage = copyrightGarbage.items,
-            packageConfigurationProvider = packageConfigurationProvider
-        ).filter { packageId == null || it.packageId == packageId }
+        val copyrightStatements = ortResult.processAllCopyrightStatements(copyrightGarbage = copyrightGarbage.items)
+            .filter { packageId == null || it.packageId == packageId }
             .filter { licenseId == null || it.license.toString() == licenseId }
             .groupBy({ it.statement }, { it.rawStatements })
             .mapValues { it.value.flatten().toSortedSet() }

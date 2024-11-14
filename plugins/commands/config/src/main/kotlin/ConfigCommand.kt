@@ -27,13 +27,14 @@ import com.github.ajalt.clikt.parameters.options.convert
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.file
+import com.github.ajalt.mordant.rendering.Theme
 
 import org.ossreviewtoolkit.model.config.OrtConfiguration
 import org.ossreviewtoolkit.model.config.OrtConfigurationWrapper
-import org.ossreviewtoolkit.model.config.REFERENCE_CONFIG_FILENAME
 import org.ossreviewtoolkit.plugins.commands.api.OrtCommand
 import org.ossreviewtoolkit.utils.common.collectMessages
 import org.ossreviewtoolkit.utils.common.expandTilde
+import org.ossreviewtoolkit.utils.ort.ORT_REFERENCE_CONFIG_FILENAME
 
 class ConfigCommand : OrtCommand(
     name = "config",
@@ -84,7 +85,7 @@ class ConfigCommand : OrtCommand(
         if (showReference) {
             echo("The reference configuration is:")
             echo()
-            echo(javaClass.getResource("/$REFERENCE_CONFIG_FILENAME").readText())
+            echo(javaClass.getResource("/$ORT_REFERENCE_CONFIG_FILENAME").readText())
         }
 
         checkSyntax?.run {
@@ -93,7 +94,7 @@ class ConfigCommand : OrtCommand(
             }.onSuccess {
                 echo("The syntax of the configuration file '$this' is valid.")
             }.onFailure {
-                echo(it.collectMessages())
+                echo(Theme.Default.danger(it.collectMessages()))
                 throw ProgramResult(2)
             }
         }

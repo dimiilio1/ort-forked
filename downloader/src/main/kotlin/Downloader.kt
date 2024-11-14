@@ -26,7 +26,7 @@ import java.net.URI
 
 import kotlin.time.TimeSource
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.model.ArtifactProvenance
 import org.ossreviewtoolkit.model.HashAlgorithm
@@ -54,10 +54,8 @@ import org.ossreviewtoolkit.utils.ort.ping
  * The class to download source code. The signatures of public functions in this class define the library API.
  */
 class Downloader(private val config: DownloaderConfiguration) {
-    private companion object : Logging
-
     private fun verifyOutputDirectory(outputDirectory: File) {
-        require(!outputDirectory.exists() || outputDirectory.list().isEmpty()) {
+        require(!outputDirectory.exists() || outputDirectory.walk().singleOrNull() == outputDirectory) {
             "The output directory '$outputDirectory' must not contain any files yet."
         }
 
@@ -76,7 +74,9 @@ class Downloader(private val config: DownloaderConfiguration) {
 
         val exception = DownloadException("Download failed for '${pkg.id.toCoordinates()}'.")
 
-        config.sourceCodeOrigins.forEach { origin ->
+        val sourceCodeOrigins = pkg.sourceCodeOrigins ?: config.sourceCodeOrigins
+
+        sourceCodeOrigins.forEach { origin ->
             val provenance = when (origin) {
                 SourceCodeOrigin.VCS -> handleVcsDownload(pkg, outputDirectory, dryRun, exception)
                 SourceCodeOrigin.ARTIFACT -> handleSourceArtifactDownload(pkg, outputDirectory, dryRun, exception)
@@ -97,25 +97,28 @@ class Downloader(private val config: DownloaderConfiguration) {
         outputDirectory: File,
         dryRun: Boolean,
         exception: DownloadException
-    ): Provenance? {
+    ): RepositoryProvenance? {
         val vcsMark = TimeSource.Monotonic.markNow()
 
         try {
-            // Cargo in general builds from source tarballs, so we prefer source artifacts over VCS, but still use VCS
-            // if no source artifact is given.
+            // Cargo in general builds from source tarballs, so prefer source artifacts over VCS, but still use VCS if
+            // no source artifact is given.
             val isCargoPackageWithSourceArtifact = pkg.id.type == "Cargo" && pkg.sourceArtifact != RemoteArtifact.EMPTY
 
             if (!isCargoPackageWithSourceArtifact) {
                 val result = downloadFromVcs(pkg, outputDirectory, dryRun = dryRun)
-                val vcsInfo = (result as RepositoryProvenance).vcsInfo
 
                 logger.info {
-                    "Downloaded source code for '${pkg.id.toCoordinates()}' from $vcsInfo in ${vcsMark.elapsedNow()}."
+                    "Downloaded source code for '${pkg.id.toCoordinates()}' from ${result.vcsInfo} in " +
+                        "${vcsMark.elapsedNow()}."
                 }
 
                 return result
             } else {
-                logger.info { "Skipping VCS download for Cargo package '${pkg.id.toCoordinates()}'." }
+                logger.info {
+                    "Skipping VCS download for Cargo package '${pkg.id.toCoordinates()}' as it has a source artifact " +
+                        "at ${pkg.sourceArtifact}."
+                }
             }
         } catch (e: DownloadException) {
             logger.debug { "VCS download failed for '${pkg.id.toCoordinates()}': ${e.collectMessages()}" }
@@ -125,8 +128,8 @@ class Downloader(private val config: DownloaderConfiguration) {
                     "took ${vcsMark.elapsedNow()}."
             }
 
-            // Clean up any left-over files (force to delete read-only files in ".git" directories on Windows).
-            outputDirectory.safeDeleteRecursively(force = true, baseDirectory = outputDirectory)
+            // Clean up any left-over files.
+            outputDirectory.safeDeleteRecursively(baseDirectory = outputDirectory)
 
             exception.addSuppressed(e)
         }
@@ -143,7 +146,7 @@ class Downloader(private val config: DownloaderConfiguration) {
         outputDirectory: File,
         dryRun: Boolean,
         exception: DownloadException
-    ): Provenance? {
+    ): ArtifactProvenance? {
         val sourceArtifactMark = TimeSource.Monotonic.markNow()
 
         try {
@@ -166,7 +169,7 @@ class Downloader(private val config: DownloaderConfiguration) {
             }
 
             // Clean up any left-over files.
-            outputDirectory.safeDeleteRecursively(force = true, baseDirectory = outputDirectory)
+            outputDirectory.safeDeleteRecursively(baseDirectory = outputDirectory)
 
             exception.addSuppressed(e)
         }
@@ -178,7 +181,7 @@ class Downloader(private val config: DownloaderConfiguration) {
      * Download the source code of the [package][pkg] to the [outputDirectory] using its VCS information. If [recursive]
      * is `true`, any nested repositories (like Git submodules or Mercurial subrepositories) are downloaded, too. If
      * [dryRun] is `true`, no actual download happens but the source code is only checked to be available. A
-     * [Provenance] is returned on success or a [DownloadException] is thrown in case of failure.
+     * [RepositoryProvenance] is returned on success or a [DownloadException] is thrown in case of failure.
      */
     @JvmOverloads
     fun downloadFromVcs(
@@ -186,7 +189,7 @@ class Downloader(private val config: DownloaderConfiguration) {
         outputDirectory: File,
         recursive: Boolean = true,
         dryRun: Boolean = false
-    ): Provenance {
+    ): RepositoryProvenance {
         if (pkg.vcsProcessed.url.isBlank()) {
             val hint = when (pkg.id.type) {
                 "Bundler", "Gem" ->
@@ -241,8 +244,8 @@ class Downloader(private val config: DownloaderConfiguration) {
             applicableVcs = VersionControlSystem.forUrl(pkg.vcsProcessed.url)
             logger.info {
                 applicableVcs?.let {
-                    "Detected VCS type '${it.type}' from URL '${pkg.vcsProcessed.url}'."
-                } ?: "Could not detect VCS type from URL '${pkg.vcsProcessed.url}'."
+                    "Detected VCS type '${it.type}' from URL ${pkg.vcsProcessed.url}."
+                } ?: "Could not detect VCS type from URL ${pkg.vcsProcessed.url}."
             }
         }
 
@@ -258,9 +261,9 @@ class Downloader(private val config: DownloaderConfiguration) {
             val url = VcsHost.fromUrl(pkg.vcsProcessed.url)?.toArchiveDownloadUrl(pkg.vcsProcessed)
                 ?: throw DownloadException("Unhandled VCS URL ${pkg.vcsProcessed.url}.")
 
-            val response = okHttpClient.ping(url)
+            val response = runCatching { okHttpClient.ping(url) }
 
-            if (response.code != HttpURLConnection.HTTP_OK) {
+            if (response.getOrNull()?.code != HttpURLConnection.HTTP_OK) {
                 throw DownloadException("Cannot verify existence of ${pkg.vcsProcessed}.")
             }
 
@@ -270,8 +273,7 @@ class Downloader(private val config: DownloaderConfiguration) {
         val workingTree = try {
             applicableVcs.download(pkg, outputDirectory, config.allowMovingRevisions, recursive)
         } catch (e: DownloadException) {
-            // TODO: We should introduce something like a "strict" mode and only do these kind of fallbacks in
-            //       non-strict mode.
+            // TODO: Introduce something like a "strict" mode and only do these kind of fallbacks in non-strict mode.
             val vcsUrlNoCredentials = pkg.vcsProcessed.url.replaceCredentialsInUri()
             if (vcsUrlNoCredentials != pkg.vcsProcessed.url) {
                 // Try once more with any username / password stripped from the URL.
@@ -280,7 +282,7 @@ class Downloader(private val config: DownloaderConfiguration) {
                 }
 
                 // Clean up any files left from the failed VCS download (i.e. a ".git" directory).
-                outputDirectory.safeDeleteRecursively(force = true, baseDirectory = outputDirectory)
+                outputDirectory.safeDeleteRecursively(baseDirectory = outputDirectory)
 
                 val fallbackPkg = pkg.copy(vcsProcessed = pkg.vcsProcessed.copy(url = vcsUrlNoCredentials))
                 applicableVcs.download(fallbackPkg, outputDirectory, config.allowMovingRevisions, recursive)
@@ -288,6 +290,7 @@ class Downloader(private val config: DownloaderConfiguration) {
                 throw e
             }
         }
+
         val resolvedRevision = workingTree.getRevision()
 
         logger.info {
@@ -299,14 +302,14 @@ class Downloader(private val config: DownloaderConfiguration) {
 
     /**
      * Download the [sourceArtifact] and unpack it to the [outputDirectory]. If [dryRun] is `true`, no actual download
-     * happens but the source code is only checked to be available. A [Provenance] is returned on success or a
+     * happens but the source code is only checked to be available. An [ArtifactProvenance] is returned on success or a
      * [DownloadException] is thrown in case of failure.
      */
     fun downloadSourceArtifact(
         sourceArtifact: RemoteArtifact,
         outputDirectory: File,
         dryRun: Boolean = false
-    ): Provenance {
+    ): ArtifactProvenance {
         if (sourceArtifact.url.isBlank()) {
             throw DownloadException("No source artifact URL provided.")
         }
@@ -327,7 +330,7 @@ class Downloader(private val config: DownloaderConfiguration) {
         } else {
             tempDir = createOrtTempDir()
             okHttpClient.downloadFile(sourceArtifact.url, tempDir).getOrElse {
-                tempDir.safeDeleteRecursively(force = true)
+                tempDir.safeDeleteRecursively()
                 throw DownloadException("Failed to download source artifact from ${sourceArtifact.url}.", it)
             }
         }
@@ -350,7 +353,7 @@ class Downloader(private val config: DownloaderConfiguration) {
                     "Cannot verify source artifact with ${sourceArtifact.hash}, skipping verification."
                 }
             } else if (!sourceArtifact.hash.verify(sourceArchive)) {
-                tempDir?.safeDeleteRecursively(force = true)
+                tempDir?.safeDeleteRecursively()
                 throw DownloadException("Source artifact does not match expected ${sourceArtifact.hash}.")
             }
         }
@@ -365,7 +368,7 @@ class Downloader(private val config: DownloaderConfiguration) {
                     sourceArchive.unpack(gemDirectory)
                     dataFile.unpack(outputDirectory)
                 } finally {
-                    gemDirectory.safeDeleteRecursively(force = true)
+                    gemDirectory.safeDeleteRecursively()
                 }
             } else {
                 sourceArchive.unpackTryAllTypes(outputDirectory)
@@ -375,7 +378,7 @@ class Downloader(private val config: DownloaderConfiguration) {
                 "Could not unpack source artifact '${sourceArchive.absolutePath}': ${e.collectMessages()}"
             }
 
-            tempDir?.safeDeleteRecursively(force = true)
+            tempDir?.safeDeleteRecursively()
             throw DownloadException(e)
         }
 
@@ -383,13 +386,13 @@ class Downloader(private val config: DownloaderConfiguration) {
             "Successfully unpacked ${sourceArtifact.url} to '${outputDirectory.absolutePath}'..."
         }
 
-        tempDir?.safeDeleteRecursively(force = true)
+        tempDir?.safeDeleteRecursively()
         return ArtifactProvenance(sourceArtifact)
     }
 }
 
 /**
- * Consolidate [projects] based on their VcsInfo without taking the path into account. As we store VcsInfo per project
+ * Consolidate [projects] based on their VcsInfo without taking the path into account. As VcsInfo is stored per project
  * but many project definition files actually reside in different subdirectories of the same VCS working tree, it does
  * not make sense to download (and scan) all of them individually, not even if doing sparse checkouts. Return a map that
  * associates packages for projects in distinct VCS working trees with all other projects from the same VCS working

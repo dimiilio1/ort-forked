@@ -26,7 +26,7 @@ import java.io.IOException
 
 import kotlin.math.pow
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 /**
  * Wrapper around [DiskLruCache] that adds a workaround for the 64 character key length limit.
@@ -47,7 +47,7 @@ class DiskCache(
      */
     private val maxCacheEntryAgeInSeconds: Long
 ) {
-    companion object : Logging {
+    companion object {
         const val INDEX_FULL_KEY = 0
         const val INDEX_TIMESTAMP = 1
         const val INDEX_DATA = 2
@@ -124,6 +124,7 @@ class DiskCache(
         } catch (e: IOException) {
             logger.error { "Could not read cache entry for key '$diskKey': ${e.collectMessages()}" }
         }
+
         return null
     }
 
@@ -136,10 +137,12 @@ class DiskCache(
                 set(INDEX_DATA, data)
                 commit()
             }
+
             return true
         } catch (e: IOException) {
             logger.error { "Could not write to disk cache for key '$diskKey': ${e.collectMessages()}" }
         }
+
         return false
     }
 

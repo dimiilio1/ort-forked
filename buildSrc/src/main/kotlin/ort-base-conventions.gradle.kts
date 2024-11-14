@@ -17,6 +17,11 @@
  * License-Filename: LICENSE
  */
 
+plugins {
+    // Apply third-party plugins.
+    id("org.gradlex.reproducible-builds")
+}
+
 repositories {
     mavenCentral()
 
@@ -26,7 +31,7 @@ repositories {
         }
 
         filter {
-            includeGroupByRegex("com\\.atlassian\\..*")
+            includeGroupByRegex("(com|io)\\.atlassian\\..*")
             includeVersionByRegex("log4j", "log4j", ".*-atlassian-.*")
         }
     }
@@ -43,10 +48,6 @@ repositories {
 }
 
 tasks.withType<Jar>().configureEach {
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    isPreserveFileTimestamps = false
-    isReproducibleFileOrder = true
-
     manifest {
         attributes["Implementation-Version"] = version
     }

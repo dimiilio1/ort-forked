@@ -21,7 +21,7 @@ package org.ossreviewtoolkit.utils.common
 
 import java.io.File
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.semver4j.RangesList
 import org.semver4j.RangesListFactory
@@ -31,7 +31,7 @@ import org.semver4j.Semver
  * An interface to implement by classes that are backed by a command line tool.
  */
 interface CommandLineTool {
-    companion object : Logging {
+    companion object {
         /**
          * A convenience property to require any version.
          */
@@ -79,7 +79,7 @@ interface CommandLineTool {
      * Run the command in the [workingDir] directory with arguments as specified by [args].
      */
     fun run(workingDir: File?, vararg args: CharSequence) =
-        ProcessCapture(workingDir, *command(workingDir).splitOnWhitespace().toTypedArray(), *args).requireSuccess()
+        run(args = args, workingDir = workingDir, environment = emptyMap())
 
     /**
      * Get the version of the command by parsing its output.
@@ -111,4 +111,9 @@ interface CommandLineTool {
             }
         }
     }
+
+    /**
+     * The name to use when referring to this command in user facing output.
+     */
+    fun displayName(): String = javaClass.simpleName
 }

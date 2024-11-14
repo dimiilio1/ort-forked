@@ -21,7 +21,7 @@ package org.ossreviewtoolkit.model.config
 
 import org.ossreviewtoolkit.model.SourceCodeOrigin
 import org.ossreviewtoolkit.model.licenses.LicenseCategory
-import org.ossreviewtoolkit.utils.common.getDuplicates
+import org.ossreviewtoolkit.model.utils.requireNotEmptyNoDuplicates
 
 data class DownloaderConfiguration(
     /**
@@ -30,24 +30,23 @@ data class DownloaderConfiguration(
     val allowMovingRevisions: Boolean = false,
 
     /**
-     * The [categories][LicenseCategory] licenses of packages need to be part of in order to get included into the
-     * download, or an empty list to include all packages.
+     * The [categories][LicenseCategory] licenses of packages need to be part of to get included in the download, or an
+     * empty list to include all packages.
      */
     val includedLicenseCategories: List<String> = emptyList(),
 
     /**
-     * Configuration of the considered source code origins and their priority order.
+     * A flag to control whether excluded scopes and paths should be skipped during the download.
+     */
+    val skipExcluded: Boolean = false,
+
+    /**
+     * Configuration of the considered source code origins and their priority order. This must not be empty and not
+     * contain any duplicates.
      */
     val sourceCodeOrigins: List<SourceCodeOrigin> = listOf(SourceCodeOrigin.VCS, SourceCodeOrigin.ARTIFACT)
 ) {
     init {
-        require(sourceCodeOrigins.isNotEmpty()) {
-            "'sourceCodeOrigins' must not be empty."
-        }
-
-        val duplicates = sourceCodeOrigins.getDuplicates()
-        require(duplicates.isEmpty()) {
-            "'sourceCodeOrigins' must not contain duplicates. Duplicates: $duplicates"
-        }
+        sourceCodeOrigins.requireNotEmptyNoDuplicates()
     }
 }

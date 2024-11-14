@@ -19,7 +19,7 @@
 
 package org.ossreviewtoolkit.plugins.packagemanagers.bundler
 
-import com.fasterxml.jackson.databind.JsonNode
+import com.charleskorn.kaml.Yaml
 
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -29,7 +29,9 @@ import java.net.HttpURLConnection
 
 import kotlin.time.measureTime
 
-import org.apache.logging.log4j.kotlin.Logging
+import kotlinx.serialization.serializer
+
+import org.apache.logging.log4j.kotlin.logger
 
 import org.jruby.embed.LocalContextScope
 import org.jruby.embed.PathType
@@ -53,12 +55,9 @@ import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
 import org.ossreviewtoolkit.model.config.PackageManagerConfiguration
 import org.ossreviewtoolkit.model.config.RepositoryConfiguration
 import org.ossreviewtoolkit.model.createAndLogIssue
-import org.ossreviewtoolkit.model.fromYaml
 import org.ossreviewtoolkit.model.orEmpty
-import org.ossreviewtoolkit.model.yamlMapper
 import org.ossreviewtoolkit.utils.common.AlphaNumericComparator
 import org.ossreviewtoolkit.utils.common.collectMessages
-import org.ossreviewtoolkit.utils.common.textValueOrEmpty
 import org.ossreviewtoolkit.utils.ort.HttpDownloadError
 import org.ossreviewtoolkit.utils.ort.OkHttpClientHelper
 import org.ossreviewtoolkit.utils.ort.downloadText
@@ -84,6 +83,9 @@ private const val BUNDLER_GEM_NAME = "bundler"
  * The name of the file where Bundler stores locked down dependency information.
  */
 internal const val BUNDLER_LOCKFILE_NAME = "Gemfile.lock"
+
+// TODO: Remove this again once available upstream.
+private inline fun <reified T> Yaml.decodeFromString(string: String): T = decodeFromString(serializer<T>(), string)
 
 private fun runScriptCode(code: String, workingDir: File? = null): String {
     val bytes = ByteArrayOutputStream()
@@ -137,8 +139,8 @@ class Bundler(
     analysisRoot: File,
     analyzerConfig: AnalyzerConfiguration,
     repoConfig: RepositoryConfiguration
-) : PackageManager(name, analysisRoot, analyzerConfig, repoConfig) {
-    companion object : Logging {
+) : PackageManager(name, "Bundler", analysisRoot, analyzerConfig, repoConfig) {
+    companion object {
         /**
          * The name of the option to specify the Bundler version.
          */
@@ -165,11 +167,11 @@ class Bundler(
         // [2]: https://github.com/jruby/jruby/discussions/7403
 
         val lockfiles = definitionFiles.map { it.resolveSibling(BUNDLER_LOCKFILE_NAME) }.filter { it.isFile }
-        val lockFilesBundlerVersion = lockfiles.mapNotNull {
+        val lockfilesBundlerVersion = lockfiles.mapNotNull {
             parseBundlerVersionFromLockfile(it)
         }.sortedWith(AlphaNumericComparator).lastOrNull()
 
-        val bundlerVersion = options[OPTION_BUNDLER_VERSION] ?: lockFilesBundlerVersion
+        val bundlerVersion = options[OPTION_BUNDLER_VERSION] ?: lockfilesBundlerVersion
 
         if (bundlerVersion != null) {
             val duration = measureTime {
@@ -205,14 +207,14 @@ class Bundler(
         val scopes = mutableSetOf<Scope>()
         val issues = mutableListOf<Issue>()
 
-        val gemSpecs = resolveGemsMetadata(workingDir)
+        val gemsInfo = resolveGemsInfo(workingDir)
 
-        return with(parseProject(definitionFile, gemSpecs)) {
+        return with(parseProject(definitionFile, gemsInfo)) {
             val projectId = Identifier(managerName, "", name, version)
             val groupedDeps = getDependencyGroups(workingDir)
 
             groupedDeps.forEach { (groupName, dependencyList) ->
-                parseScope(workingDir, projectId, groupName, dependencyList, scopes, gemSpecs, issues)
+                parseScope(workingDir, projectId, groupName, dependencyList, scopes, gemsInfo, issues)
             }
 
             val project = Project(
@@ -229,8 +231,8 @@ class Bundler(
             val allProjectDeps = groupedDeps.values.flatten().toSet()
             val hasBundlerDep = BUNDLER_GEM_NAME in allProjectDeps
 
-            val packages = gemSpecs.values.mapNotNullTo(mutableSetOf()) { gemSpec ->
-                getPackageFromGemspec(gemSpec).takeUnless { gemSpec.name == BUNDLER_GEM_NAME && !hasBundlerDep }
+            val packages = gemsInfo.values.mapNotNullTo(mutableSetOf()) { gemInfo ->
+                getPackageFromGemInfo(gemInfo).takeUnless { gemInfo.name == BUNDLER_GEM_NAME && !hasBundlerDep }
             }
 
             listOf(ProjectAnalyzerResult(project, packages, issues))
@@ -243,7 +245,7 @@ class Bundler(
         groupName: String,
         dependencyList: List<String>,
         scopes: MutableSet<Scope>,
-        gemSpecs: MutableMap<String, GemSpec>,
+        gemsInfo: MutableMap<String, GemInfo>,
         issues: MutableList<Issue>
     ) {
         logger.debug {
@@ -254,7 +256,7 @@ class Bundler(
         val scopeDependencies = mutableSetOf<PackageReference>()
 
         dependencyList.forEach {
-            parseDependency(workingDir, projectId, it, gemSpecs, scopeDependencies, issues)
+            parseDependency(workingDir, projectId, it, gemsInfo, scopeDependencies, issues)
         }
 
         scopes += Scope(groupName, scopeDependencies)
@@ -264,32 +266,32 @@ class Bundler(
         workingDir: File,
         projectId: Identifier,
         gemName: String,
-        gemSpecs: MutableMap<String, GemSpec>,
+        gemsInfo: MutableMap<String, GemInfo>,
         scopeDependencies: MutableSet<PackageReference>,
         issues: MutableList<Issue>
     ) {
         logger.debug { "Parsing dependency '$gemName'." }
 
         runCatching {
-            val gemSpec = gemSpecs.getValue(gemName)
-            val gemId = Identifier("Gem", "", gemSpec.name, gemSpec.version)
+            val gemInfo = gemsInfo.getValue(gemName)
+            val gemId = Identifier("Gem", "", gemInfo.name, gemInfo.version)
 
             // The project itself can be listed as a dependency if the project is a gem (i.e. there is a .gemspec file
-            // for it, and the Gemfile refers to it). In that case, skip querying Rubygems and adding Package and
+            // for it, and the Gemfile refers to it). In that case, skip querying RubyGems and adding Package and
             // PackageReference objects and continue with the projects dependencies.
             if (gemId == projectId) {
-                gemSpec.runtimeDependencies.forEach {
-                    parseDependency(workingDir, projectId, it, gemSpecs, scopeDependencies, issues)
+                gemInfo.runtimeDependencies.forEach {
+                    parseDependency(workingDir, projectId, it, gemsInfo, scopeDependencies, issues)
                 }
             } else {
-                queryRubygems(gemId.name, gemId.version)?.apply {
-                    gemSpecs[gemName] = merge(gemSpec)
+                queryRubyGems(gemId.name, gemId.version)?.apply {
+                    gemsInfo[gemName] = merge(gemInfo)
                 }
 
                 val transitiveDependencies = mutableSetOf<PackageReference>()
 
-                gemSpec.runtimeDependencies.forEach {
-                    parseDependency(workingDir, projectId, it, gemSpecs, transitiveDependencies, issues)
+                gemInfo.runtimeDependencies.forEach {
+                    parseDependency(workingDir, projectId, it, gemsInfo, transitiveDependencies, issues)
                 }
 
                 scopeDependencies += PackageReference(gemId, dependencies = transitiveDependencies)
@@ -306,27 +308,28 @@ class Bundler(
     }
 
     private fun getDependencyGroups(workingDir: File): Map<String, List<String>> =
-        runScriptResource(ROOT_DEPENDENCIES_SCRIPT, workingDir).fromYaml()
+        YAML.decodeFromString(runScriptResource(ROOT_DEPENDENCIES_SCRIPT, workingDir))
 
-    private fun resolveGemsMetadata(workingDir: File): MutableMap<String, GemSpec> {
+    private fun resolveGemsInfo(workingDir: File): MutableMap<String, GemInfo> {
         val stdout = runScriptResource(RESOLVE_DEPENDENCIES_SCRIPT, workingDir)
 
-        // The metadata produced by the "bundler_resolve_dependencies.rb" script separates specs for packages with the
-        // "\0" character as delimiter.
-        val gemSpecs = stdout.split('\u0000').dropWhile { it.startsWith("Fetching gem metadata") }.map {
-            GemSpec.createFromMetadata(yamlMapper.readTree(it))
+        // The metadata produced by the "resolve_dependencies.rb" script separates specs for packages with the "\0"
+        // character as delimiter.
+        val gemsInfo = stdout.split('\u0000').map {
+            val spec = YAML.decodeFromString<GemSpec>(it)
+            GemInfo.createFromMetadata(spec)
         }.associateByTo(mutableMapOf()) {
             it.name
         }
 
-        return gemSpecs
+        return gemsInfo
     }
 
-    private fun parseProject(definitionFile: File, gemSpecs: MutableMap<String, GemSpec>) =
+    private fun parseProject(definitionFile: File, gemsInfo: MutableMap<String, GemInfo>) =
         getGemspecFile(definitionFile.parentFile)?.let { gemspecFile ->
             // Project is a Gem, i.e. a library.
-            gemSpecs[gemspecFile.nameWithoutExtension]
-        } ?: GemSpec(
+            gemsInfo[gemspecFile.nameWithoutExtension]
+        } ?: GemInfo(
             name = getFallbackProjectName(analysisRoot, definitionFile),
             version = "",
             homepageUrl = "",
@@ -338,31 +341,35 @@ class Bundler(
             artifact = RemoteArtifact.EMPTY
         )
 
-    private fun getPackageFromGemspec(gemSpec: GemSpec): Package {
-        val gemId = Identifier("Gem", "", gemSpec.name, gemSpec.version)
+    private fun getPackageFromGemInfo(gemInfo: GemInfo): Package {
+        val gemId = Identifier("Gem", "", gemInfo.name, gemInfo.version)
 
         return Package(
             id = gemId,
-            authors = gemSpec.authors,
-            declaredLicenses = gemSpec.declaredLicenses,
-            description = gemSpec.description,
-            homepageUrl = gemSpec.homepageUrl,
+            authors = gemInfo.authors,
+            declaredLicenses = gemInfo.declaredLicenses,
+            description = gemInfo.description,
+            homepageUrl = gemInfo.homepageUrl,
             binaryArtifact = RemoteArtifact.EMPTY,
-            sourceArtifact = gemSpec.artifact,
-            vcs = gemSpec.vcs,
-            vcsProcessed = processPackageVcs(gemSpec.vcs, gemSpec.homepageUrl)
+            sourceArtifact = gemInfo.artifact,
+            vcs = gemInfo.vcs,
+            vcsProcessed = processPackageVcs(gemInfo.vcs, gemInfo.homepageUrl)
         )
     }
 
     private fun getGemspecFile(workingDir: File) =
         workingDir.walk().maxDepth(1).filter { it.isFile && it.extension == "gemspec" }.firstOrNull()
 
-    private fun queryRubygems(name: String, version: String, retryCount: Int = 3): GemSpec? {
-        // See http://guides.rubygems.org/rubygems-org-api-v2/.
-        val url = "https://rubygems.org/api/v2/rubygems/$name/versions/$version.yaml"
+    private fun queryRubyGems(name: String, version: String, retryCount: Int = 3): GemInfo? {
+        // NOTE: Explicitly use platform=ruby here to enforce the same behavior here that is also used in the Bundler
+        //       resolving logic.
+        // See plugins/package-managers/bundler/src/main/resources/resolve_dependencies.rb
+        // See <http://guides.rubygems.org/rubygems-org-api-v2/>.
+        val url = "https://rubygems.org/api/v2/rubygems/$name/versions/$version.yaml?platform=ruby"
 
         return okHttpClient.downloadText(url).mapCatching {
-            GemSpec.createFromGem(yamlMapper.readTree(it))
+            val details = YAML.decodeFromString<VersionDetails>(it)
+            GemInfo.createFromGem(details)
         }.onFailure {
             val error = (it as? HttpDownloadError) ?: run {
                 logger.warn { "Unable to retrieve metadata for gem '$name' from RubyGems: ${it.message}" }
@@ -383,7 +390,7 @@ class Bundler(
                     if (retryCount > 0) {
                         // We see a lot of sporadic "bad gateway" responses that disappear when trying again.
                         Thread.sleep(100)
-                        return queryRubygems(name, version, retryCount - 1)
+                        return queryRubyGems(name, version, retryCount - 1)
                     }
 
                     throw IOException(
@@ -401,7 +408,7 @@ class Bundler(
     }
 }
 
-internal data class GemSpec(
+internal data class GemInfo(
     val name: String,
     val version: String,
     val homepageUrl: String,
@@ -413,80 +420,74 @@ internal data class GemSpec(
     val artifact: RemoteArtifact
 ) {
     companion object {
-        fun createFromMetadata(node: JsonNode): GemSpec {
-            val runtimeDependencies = node["dependencies"]?.asIterable()?.mapNotNull { dependency ->
-                dependency["name"]?.textValue()?.takeIf { dependency["type"]?.textValue() == ":runtime" }
-            }?.toSet()
+        fun createFromMetadata(spec: GemSpec): GemInfo {
+            val runtimeDependencies = spec.dependencies.mapNotNullTo(mutableSetOf()) { (name, type) ->
+                name.takeIf { type == VersionDetails.Scope.RUNTIME.toString() }
+            }
 
-            val homepage = node["homepage"].textValueOrEmpty()
-            return GemSpec(
-                node["name"].textValue(),
-                node["version"]["version"].textValue(),
+            val homepage = spec.homepage.orEmpty()
+            val info = spec.description ?: spec.summary
+
+            return GemInfo(
+                spec.name,
+                spec.version.version,
                 homepage,
-                node["authors"]?.toList().mapToSetOfNotEmptyStrings(),
-                node["licenses"]?.toList().mapToSetOfNotEmptyStrings(),
-                node["description"].textValueOrEmpty(),
-                runtimeDependencies.orEmpty(),
+                spec.authors.mapToSetOfNotEmptyStrings(),
+                spec.licenses.mapToSetOfNotEmptyStrings(),
+                info.orEmpty(),
+                runtimeDependencies,
                 VcsHost.parseUrl(homepage),
                 RemoteArtifact.EMPTY
             )
         }
 
-        fun createFromGem(node: JsonNode): GemSpec {
-            val runtimeDependencies = node["dependencies"]?.get("runtime")?.mapNotNull { dependency ->
-                dependency["name"]?.textValue()
-            }?.toSet()
+        fun createFromGem(details: VersionDetails): GemInfo {
+            val runtimeDependencies = details.dependencies[VersionDetails.Scope.RUNTIME]
+                ?.mapTo(mutableSetOf()) { it.name }
+                .orEmpty()
 
-            val vcs = sequenceOf(node["source_code_uri"], node["homepage_uri"]).mapNotNull { uri ->
-                uri?.textValue()?.takeIf { it.isNotEmpty() }
-            }.firstOrNull()?.let {
-                VcsHost.parseUrl(it)
-            }.orEmpty()
+            val vcs = listOfNotNull(details.sourceCodeUri, details.homepageUri)
+                .mapToSetOfNotEmptyStrings()
+                .firstOrNull()
+                ?.let { VcsHost.parseUrl(it) }
+                .orEmpty()
 
-            val artifact = if (node.hasNonNull("gem_uri") && node.hasNonNull("sha")) {
-                val sha = node["sha"].textValue()
-                RemoteArtifact(node["gem_uri"].textValue(), Hash.create(sha))
+            val artifact = if (details.gemUri != null && details.sha != null) {
+                RemoteArtifact(details.gemUri, Hash.create(details.sha))
             } else {
                 RemoteArtifact.EMPTY
             }
 
-            return GemSpec(
-                node["name"].textValue(),
-                node["version"].textValue(),
-                node["homepage_uri"].textValueOrEmpty(),
-                node["authors"].textValueOrEmpty().split(',').mapToSetOfNotEmptyStrings(),
-                node["licenses"]?.toList().mapToSetOfNotEmptyStrings(),
-                node["description"].textValueOrEmpty(),
-                runtimeDependencies.orEmpty(),
+            return GemInfo(
+                details.name,
+                details.version,
+                details.homepageUri.orEmpty(),
+                details.authors?.split(',').mapToSetOfNotEmptyStrings(),
+                details.licenses.mapToSetOfNotEmptyStrings(),
+                details.info.orEmpty(),
+                runtimeDependencies,
                 vcs,
                 artifact
             )
         }
 
-        private inline fun <reified T> Collection<T>?.mapToSetOfNotEmptyStrings(): Set<String> =
-            this?.mapNotNullTo(mutableSetOf()) { entry ->
-                val text = when (T::class) {
-                    JsonNode::class -> (entry as JsonNode).textValue()
-                    else -> entry.toString()
-                }
-
-                text?.trim()?.takeIf { it.isNotEmpty() }
-            } ?: emptySet()
+        private fun Collection<String>?.mapToSetOfNotEmptyStrings(): Set<String> =
+            this?.mapNotNullTo(mutableSetOf()) { string -> string.trim().ifEmpty { null } }.orEmpty()
     }
 
-    fun merge(other: GemSpec): GemSpec {
+    fun merge(other: GemInfo): GemInfo {
         require(name == other.name && version == other.version) {
             "Cannot merge specs for different gems."
         }
 
-        return GemSpec(
+        return GemInfo(
             name,
             version,
-            homepageUrl.takeUnless { it.isEmpty() } ?: other.homepageUrl,
-            authors.takeUnless { it.isEmpty() } ?: other.authors,
-            declaredLicenses.takeUnless { it.isEmpty() } ?: other.declaredLicenses,
-            description.takeUnless { it.isEmpty() } ?: other.description,
-            runtimeDependencies.takeUnless { it.isEmpty() } ?: other.runtimeDependencies,
+            homepageUrl.ifEmpty { other.homepageUrl },
+            authors.ifEmpty { other.authors },
+            declaredLicenses.ifEmpty { other.declaredLicenses },
+            description.ifEmpty { other.description },
+            runtimeDependencies.ifEmpty { other.runtimeDependencies },
             vcs.takeUnless { it == VcsInfo.EMPTY } ?: other.vcs,
             artifact.takeUnless { it == RemoteArtifact.EMPTY } ?: other.artifact
         )

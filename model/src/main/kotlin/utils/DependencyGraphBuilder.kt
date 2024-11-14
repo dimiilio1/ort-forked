@@ -21,7 +21,7 @@ package org.ossreviewtoolkit.model.utils
 
 import java.util.LinkedList
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.model.DependencyGraph
 import org.ossreviewtoolkit.model.DependencyGraphEdge
@@ -104,8 +104,6 @@ class DependencyGraphBuilder<D>(
      */
     private val dependencyHandler: DependencyHandler<D>
 ) {
-    private companion object : Logging
-
     /**
      * A list storing the identifiers of all dependencies added to this builder. This list is then used to resolve
      * dependencies based on their indices.
@@ -144,11 +142,20 @@ class DependencyGraphBuilder<D>(
 
     /**
      * Add the given [dependency] for the scope with the given [scopeName] to this builder. This function needs to be
-     * called all the direct dependencies of all scopes. That way the builder gets sufficient information to construct
+     * called for all direct dependencies of all scopes. That way the builder gets sufficient information to construct
      * the [DependencyGraph].
      */
     fun addDependency(scopeName: String, dependency: D): DependencyGraphBuilder<D> =
         apply { addDependencyToGraph(scopeName, dependency, transitive = false, emptySet()) }
+
+    /**
+     * Add all [dependencies] to the qualified scope name generated from the [projectId] and unqualified [scopeName].
+     */
+    fun addDependencies(projectId: Identifier, scopeName: String, dependencies: Collection<D>) =
+        apply {
+            val qualifiedScopeName = DependencyGraph.qualifyScope(projectId, scopeName)
+            dependencies.forEach { addDependency(qualifiedScopeName, it) }
+        }
 
     /**
      * Add the given [packages] to this builder. They are stored internally and also returned when querying the set of
@@ -181,7 +188,7 @@ class DependencyGraphBuilder<D>(
         )
     }
 
-    private fun Collection<DependencyGraphEdge>.removeCycles(): List<DependencyGraphEdge> {
+    private fun Set<DependencyGraphEdge>.removeCycles(): Set<DependencyGraphEdge> {
         val edges = toMutableSet()
         val edgesToKeep = breakCycles(edges)
         val edgesToRemove = edges - edgesToKeep
@@ -190,7 +197,7 @@ class DependencyGraphBuilder<D>(
             logger.warn { "Removing edge '${it.from} -> ${it.to}' to break a cycle." }
         }
 
-        return filter { it in edgesToKeep }
+        return filterTo(mutableSetOf()) { it in edgesToKeep }
     }
 
     private fun checkReferences() {
@@ -329,7 +336,7 @@ class DependencyGraphBuilder<D>(
         if (!dependencies2.keys.containsAll(dependencies1)) return false
 
         return ref.dependencies.all { refDep ->
-            dependencies2[dependencyIds[refDep.pkg]]?.let { dependencyTreeEquals(refDep, it) } ?: false
+            dependencies2[dependencyIds[refDep.pkg]]?.let { dependencyTreeEquals(refDep, it) } == true
         }
     }
 
@@ -372,7 +379,7 @@ class DependencyGraphBuilder<D>(
         transitive: Boolean,
         processed: Set<D>
     ): DependencyReference? {
-        val transitiveDependencies = dependencyHandler.dependenciesFor(dependency).mapNotNull {
+        val transitiveDependencies = dependencyHandler.dependenciesFor(dependency).mapNotNullTo(mutableSetOf()) {
             addDependencyToGraph(scopeName, it, transitive = true, processed)
         }
 
@@ -389,7 +396,7 @@ class DependencyGraphBuilder<D>(
         val ref = DependencyReference(
             pkg = index.root,
             fragment = index.fragment,
-            dependencies = transitiveDependencies.toSortedSet(),
+            dependencies = transitiveDependencies,
             linkage = dependencyHandler.linkageFor(dependency),
             issues = issues
         )
@@ -438,9 +445,9 @@ class DependencyGraphBuilder<D>(
  */
 private fun Collection<DependencyReference>.toGraph(
     indexMapping: IntArray
-): Pair<List<DependencyGraphNode>, List<DependencyGraphEdge>> {
+): Pair<List<DependencyGraphNode>, Set<DependencyGraphEdge>> {
     val nodes = mutableSetOf<DependencyGraphNode>()
-    val edges = mutableListOf<DependencyGraphEdge>()
+    val edges = mutableSetOf<DependencyGraphEdge>()
     val nodeIndices = mutableMapOf<NodeKey, Int>()
 
     fun getOrAddNodeIndex(ref: DependencyReference): Int =
@@ -555,8 +562,8 @@ private fun constructSortedScopeMappings(
 ): Map<String, List<RootDependencyIndex>> {
     val orderedMappings = mutableMapOf<String, List<RootDependencyIndex>>()
 
-    scopeMappings.keys.toSortedSet().forEach { scope ->
-        orderedMappings[scope] = scopeMappings.getValue(scope)
+    scopeMappings.entries.sortedBy { it.key }.forEach { (scope, rootDependencyIndices) ->
+        orderedMappings[scope] = rootDependencyIndices
             .map { it.mapIndex(indexMapping) }
             .sortedWith(rootDependencyIndexComparator)
     }

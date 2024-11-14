@@ -17,15 +17,12 @@
  * License-Filename: LICENSE
  */
 
-@file:UseSerializers(FileSerializer::class, URISerializer::class)
-
 package org.ossreviewtoolkit.clients.clearlydefined
 
-import java.io.File
-import java.net.URI
+import io.ks3.java.typealiases.FileAsString
+import io.ks3.java.typealiases.UriAsString
 
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.UseSerializers
 
 /**
  * See https://github.com/clearlydefined/service/blob/b339cb7/schemas/definition-1.0.json#L48-L61.
@@ -50,7 +47,7 @@ data class FinalScore(
  */
 @Serializable
 data class FileEntry(
-    val path: File,
+    val path: FileAsString,
     val license: String? = null,
     val attributions: List<String>? = null,
     val facets: List<String>? = null,
@@ -80,8 +77,8 @@ data class Described(
     val facets: CurationFacets? = null,
     val sourceLocation: SourceLocation? = null,
     val urls: URLs? = null,
-    val projectWebsite: URI? = null,
-    val issueTracker: URI? = null,
+    val projectWebsite: UriAsString? = null,
+    val issueTracker: UriAsString? = null,
     val releaseDate: String? = null,
     val hashes: Hashes? = null,
     val files: Int? = null,
@@ -112,29 +109,13 @@ data class LicensedScore(
 )
 
 /**
- * See https://github.com/clearlydefined/service/blob/4917725/schemas/definition-1.0.json#L211-L235.
- */
-@Serializable
-data class SourceLocation(
-    // The following properties match those of Coordinates, except that the revision is mandatory here.
-    val type: ComponentType,
-    val provider: Provider,
-    val namespace: String? = null,
-    val name: String,
-    val revision: String,
-
-    val path: String? = null,
-    val url: String? = null
-)
-
-/**
  * See https://github.com/clearlydefined/service/blob/4917725/schemas/definition-1.0.json#L236-L253.
  */
 @Serializable
 data class URLs(
-    val registry: URI? = null,
-    val version: URI? = null,
-    val download: URI? = null
+    val registry: UriAsString? = null,
+    val version: UriAsString? = null,
+    val download: UriAsString? = null
 )
 
 /**

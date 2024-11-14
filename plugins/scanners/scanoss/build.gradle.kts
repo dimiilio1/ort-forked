@@ -25,29 +25,29 @@ plugins {
 }
 
 dependencies {
-    api(project(":model"))
-    api(project(":scanner"))
+    api(projects.model)
+    api(projects.scanner)
 
-    implementation(project(":clients:scanoss-client"))
-    implementation(project(":utils:common-utils"))
-    implementation(project(":utils:spdx-utils"))
+    implementation(projects.downloader)
+    implementation(projects.utils.commonUtils)
+    implementation(projects.utils.spdxUtils)
 
-    implementation(libs.kotlinxCoroutines)
-    implementation(libs.scanoss)
+    implementation(libs.kotlinx.coroutines)
+    implementation(libs.scanoss) {
+        exclude(group = "org.slf4j", module = "slf4j-simple")
+            .because("the logging provider conflicts with ORT's")
+    }
 
-    funTestApi(testFixtures(project(":scanner")))
+    funTestApi(testFixtures(projects.scanner))
 
-    testImplementation(libs.bundles.kotlinxSerialization)
+    testImplementation(libs.kotlinx.serialization.core)
+    testImplementation(libs.kotlinx.serialization.json)
     testImplementation(libs.mockk)
     testImplementation(libs.wiremock)
 }
 
 tasks.named<KotlinCompile>("compileTestKotlin") {
-    val customCompilerArgs = listOf(
-        "-opt-in=kotlinx.serialization.ExperimentalSerializationApi"
-    )
-
     compilerOptions {
-        freeCompilerArgs.addAll(customCompilerArgs)
+        optIn = listOf("kotlinx.serialization.ExperimentalSerializationApi")
     }
 }

@@ -17,8 +17,6 @@
  * License-Filename: LICENSE
  */
 
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
-
 plugins {
     // Apply core plugins.
     `java-test-fixtures`
@@ -28,41 +26,38 @@ plugins {
 }
 
 dependencies {
-    api(project(":model"))
+    api(projects.model)
 
-    implementation(project(":clients:clearly-defined-client"))
-    implementation(project(":downloader"))
-    implementation(project(":utils:ort-utils"))
+    implementation(projects.clients.clearlyDefinedClient)
+    implementation(projects.downloader)
+    implementation(projects.utils.ortUtils)
 
     implementation(libs.bundles.exposed)
     implementation(libs.hikari)
-    implementation(libs.jacksonModuleKotlin)
-    implementation(libs.kotlinxCoroutines)
+    implementation(libs.jackson.module.kotlin)
+    implementation(libs.kotlinx.coroutines)
     implementation(libs.postgres)
-    implementation(libs.retrofitConverterJackson)
-    implementation(libs.sw360Client)
+    implementation(libs.retrofit.converter.jackson)
+    implementation(libs.sw360Client) {
+        constraints {
+            implementation("commons-io:commons-io:2.17.0")
+                .because("commons-io 2.11.0 is vulnerable by CVE-2024-47554")
+        }
+    }
 
-    funTestApi(testFixtures(project(":scanner")))
+    funTestApi(testFixtures(projects.scanner))
 
-    funTestImplementation(platform(project(":plugins:scanners")))
+    funTestImplementation(platform(projects.plugins.scanners))
+    funTestImplementation(platform(projects.plugins.versionControlSystems))
 
-    testImplementation(platform(project(":plugins:scanners")))
+    testImplementation(platform(projects.plugins.scanners))
 
-    testImplementation(libs.bundles.kotlinxSerialization)
+    testImplementation(libs.kotlinx.serialization.core)
+    testImplementation(libs.kotlinx.serialization.json)
     testImplementation(libs.mockk)
-    testImplementation(libs.retrofitConverterKotlinxSerialization)
+    testImplementation(libs.retrofit.converter.kotlinxSerialization)
     testImplementation(libs.wiremock)
 
-    testFixturesImplementation(libs.kotestAssertionsCore)
-    testFixturesImplementation(libs.kotestRunnerJunit5)
-}
-
-tasks.named<KotlinCompile>("compileTestKotlin") {
-    val customCompilerArgs = listOf(
-        "-opt-in=kotlinx.serialization.ExperimentalSerializationApi"
-    )
-
-    compilerOptions {
-        freeCompilerArgs.addAll(customCompilerArgs)
-    }
+    testFixturesImplementation(libs.kotest.assertions.core)
+    testFixturesImplementation(libs.kotest.runner.junit5)
 }

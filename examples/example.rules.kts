@@ -108,7 +108,7 @@ fun RuleSet.unhandledLicenseRule() = packageRule("UNHANDLED_LICENSE") {
         error(
             "The license $license is currently not covered by policy rules. " +
                     "The license was ${licenseSource.name.lowercase()} in package " +
-                    "${pkg.metadata.id.toCoordinates()}",
+                    "${pkg.metadata.id.toCoordinates()}.",
             howToFixDefault()
         )
     }
@@ -183,7 +183,7 @@ fun RuleSet.copyleftInSourceLimitedRule() = packageRule("COPYLEFT_LIMITED_IN_SOU
 fun RuleSet.dependencyInProjectSourceRule() = projectSourceRule("DEPENDENCY_IN_PROJECT_SOURCE_RULE") {
     val denyDirPatterns = listOf(
         "**/node_modules" to setOf("NPM", "Yarn", "PNPM"),
-        "**/vendor" to setOf("GoMod", "GoDep")
+        "**/vendor" to setOf("GoMod")
     )
 
     denyDirPatterns.forEach { (pattern, packageManagers) ->
@@ -214,20 +214,18 @@ fun RuleSet.vulnerabilityInPackageRule() = packageRule("VULNERABILITY_IN_PACKAGE
 }
 
 fun RuleSet.highSeverityVulnerabilityInPackageRule() = packageRule("HIGH_SEVERITY_VULNERABILITY_IN_PACKAGE") {
-    val maxAcceptedSeverity = "5.0"
-    val scoringSystem = "CVSS2"
+    val scoreThreshold = 5.0f
+    val scoringSystem = "CVSS:3.1"
 
     require {
         -isExcluded()
-        +hasVulnerability(maxAcceptedSeverity, scoringSystem) { value, threshold ->
-            value.toFloat() >= threshold.toFloat()
-        }
+        +hasVulnerability(scoreThreshold, scoringSystem)
     }
 
     issue(
         Severity.ERROR,
         "The package ${pkg.metadata.id.toCoordinates()} has a vulnerability with $scoringSystem severity > " +
-                "$maxAcceptedSeverity",
+            "${scoreThreshold}",
         howToFixDefault()
     )
 }

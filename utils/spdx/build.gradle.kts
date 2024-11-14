@@ -28,9 +28,6 @@ import java.net.URI
 val spdxLicenseListVersion: String by project
 
 plugins {
-    // Apply core plugins.
-    antlr
-
     // Apply precompiled plugins.
     id("ort-library-conventions")
 
@@ -38,49 +35,18 @@ plugins {
     alias(libs.plugins.download)
 }
 
-tasks.withType<AntlrTask>().configureEach {
-    arguments = arguments + listOf("-visitor")
-
-    doLast {
-        // Work around https://github.com/antlr/antlr4/issues/4128.
-        outputDirectory.walk()
-            .filter { it.isFile && it.extension == "java" }
-            .forEach { javaFile ->
-                val lines = javaFile.readLines()
-
-                val text = buildString {
-                    lines.mapIndexed { index, line ->
-                        val patchedLine = when {
-                            index == 0 && line.startsWith("// Generated from ") -> line.replace('\\', '/')
-                            else -> line
-                        }
-
-                        appendLine(patchedLine)
-                    }
-                }
-
-                javaFile.writeText(text)
-            }
-    }
-}
-
-sourceSets.configureEach {
-    val generateGrammarSource = tasks.named(getTaskName("generate", "GrammarSource"))
-    java.srcDir(generateGrammarSource.map { files() })
-}
-
 dependencies {
-    antlr(libs.antlr)
+    api(libs.jackson.databind)
 
-    api(libs.jacksonDatabind)
+    implementation(projects.utils.commonUtils)
 
-    implementation(project(":utils:common-utils"))
+    implementation(libs.jackson.dataformat.yaml)
+    implementation(libs.jackson.datatype.jsr310)
+    implementation(libs.jackson.module.kotlin)
 
-    implementation(libs.jacksonDataformatYaml)
-    implementation(libs.jacksonDatatypeJsr310)
-    implementation(libs.jacksonModuleKotlin)
-
-    testImplementation(libs.kotestAssertionsJson)
+    testImplementation(libs.kotest.assertions.json)
+    testImplementation(libs.kotest.framework.datatest)
+    testImplementation(projects.model)
 }
 
 if (Authenticator.getDefault() == null) {
@@ -352,7 +318,7 @@ val fixupLicenseTextResources by tasks.registering {
         }
 
         resourcePaths.forEach { path ->
-            path.listFiles().forEach { file ->
+            path.walk().maxDepth(1).filter { it.isFile }.forEach { file ->
                 // Trim trailing whitespace and blank lines.
                 val lines = file.readLines().map { it.trimEnd() }
                     .dropWhile { it.isEmpty() }.dropLastWhile { it.isEmpty() }

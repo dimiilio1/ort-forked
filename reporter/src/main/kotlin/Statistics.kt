@@ -29,7 +29,6 @@ import org.ossreviewtoolkit.model.Project
 import org.ossreviewtoolkit.model.RuleViolation
 import org.ossreviewtoolkit.model.Scope
 import org.ossreviewtoolkit.model.Severity
-import org.ossreviewtoolkit.model.Vulnerability
 import org.ossreviewtoolkit.model.config.IssueResolution
 import org.ossreviewtoolkit.model.config.LicenseChoices
 import org.ossreviewtoolkit.model.config.LicenseFindingCuration
@@ -37,6 +36,7 @@ import org.ossreviewtoolkit.model.config.PathExclude
 import org.ossreviewtoolkit.model.config.RuleViolationResolution
 import org.ossreviewtoolkit.model.config.ScopeExclude
 import org.ossreviewtoolkit.model.config.VulnerabilityResolution
+import org.ossreviewtoolkit.model.vulnerabilities.Vulnerability
 import org.ossreviewtoolkit.utils.common.StringSortedSetConverter
 
 /**
@@ -165,7 +165,13 @@ data class LicenseStatistics(
      * All detected licenses, mapped to the number of [Project]s and [Package]s they were detected in.
      */
     @JsonPropertyOrder(alphabetic = true)
-    val detected: Map<String, Int>
+    val detected: Map<String, Int>,
+
+    /**
+     * All effective licenses, mapped to the number of non-excluded [Project]s and [Package]s they apply to.
+     */
+    @JsonPropertyOrder(alphabetic = true)
+    val effective: Map<String, Int>
 )
 
 /**

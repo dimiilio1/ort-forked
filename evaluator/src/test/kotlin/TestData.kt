@@ -24,7 +24,6 @@ import java.time.Instant
 
 import org.ossreviewtoolkit.model.AdvisorCapability
 import org.ossreviewtoolkit.model.AdvisorDetails
-import org.ossreviewtoolkit.model.AdvisorRecord
 import org.ossreviewtoolkit.model.AdvisorResult
 import org.ossreviewtoolkit.model.AdvisorRun
 import org.ossreviewtoolkit.model.AdvisorSummary
@@ -44,8 +43,6 @@ import org.ossreviewtoolkit.model.Scope
 import org.ossreviewtoolkit.model.TextLocation
 import org.ossreviewtoolkit.model.UnknownProvenance
 import org.ossreviewtoolkit.model.VcsInfo
-import org.ossreviewtoolkit.model.Vulnerability
-import org.ossreviewtoolkit.model.VulnerabilityReference
 import org.ossreviewtoolkit.model.config.AdvisorConfiguration
 import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
 import org.ossreviewtoolkit.model.config.Excludes
@@ -54,11 +51,13 @@ import org.ossreviewtoolkit.model.config.PackageLicenseChoice
 import org.ossreviewtoolkit.model.config.PathExclude
 import org.ossreviewtoolkit.model.config.PathExcludeReason
 import org.ossreviewtoolkit.model.config.RepositoryConfiguration
+import org.ossreviewtoolkit.model.vulnerabilities.Vulnerability
+import org.ossreviewtoolkit.model.vulnerabilities.VulnerabilityReference
 import org.ossreviewtoolkit.utils.common.enumSetOf
 import org.ossreviewtoolkit.utils.ort.DeclaredLicenseProcessor
 import org.ossreviewtoolkit.utils.ort.Environment
 import org.ossreviewtoolkit.utils.spdx.SpdxConstants
-import org.ossreviewtoolkit.utils.spdx.model.SpdxLicenseChoice
+import org.ossreviewtoolkit.utils.spdx.SpdxLicenseChoice
 import org.ossreviewtoolkit.utils.spdx.toSpdx
 import org.ossreviewtoolkit.utils.test.scannerRunOf
 
@@ -221,31 +220,33 @@ val ortResult = OrtResult(
         endTime = Instant.EPOCH,
         environment = Environment(),
         config = AdvisorConfiguration(),
-        results = AdvisorRecord(
-            advisorResults = mapOf(
-                packageWithVulnerabilities.id to listOf(
-                    AdvisorResult(
-                        advisor = AdvisorDetails("Advisor", enumSetOf(AdvisorCapability.VULNERABILITIES)),
-                        summary = AdvisorSummary(startTime = Instant.EPOCH, endTime = Instant.EPOCH),
-                        vulnerabilities = listOf(
-                            Vulnerability(
-                                id = "CVE-2021-critical",
-                                references = listOf(
-                                    VulnerabilityReference(
-                                        url = URI("https://oss-review-toolkit.org"),
-                                        scoringSystem = "CVSS3",
-                                        severity = "9.0"
-                                    )
+        results = mapOf(
+            packageWithVulnerabilities.id to listOf(
+                AdvisorResult(
+                    advisor = AdvisorDetails("Advisor", enumSetOf(AdvisorCapability.VULNERABILITIES)),
+                    summary = AdvisorSummary(startTime = Instant.EPOCH, endTime = Instant.EPOCH),
+                    vulnerabilities = listOf(
+                        Vulnerability(
+                            id = "CVE-2021-critical",
+                            references = listOf(
+                                VulnerabilityReference(
+                                    url = URI("https://oss-review-toolkit.org"),
+                                    scoringSystem = "CVSS3",
+                                    severity = "CRITICAL",
+                                    score = 9.0f,
+                                    vector = null
                                 )
-                            ),
-                            Vulnerability(
-                                id = "CVE-2021-trivial",
-                                references = listOf(
-                                    VulnerabilityReference(
-                                        url = URI("https://oss-review-toolkit.org"),
-                                        scoringSystem = "CVSS3",
-                                        severity = "2.0"
-                                    )
+                            )
+                        ),
+                        Vulnerability(
+                            id = "CVE-2021-trivial",
+                            references = listOf(
+                                VulnerabilityReference(
+                                    url = URI("https://oss-review-toolkit.org"),
+                                    scoringSystem = "CVSS3",
+                                    severity = "LOW",
+                                    score = 2.0f,
+                                    vector = null
                                 )
                             )
                         )

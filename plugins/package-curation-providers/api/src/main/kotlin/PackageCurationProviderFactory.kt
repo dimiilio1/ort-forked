@@ -19,19 +19,24 @@
 
 package org.ossreviewtoolkit.plugins.packagecurationproviders.api
 
+import org.apache.logging.log4j.kotlin.logger
+
 import org.ossreviewtoolkit.model.ResolvedPackageCurations.Companion.REPOSITORY_CONFIGURATION_PROVIDER_ID
 import org.ossreviewtoolkit.model.config.ProviderPluginConfiguration
-import org.ossreviewtoolkit.model.utils.PackageCurationProvider
-import org.ossreviewtoolkit.utils.common.Plugin
-import org.ossreviewtoolkit.utils.common.TypedConfigurablePluginFactory
+import org.ossreviewtoolkit.plugins.api.PluginConfig
+import org.ossreviewtoolkit.plugins.api.PluginFactory
 import org.ossreviewtoolkit.utils.common.getDuplicates
 
 /**
  * The extension point for [PackageCurationProvider]s.
  */
-interface PackageCurationProviderFactory<CONFIG> : TypedConfigurablePluginFactory<CONFIG, PackageCurationProvider> {
+interface PackageCurationProviderFactory : PluginFactory<PackageCurationProvider> {
     companion object {
-        val ALL = Plugin.getAll<PackageCurationProviderFactory<*>>()
+        /**
+         * All [package curation provider factories][PackageCurationProviderFactory] available in the classpath,
+         * associated by their names.
+         */
+        val ALL by lazy { PluginFactory.getAll<PackageCurationProviderFactory, PackageCurationProvider>() }
 
         /**
          * Return a new (identifier, provider instance) tuple for each
@@ -41,8 +46,15 @@ interface PackageCurationProviderFactory<CONFIG> : TypedConfigurablePluginFactor
         fun create(configurations: List<ProviderPluginConfiguration>): List<Pair<String, PackageCurationProvider>> =
             configurations.filter {
                 it.enabled
-            }.map {
-                it.id to ALL.getValue(it.type).create(it.config)
+            }.mapNotNull {
+                ALL[it.type]?.let { factory ->
+                    it.id to factory.create(PluginConfig(it.options, it.secrets))
+                }.also { factory ->
+                    factory ?: logger.error {
+                        "Curation provider of type '${it.type}' is enabled in configuration but not available in the " +
+                            "classpath."
+                    }
+                }
             }.apply {
                 require(none { (id, _) -> id.isBlank() }) {
                     "The configuration contains a package curations provider with a blank ID which is not allowed."

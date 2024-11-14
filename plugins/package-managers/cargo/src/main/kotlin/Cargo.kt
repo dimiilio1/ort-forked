@@ -21,13 +21,11 @@
 
 package org.ossreviewtoolkit.plugins.packagemanagers.cargo
 
-import com.fasterxml.jackson.databind.JsonNode
-
-import com.moandjiezana.toml.Toml
-
 import java.io.File
 
-import org.apache.logging.log4j.kotlin.Logging
+import net.peanuuutz.tomlkt.decodeFromNativeReader
+
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.analyzer.AbstractPackageManagerFactory
 import org.ossreviewtoolkit.analyzer.PackageManager
@@ -45,16 +43,17 @@ import org.ossreviewtoolkit.model.RemoteArtifact
 import org.ossreviewtoolkit.model.Scope
 import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
 import org.ossreviewtoolkit.model.config.RepositoryConfiguration
-import org.ossreviewtoolkit.model.jsonMapper
 import org.ossreviewtoolkit.model.orEmpty
 import org.ossreviewtoolkit.utils.common.CommandLineTool
-import org.ossreviewtoolkit.utils.common.splitOnWhitespace
-import org.ossreviewtoolkit.utils.common.textValueOrEmpty
 import org.ossreviewtoolkit.utils.common.unquote
+import org.ossreviewtoolkit.utils.common.withoutPrefix
 import org.ossreviewtoolkit.utils.ort.DeclaredLicenseProcessor
-import org.ossreviewtoolkit.utils.ort.ProcessedDeclaredLicense
 import org.ossreviewtoolkit.utils.spdx.SpdxConstants
 import org.ossreviewtoolkit.utils.spdx.SpdxOperator
+
+private const val DEFAULT_KIND_NAME = "normal"
+private const val DEV_KIND_NAME = "dev"
+private const val BUILD_KIND_NAME = "build"
 
 /**
  * The [Cargo](https://doc.rust-lang.org/cargo/) package manager for Rust.
@@ -64,9 +63,7 @@ class Cargo(
     analysisRoot: File,
     analyzerConfig: AnalyzerConfiguration,
     repoConfig: RepositoryConfiguration
-) : PackageManager(name, analysisRoot, analyzerConfig, repoConfig), CommandLineTool {
-    private companion object : Logging
-
+) : PackageManager(name, "Cargo", analysisRoot, analyzerConfig, repoConfig), CommandLineTool {
     class Factory : AbstractPackageManagerFactory<Cargo>("Cargo") {
         override val globsForDefinitionFiles = listOf("Cargo.toml")
 
@@ -84,15 +81,12 @@ class Cargo(
         // cargo 1.35.0 (6f3e9c367 2019-04-04)
         output.removePrefix("cargo ").substringBefore(' ')
 
-    private fun runMetadata(workingDir: File): String = run(workingDir, "metadata", "--format-version=1").stdout
-
     /**
      * Cargo.lock is located next to Cargo.toml or in one of the parent directories. The latter is the case when the
      * project is part of a workspace. Cargo.lock is then located next to the Cargo.toml file defining the workspace.
      */
-    private fun resolveLockfile(metadata: JsonNode): File {
-        val workspaceRoot = metadata["workspace_root"].textValueOrEmpty()
-        val workingDir = File(workspaceRoot)
+    private fun resolveLockfile(metadata: CargoMetadata): File {
+        val workingDir = File(metadata.workspaceRoot)
         val lockfile = workingDir.resolve("Cargo.lock")
 
         requireLockfile(workingDir) { lockfile.isFile }
@@ -106,147 +100,157 @@ class Cargo(
             return emptyMap()
         }
 
-        val contents = Toml().read(lockfile)
-        return when (contents.getLong("version")) {
-            3L -> {
-                contents.getTables("package").orEmpty().mapNotNull { pkg ->
-                    pkg.getString("checksum")?.let { checksum ->
-                        val key = "${pkg.getString("name")} ${pkg.getString("version")} (${pkg.getString("source")})"
+        val contents = lockfile.reader().use { toml.decodeFromNativeReader<CargoLockfile>(it) }
+
+        if (contents.version == null) {
+            val checksumMetadata = contents.metadata.mapNotNull { (k, v) ->
+                // Lockfile version 1 uses strings like:
+                // "checksum cfg-if 0.1.9 (registry+https://github.com/rust-lang/crates.io-index)"
+                k.unquote().withoutPrefix("checksum ")?.let { it to v }
+            }.toMap()
+
+            if (checksumMetadata.isNotEmpty()) return checksumMetadata
+        }
+
+        return when (contents.version) {
+            null, 2, 3 -> {
+                contents.packages.mapNotNull { pkg ->
+                    pkg.checksum?.let { checksum ->
+                        // Use the same key format as for version 1, see above.
+                        val key = "${pkg.name} ${pkg.version} (${pkg.source})"
                         key to checksum
                     }
-                }
+                }.toMap()
             }
 
-            else -> {
-                val metadata = contents.getTable("metadata")?.toMap().orEmpty()
-                metadata.mapNotNull { (k, v) ->
-                    (v as? String)?.let { k.unquote().removePrefix("checksum ") to v }
-                }
-            }
-        }.toMap()
-    }
-
-    /**
-     * Check if a package is a project. All path dependencies inside the analyzer root are treated as project
-     * dependencies.
-     */
-    private fun isProjectDependency(id: String) =
-        PATH_DEPENDENCY_REGEX.matchEntire(id)?.groups?.get(1)?.let { match ->
-            val packageDir = File(match.value)
-            packageDir.startsWith(analysisRoot)
-        } ?: false
-
-    private fun buildDependencyTree(
-        name: String,
-        version: String,
-        packages: Map<String, Package>,
-        metadata: JsonNode
-    ): PackageReference {
-        val node = metadata["packages"].single {
-            it["name"].textValue() == name && it["version"].textValue() == version
+            else -> throw IllegalArgumentException("Unsupported lockfile version ${contents.version}.")
         }
-
-        val dependencies = node["dependencies"].filter {
-            // Filter dev and build dependencies, because they are not transitive.
-            val kind = it["kind"].textValueOrEmpty()
-            kind != "dev" && kind != "build"
-        }.mapNotNullTo(mutableSetOf()) {
-            // TODO: Handle renamed dependencies here, see:
-            //       https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#renaming-dependencies-in-cargotoml
-            val dependencyName = it["name"].textValue()
-
-            getResolvedVersion(name, version, dependencyName, metadata)?.let { dependencyVersion ->
-                buildDependencyTree(dependencyName, dependencyVersion, packages, metadata)
-            }
-        }
-
-        val id = parseCargoId(node)
-        val pkg = packages.getValue(id)
-        val linkage = if (isProjectDependency(id)) PackageLinkage.PROJECT_STATIC else PackageLinkage.STATIC
-
-        return pkg.toReference(linkage, dependencies)
     }
 
     override fun resolveDependencies(definitionFile: File, labels: Map<String, String>): List<ProjectAnalyzerResult> {
-        // Get the project name and version. If one of them is missing return null, because this is a workspace
-        // definition file that does not contain a project.
-        val pkgDefinition = Toml().read(definitionFile)
-        val projectName = pkgDefinition.getString("package.name") ?: return emptyList()
-        val projectVersion = pkgDefinition.getString("package.version") ?: return emptyList()
-
         val workingDir = definitionFile.parentFile
-        val metadataJson = runMetadata(workingDir)
-        val metadata = jsonMapper.readTree(metadataJson)
-        val hashes = readHashes(resolveLockfile(metadata))
+        val metadataProcess = run(workingDir, "metadata", "--format-version=1")
+        val metadata = json.decodeFromString<CargoMetadata>(metadataProcess.stdout)
 
-        val packages = metadata["packages"].associateBy(
-            { parseCargoId(it) },
-            { parsePackage(it, hashes) }
-        )
-
-        val projectId = metadata["workspace_members"]
-            .map { it.textValueOrEmpty() }
-            .single { it.startsWith("$projectName $projectVersion") }
-
-        val projectNode = metadata["packages"].single { it["id"].textValueOrEmpty() == projectId }
-        val groupedDependencies = projectNode["dependencies"].groupBy { it["kind"].textValueOrEmpty() }
-
-        fun getTransitiveDependencies(directDependencies: List<JsonNode>?, scope: String): Scope? {
-            if (directDependencies == null) return null
-
-            val transitiveDependencies = directDependencies
-                .mapNotNull { dependency ->
-                    val dependencyName = dependency["name"].textValue()
-                    val version = getResolvedVersion(projectName, projectVersion, dependencyName, metadata)
-                    version?.let { Pair(dependencyName, it) }
-                }
-                .mapTo(mutableSetOf()) {
-                    buildDependencyTree(name = it.first, version = it.second, packages = packages, metadata = metadata)
-                }
-
-            return Scope(scope, transitiveDependencies)
+        val projectId = requireNotNull(metadata.resolve.root) {
+            "Virtual workspaces are not supported."
         }
 
+        val projectNode = metadata.resolve.nodes.single { it.id == projectId }
+        val depNodesByKind = mutableMapOf<String, MutableList<CargoMetadata.Node>>()
+        projectNode.deps.forEach { dep ->
+            val depNode = metadata.resolve.nodes.single { it.id == dep.pkg }
+
+            dep.depKinds.forEach { depKind ->
+                depNodesByKind.getOrPut(depKind.kind ?: DEFAULT_KIND_NAME) { mutableListOf() } += depNode
+            }
+        }
+
+        val packageById = metadata.packages.associateBy { it.id }
+
+        fun Collection<CargoMetadata.Node>.toPackageReferences(): Set<PackageReference> =
+            mapNotNullTo(mutableSetOf()) { node ->
+                // TODO: Handle renamed dependencies here, see:
+                //       https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#renaming-dependencies-in-cargotoml
+                val dependencyNodes = node.deps.filter { dep ->
+                    // Only normal dependencies are transitive.
+                    dep.depKinds.any { it.kind == null }
+                }.map { dep ->
+                    metadata.resolve.nodes.single { it.id == dep.pkg }
+                }
+
+                val pkg = packageById.getValue(node.id)
+                PackageReference(
+                    id = Identifier("Crate", "", pkg.name, pkg.version),
+                    linkage = if (pkg.isProject(analysisRoot)) PackageLinkage.PROJECT_STATIC else PackageLinkage.STATIC,
+                    dependencies = dependencyNodes.toPackageReferences()
+                )
+            }
+
         val scopes = setOfNotNull(
-            getTransitiveDependencies(groupedDependencies[""], "dependencies"),
-            getTransitiveDependencies(groupedDependencies["dev"], "dev-dependencies"),
-            getTransitiveDependencies(groupedDependencies["build"], "build-dependencies")
+            depNodesByKind[DEFAULT_KIND_NAME]?.let { Scope("dependencies", it.toPackageReferences()) },
+            depNodesByKind[DEV_KIND_NAME]?.let { Scope("dev-dependencies", it.toPackageReferences()) },
+            depNodesByKind[BUILD_KIND_NAME]?.let { Scope("build-dependencies", it.toPackageReferences()) }
         )
 
-        val projectPkg = packages.values.single { pkg ->
-            pkg.id.name == projectName && pkg.id.version == projectVersion
-        }.let { it.copy(id = it.id.copy(type = managerName)) }
-
-        val homepageUrl = pkgDefinition.getString("package.homepage").orEmpty()
-        val authors = pkgDefinition.getList("package.authors", emptyList<String>())
-            .mapNotNullTo(mutableSetOf(), ::parseAuthorString)
+        val hashes = readHashes(resolveLockfile(metadata))
+        val projectPkg = packageById.getValue(projectId).let { cargoPkg ->
+            cargoPkg.toPackage(hashes).let { it.copy(id = it.id.copy(type = managerName)) }
+        }
 
         val project = Project(
             id = projectPkg.id,
             definitionFilePath = VersionControlSystem.getPathInfo(definitionFile).path,
-            authors = authors,
+            authors = projectPkg.authors,
             declaredLicenses = projectPkg.declaredLicenses,
-            declaredLicensesProcessed = processDeclaredLicenses(projectPkg.declaredLicenses),
+            declaredLicensesProcessed = projectPkg.declaredLicensesProcessed,
             vcs = projectPkg.vcs,
-            vcsProcessed = processProjectVcs(workingDir, projectPkg.vcs, homepageUrl),
-            homepageUrl = homepageUrl,
+            vcsProcessed = processProjectVcs(workingDir, projectPkg.vcs, projectPkg.homepageUrl),
+            homepageUrl = projectPkg.homepageUrl,
             scopeDependencies = scopes
         )
 
-        val nonProjectPackages = packages
-            .filterNot { isProjectDependency(it.key) }
-            .mapTo(mutableSetOf()) { it.value }
+        val nonProjectPackages = packageById.values.mapNotNullTo(mutableSetOf()) { cargoPkg ->
+            cargoPkg.takeUnless { it.isProject(analysisRoot) }?.toPackage(hashes)
+        }
 
         return listOf(ProjectAnalyzerResult(project, nonProjectPackages))
     }
 }
 
-private val PATH_DEPENDENCY_REGEX = Regex("""^.*\(path\+file://(.*)\)$""")
+/**
+ * Return the local path for this Cargo package if applicable, or null if the Cargo package is not local.
+ */
+private fun CargoMetadata.Package.getLocalPath(): File? =
+    id.substringAfter("path+file://", "").ifEmpty { null }
+        ?.removeSuffix(")")?.substringBefore("#")?.let { File(it) }
 
-private fun parseCargoId(node: JsonNode) = node["id"].textValueOrEmpty()
+/**
+ * Return whether this Cargo package is supposed to be regarded as an ORT project. The [analysisRoot] is used to check
+ * whether this Cargo package lives within the analyzer root.
+ */
+private fun CargoMetadata.Package.isProject(analysisRoot: File): Boolean {
+    val isWithinAnalyzerRoot = getLocalPath()?.startsWith(analysisRoot.absoluteFile) == true
 
-private fun parseDeclaredLicenses(node: JsonNode): Set<String> {
-    val declaredLicenses = node["license"].textValueOrEmpty().split('/')
+    // If a package cannot be retrieved from anywhere but lies within the analyzer root, treat it as a project.
+    return source == null && isWithinAnalyzerRoot
+}
+
+private fun CargoMetadata.Package.toPackage(hashes: Map<String, String>): Package {
+    val declaredLicenses = parseDeclaredLicenses()
+
+    // While the previously used "/" was not explicit about the intended license operator, the community consensus
+    // seems to be that an existing "/" should be interpreted as "OR", see e.g. the discussions at
+    // https://github.com/rust-lang/cargo/issues/2039
+    // https://github.com/rust-lang/cargo/pull/4920
+    val declaredLicensesProcessed = DeclaredLicenseProcessor.process(declaredLicenses, operator = SpdxOperator.OR)
+
+    val vcs = repository?.let { VcsHost.parseUrl(it) }.orEmpty()
+    val vcsProcessed = getLocalPath()?.let { PackageManager.processProjectVcs(it) } ?: vcs.normalize()
+
+    return Package(
+        id = Identifier(
+            type = "Crate",
+            // Note that Rust / Cargo do not support package namespaces, see:
+            // https://samsieber.tech/posts/2020/09/registry-structure-influence/
+            namespace = "",
+            name = name,
+            version = version
+        ),
+        authors = authors.flatMap { parseAuthorString(it) }.mapNotNullTo(mutableSetOf()) { it.name },
+        declaredLicenses = declaredLicenses,
+        declaredLicensesProcessed = declaredLicensesProcessed,
+        description = description.orEmpty(),
+        binaryArtifact = RemoteArtifact.EMPTY,
+        sourceArtifact = parseSourceArtifact(hashes).orEmpty(),
+        homepageUrl = homepage.orEmpty(),
+        vcs = vcs,
+        vcsProcessed = vcsProcessed
+    )
+}
+
+private fun CargoMetadata.Package.parseDeclaredLicenses(): Set<String> {
+    val declaredLicenses = license.orEmpty().split('/')
         .map { it.trim() }
         .filterTo(mutableSetOf()) { it.isNotEmpty() }
 
@@ -254,65 +258,27 @@ private fun parseDeclaredLicenses(node: JsonNode): Set<String> {
     // an unknown declared license to indicate that there is a declared license, but we cannot know which it is at this
     // point.
     // See: https://doc.rust-lang.org/cargo/reference/manifest.html#the-license-and-license-file-fields
-    if (node["license_file"].textValueOrEmpty().isNotBlank()) {
+    if (licenseFile.orEmpty().isNotBlank()) {
         declaredLicenses += SpdxConstants.NOASSERTION
     }
 
     return declaredLicenses
 }
 
-private fun processDeclaredLicenses(licenses: Set<String>): ProcessedDeclaredLicense =
-    // While the previously used "/" was not explicit about the intended license operator, the community consensus
-    // seems to be that an existing "/" should be interpreted as "OR", see e.g. the discussions at
-    // https://github.com/rust-lang/cargo/issues/2039
-    // https://github.com/rust-lang/cargo/pull/4920
-    DeclaredLicenseProcessor.process(licenses, operator = SpdxOperator.OR)
-
-private fun parsePackage(node: JsonNode, hashes: Map<String, String>): Package {
-    val declaredLicenses = parseDeclaredLicenses(node)
-    val declaredLicensesProcessed = processDeclaredLicenses(declaredLicenses)
-
-    return Package(
-        id = parsePackageId(node),
-        authors = parseAuthors(node["authors"]),
-        declaredLicenses = declaredLicenses,
-        declaredLicensesProcessed = declaredLicensesProcessed,
-        description = node["description"].textValueOrEmpty(),
-        binaryArtifact = RemoteArtifact.EMPTY,
-        sourceArtifact = parseSourceArtifact(node, hashes).orEmpty(),
-        homepageUrl = "",
-        vcs = parseVcsInfo(node)
-    )
-}
-
-private fun parsePackageId(node: JsonNode) =
-    Identifier(
-        type = "Crate",
-        // Note that Rust / Cargo do not support package namespaces, see:
-        // https://samsieber.tech/posts/2020/09/registry-structure-influence/
-        namespace = "",
-        name = node["name"].textValueOrEmpty(),
-        version = node["version"].textValueOrEmpty()
-    )
-
-private fun parseRepositoryUrl(node: JsonNode) = node["repository"].textValueOrEmpty()
-
 // Match source dependencies that directly reference git repositories. The specified tag or branch
 // name is ignored (i.e. not captured) in favor of the actual commit hash that they currently refer
 // to.
 // See https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#specifying-dependencies-from-git-repositories
 // for the specification for this kind of dependency.
-private val GIT_DEPENDENCY_REGEX = Regex("git\\+(https://.*)\\?(?:rev|tag|branch)=.+#([0-9a-zA-Z]+)")
+private val GIT_DEPENDENCY_REGEX = Regex("git\\+(https://.*)\\?(?:rev|tag|branch)=.+#([0-9a-fA-F]{7,40})")
 
-private fun parseSourceArtifact(node: JsonNode, hashes: Map<String, String>): RemoteArtifact? {
-    val source = node["source"]?.textValue() ?: return null
+private fun CargoMetadata.Package.parseSourceArtifact(hashes: Map<String, String>): RemoteArtifact? {
+    val source = source ?: return null
 
     if (source == "registry+https://github.com/rust-lang/crates.io-index") {
-        val name = node["name"]?.textValue() ?: return null
-        val version = node["version"]?.textValue() ?: return null
         val url = "https://crates.io/api/v1/crates/$name/$version/download"
-        val id = parseCargoId(node)
-        val hash = Hash.create(hashes[id].orEmpty())
+        val key = "$name $version ($source)"
+        val hash = Hash.create(hashes[key].orEmpty())
         return RemoteArtifact(url, hash)
     }
 
@@ -320,35 +286,3 @@ private fun parseSourceArtifact(node: JsonNode, hashes: Map<String, String>): Re
     val (url, hash) = match.destructured
     return RemoteArtifact(url, Hash.create(hash))
 }
-
-private fun parseVcsInfo(node: JsonNode) = VcsHost.parseUrl(parseRepositoryUrl(node))
-
-private fun getResolvedVersion(
-    parentName: String,
-    parentVersion: String,
-    dependencyName: String,
-    metadata: JsonNode
-): String? {
-    val node = metadata["resolve"]["nodes"].single {
-        it["id"].textValue().startsWith("$parentName $parentVersion")
-    }
-
-    // This is null if the dependency is optional and the feature was not enabled. In this case the version was not
-    // resolved and the dependency should not appear in the dependency tree. An example for a dependency string is
-    // "bitflags 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)", for more details see
-    // https://doc.rust-lang.org/cargo/commands/cargo-metadata.html.
-    node["dependencies"].forEach {
-        val substrings = it.textValue().splitOnWhitespace()
-        require(substrings.size > 1) { "Unexpected format while parsing dependency JSON node." }
-
-        if (substrings[0] == dependencyName) return substrings[1]
-    }
-
-    return null
-}
-
-/**
- * Parse information about authors from the given [node] with package metadata.
- */
-private fun parseAuthors(node: JsonNode?): Set<String> =
-    node?.mapNotNullTo(mutableSetOf()) { parseAuthorString(it.textValue()) } ?: emptySet()

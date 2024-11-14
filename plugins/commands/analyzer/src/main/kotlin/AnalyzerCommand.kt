@@ -31,12 +31,13 @@ import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.options.split
 import com.github.ajalt.clikt.parameters.types.enum
 import com.github.ajalt.clikt.parameters.types.file
+import com.github.ajalt.mordant.rendering.Theme
 
 import java.time.Duration
 
 import kotlin.time.toKotlinDuration
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.analyzer.Analyzer
 import org.ossreviewtoolkit.analyzer.determineEnabledPackageManagers
@@ -56,6 +57,7 @@ import org.ossreviewtoolkit.plugins.packagecurationproviders.api.PackageCuration
 import org.ossreviewtoolkit.plugins.packagecurationproviders.api.SimplePackageCurationProvider
 import org.ossreviewtoolkit.utils.common.expandTilde
 import org.ossreviewtoolkit.utils.common.safeMkdirs
+import org.ossreviewtoolkit.utils.ort.ORT_FAILURE_STATUS_CODE
 import org.ossreviewtoolkit.utils.ort.ORT_REPO_CONFIG_FILENAME
 import org.ossreviewtoolkit.utils.ort.ORT_RESOLUTIONS_FILENAME
 import org.ossreviewtoolkit.utils.ort.ortConfigDirectory
@@ -64,12 +66,10 @@ class AnalyzerCommand : OrtCommand(
     name = "analyze",
     help = "Determine dependencies of a software project."
 ) {
-    private companion object : Logging
-
     private val inputDir by option(
         "--input-dir", "-i",
-        help = "The project directory to analyze. As a special case, if only one package manager is enabled, this " +
-            "may point to a definition file for that package manager to only analyze that single project."
+        help = "The project directory to analyze. May point to a definition file if only a single package manager is " +
+            "enabled."
     ).convert { it.expandTilde() }
         .file(mustExist = true, canBeFile = true, canBeDir = true, mustBeWritable = false, mustBeReadable = true)
         .convert { it.absoluteFile.normalize() }
@@ -97,7 +97,7 @@ class AnalyzerCommand : OrtCommand(
     ).convert { it.expandTilde() }
         .file(mustExist = true, canBeFile = true, canBeDir = false, mustBeWritable = false, mustBeReadable = true)
         .convert { it.absoluteFile.normalize() }
-        .defaultLazy { inputDir.resolve(ORT_REPO_CONFIG_FILENAME) }
+        .defaultLazy { (inputDir.takeUnless { it.isFile } ?: inputDir.parentFile).resolve(ORT_REPO_CONFIG_FILENAME) }
         .configurationGroup()
 
     private val resolutionsFile by option(
@@ -184,7 +184,7 @@ class AnalyzerCommand : OrtCommand(
                 echo("Found ${files.size} $manager definition file(s) at:")
 
                 files.forEach { file ->
-                    val relativePath = file.toRelativeString(inputDir).takeIf { it.isNotEmpty() } ?: "."
+                    val relativePath = file.toRelativeString(inputDir).ifEmpty { "." }
                     echo("\t$relativePath")
                 }
             }
@@ -207,7 +207,7 @@ class AnalyzerCommand : OrtCommand(
 
         val analyzerRun = ortResult.analyzer
         if (analyzerRun == null) {
-            echo("No analyzer run was created.")
+            echo(Theme.Default.danger("No analyzer run was created."))
             throw ProgramResult(1)
         }
 
@@ -229,6 +229,6 @@ class AnalyzerCommand : OrtCommand(
         val resolutionProvider = DefaultResolutionProvider.create(ortResult, resolutionsFile)
         val issues = analyzerRun.result.getAllIssues().flatMap { it.value }
         SeverityStatsPrinter(terminal, resolutionProvider).stats(issues)
-            .print().conclude(ortConfig.severeIssueThreshold, 2)
+            .print().conclude(ortConfig.severeIssueThreshold, ORT_FAILURE_STATUS_CODE)
     }
 }

@@ -21,9 +21,12 @@ package org.ossreviewtoolkit.model
 
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonInclude
+import com.fasterxml.jackson.databind.annotation.JsonSerialize
 
 import java.util.SortedSet
 
+import org.ossreviewtoolkit.model.utils.DependencyGraphEdgeSortedSetConverter
+import org.ossreviewtoolkit.model.utils.DependencyReferenceSortedSetConverter
 import org.ossreviewtoolkit.model.utils.PackageLinkageValueFilter
 
 /**
@@ -96,13 +99,14 @@ data class DependencyGraph(
      * list, there can be multiple nodes for a single package. The order of nodes in this list is relevant; the
      * edges of the graph reference their nodes by numeric indices.
      */
-    val nodes: List<DependencyGraphNode>? = null,
+    val nodes: List<DependencyGraphNode> = emptyList(),
 
     /**
-     * A list with the edges of this dependency graph. By traversing the edges, the dependencies of packages can be
+     * A set with the edges of this dependency graph. By traversing the edges, the dependencies of packages can be
      * determined.
      */
-    val edges: List<DependencyGraphEdge>? = null
+    @JsonSerialize(converter = DependencyGraphEdgeSortedSetConverter::class)
+    val edges: Set<DependencyGraphEdge> = emptySet()
 ) {
     companion object {
         /**
@@ -183,7 +187,7 @@ data class DependencyGraph(
      */
     private fun constructReferenceMapping(): Map<String, PackageReference> {
         val refMapping = mutableMapOf<String, PackageReference>()
-        val allNodes = nodes ?: scopeRoots.map(DependencyReference::toGraphNode)
+        val allNodes = nodes.takeUnless { it.isEmpty() } ?: scopeRoots.map(DependencyReference::toGraphNode)
 
         allNodes.forEach { constructReferenceTree(it, refMapping) }
 
@@ -218,7 +222,7 @@ data class DependencyGraph(
      */
     private fun constructNodeDependencies(): NodeDependencies =
         when {
-            nodes != null && edges != null -> constructNodeDependenciesFromGraph(nodes, edges)
+            nodes.isNotEmpty() -> constructNodeDependenciesFromGraph(nodes, edges)
             else -> constructNodeDependenciesFromScopeRoots(scopeRoots)
         }
 
@@ -243,7 +247,7 @@ data class DependencyGraph(
             addIssues(ref)
         }
 
-        nodes?.forEach { node ->
+        nodes.forEach { node ->
             addIssues(node.pkg, node.issues)
         }
 
@@ -314,12 +318,13 @@ class DependencyReference(
     /**
      * A set with the references to the dependencies of this dependency. That way a tree-like structure is established.
      */
-    val dependencies: SortedSet<DependencyReference> = sortedSetOf(),
+    @JsonSerialize(contentConverter = DependencyReferenceSortedSetConverter::class)
+    val dependencies: Set<DependencyReference> = emptySet(),
 
     /**
-     * The type of linkage used for the referred package from its dependent package. As most of our supported
+     * The type of linkage used for the referred package from its dependent package. As most of ORT's supported
      * package managers / languages only support dynamic linking or at least default to it, also use that as the
-     * default value here to not blow up our result files.
+     * default value here to not blow up ORT result files.
      */
     @JsonInclude(value = JsonInclude.Include.CUSTOM, valueFilter = PackageLinkageValueFilter::class)
     val linkage: PackageLinkage = PackageLinkage.DYNAMIC,
@@ -362,9 +367,9 @@ data class DependencyGraphNode(
     val fragment: Int = 0,
 
     /**
-     * The type of linkage used for the referred package from its dependent package. As most of our supported
+     * The type of linkage used for the referred package from its dependent package. As most of ORT's supported
      * package managers / languages only support dynamic linking or at least default to it, also use that as the
-     * default value here to not blow up our result files.
+     * default value here to not blow up ORT result files.
      */
     @JsonInclude(value = JsonInclude.Include.CUSTOM, valueFilter = PackageLinkageValueFilter::class)
     val linkage: PackageLinkage = PackageLinkage.DYNAMIC,
@@ -397,10 +402,10 @@ private fun DependencyReference.toGraphNode() = DependencyGraphNode(pkg, fragmen
 /**
  * Construct a mapping of dependencies based on the given [roots].
  */
-private fun constructNodeDependenciesFromScopeRoots(roots: SortedSet<DependencyReference>): NodeDependencies {
+private fun constructNodeDependenciesFromScopeRoots(roots: Set<DependencyReference>): NodeDependencies {
     val mapping = mutableMapOf<DependencyGraphNode, List<DependencyGraphNode>>()
 
-    fun construct(refs: SortedSet<DependencyReference>) {
+    fun construct(refs: Set<DependencyReference>) {
         refs.forEach { ref ->
             val node = ref.toGraphNode()
             if (node !in mapping) {
@@ -419,7 +424,7 @@ private fun constructNodeDependenciesFromScopeRoots(roots: SortedSet<DependencyR
  */
 private fun constructNodeDependenciesFromGraph(
     nodes: List<DependencyGraphNode>,
-    edges: List<DependencyGraphEdge>
+    edges: Set<DependencyGraphEdge>
 ): NodeDependencies {
     val mapping = mutableMapOf<DependencyGraphNode, MutableList<DependencyGraphNode>>()
 

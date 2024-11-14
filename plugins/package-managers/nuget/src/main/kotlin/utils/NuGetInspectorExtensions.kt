@@ -92,11 +92,18 @@ private fun NuGetInspector.PackageData.getIdentifierWithNamespace(): Identifier 
 
 private fun List<NuGetInspector.PackageData>.toPackageReferences(): Set<PackageReference> =
     mapTo(mutableSetOf()) { data ->
+        val errors = data.errors.map {
+            Issue(source = TYPE, message = it.lineSequence().first(), severity = Severity.ERROR)
+        }
+
+        val warnings = data.warnings.map {
+            Issue(source = TYPE, message = it.lineSequence().first(), severity = Severity.WARNING)
+        }
+
         PackageReference(
             id = data.getIdentifierWithNamespace(),
             dependencies = data.dependencies.toPackageReferences(),
-            issues = data.errors.map { Issue(source = TYPE, message = it, severity = Severity.ERROR) }
-                + data.warnings.map { Issue(source = TYPE, message = it, severity = Severity.WARNING) }
+            issues = errors + warnings
         )
     }
 
@@ -106,6 +113,7 @@ internal fun Collection<NuGetInspector.PackageData>.toOrtPackages(): Set<Package
 
         fun NuGetInspector.PackageData.getHash(): Hash =
             Hash.create(
+                @Suppress("UseOrEmpty")
                 (sha512 ?: sha256 ?: sha1 ?: md5 ?: "").lowercase()
             )
 
@@ -135,7 +143,7 @@ internal fun Collection<NuGetInspector.PackageData>.toOrtPackages(): Set<Package
 
         Package(
             id = id,
-            purl = pkg.purl.takeUnless { it.isEmpty() } ?: id.toPurl(),
+            purl = pkg.purl.ifEmpty { id.toPurl() },
             authors = pkg.parties.toAuthors(),
             declaredLicenses = declaredLicenses,
             declaredLicensesProcessed = DeclaredLicenseProcessor.process(declaredLicenses),

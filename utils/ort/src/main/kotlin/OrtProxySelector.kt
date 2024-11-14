@@ -27,7 +27,7 @@ import java.net.ProxySelector
 import java.net.SocketAddress
 import java.net.URI
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.utils.common.Os
 
@@ -40,7 +40,7 @@ const val DEFAULT_PROXY_PORT = 8080
  * A proxy selector which supports dynamic addition and removal of proxies with optional password authentication.
  */
 class OrtProxySelector(private val fallback: ProxySelector? = null) : ProxySelector() {
-    companion object : Logging {
+    companion object {
         internal val NO_PROXY_LIST = listOf(Proxy.NO_PROXY)
 
         /**
@@ -191,7 +191,7 @@ class OrtProxySelector(private val fallback: ProxySelector? = null) : ProxySelec
 
         // Quote from the upstream documentation for select: When no proxy is available, the list will contain one
         // element of type Proxy that represents a direct connection.
-        return proxies.takeUnless { it.isEmpty() } ?: fallback?.select(uri) ?: NO_PROXY_LIST
+        return proxies.ifEmpty { fallback?.select(uri) ?: NO_PROXY_LIST }
     }
 
     override fun connectFailed(uri: URI?, sa: SocketAddress?, ioe: IOException?) {

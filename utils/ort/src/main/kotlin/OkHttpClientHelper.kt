@@ -21,6 +21,8 @@ package org.ossreviewtoolkit.utils.ort
 
 import java.io.File
 import java.io.IOException
+import java.lang.invoke.MethodHandles
+import java.net.URI
 import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 
@@ -43,7 +45,8 @@ import okhttp3.ResponseBody
 import okio.buffer
 import okio.sink
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
+import org.apache.logging.log4j.kotlin.loggerOf
 
 import org.ossreviewtoolkit.utils.common.ArchiveType
 import org.ossreviewtoolkit.utils.common.collectMessages
@@ -54,14 +57,9 @@ import org.ossreviewtoolkit.utils.common.withoutPrefix
 typealias BuilderConfiguration = OkHttpClient.Builder.() -> Unit
 
 /**
- * An HTTP-specific download error that enriches an [IOException] with an additional HTTP error code.
- */
-class HttpDownloadError(val code: Int, message: String) : IOException("$message (HTTP code $code)")
-
-/**
  * A helper class to manage OkHttp instances backed by distinct cache directories.
  */
-object OkHttpClientHelper : Logging {
+object OkHttpClientHelper {
     /**
      * A constant for the "too many requests" HTTP code as HttpURLConnection has none.
      */
@@ -78,6 +76,13 @@ object OkHttpClientHelper : Logging {
             clients.getOrPut(it) { okHttpClient.newBuilder().apply(block).build() }
         } ?: okHttpClient
 }
+
+/**
+ * An HTTP-specific download error that enriches an [IOException] with an additional HTTP error code.
+ */
+class HttpDownloadError(val code: Int, message: String) : IOException("$message (HTTP code $code)")
+
+private val logger = loggerOf(MethodHandles.lookup().lookupClass())
 
 private const val CACHE_DIRECTORY = "cache/http"
 private val MAX_CACHE_SIZE_IN_BYTES = 1.gibibytes
@@ -110,8 +115,8 @@ val okHttpClient: OkHttpClient by lazy {
             }.onFailure {
                 it.showStackTrace()
 
-                OkHttpClientHelper.logger.error {
-                    "HTTP request to '${request.url}' failed with an exception: ${it.collectMessages()}"
+                logger.error {
+                    "HTTP request to ${request.url} failed with an exception: ${it.collectMessages()}"
                 }
             }.getOrThrow()
         }
@@ -139,11 +144,17 @@ fun OkHttpClient.Builder.addBasicAuthorization(username: String, password: Strin
  * Download from [url] and return a [Result] with a file inside [directory] that holds the response body content on
  * success, or a [Result] wrapping an [IOException] (which might be a [HttpDownloadError]) on failure.
  */
-fun OkHttpClient.downloadFile(url: String, directory: File): Result<File> =
+fun OkHttpClient.downloadFile(url: String, directory: File): Result<File> {
+    if (url.startsWith("file:/")) {
+        val source = File(URI.create(url))
+        val target = directory.resolve(source.name)
+        return runCatching { source.copyTo(target) }
+    }
+
     // Disable transparent gzip compression, as otherwise we might end up writing a tar file to disk while
     // expecting to find a tar.gz file, and fail to unpack the archive. See
     // https://github.com/square/okhttp/blob/parent-3.10.0/okhttp/src/main/java/okhttp3/internal/http/BridgeInterceptor.java#L79
-    download(url, acceptEncoding = "identity").mapCatching { (response, body) ->
+    return download(url, acceptEncoding = "identity").mapCatching { (response, body) ->
 
         // Depending on the server, we may only get a useful target file name when looking at the response
         // header or at a redirected URL. In case of the Crates registry, for example, we want to resolve
@@ -182,15 +193,19 @@ fun OkHttpClient.downloadFile(url: String, directory: File): Result<File> =
 
         file
     }
+}
 
 /**
  * Download from [url] and return a [Result] with a string representing the response body content on success, or a
  * [Result] wrapping an [IOException] (which might be a [HttpDownloadError]) on failure.
  */
-fun OkHttpClient.downloadText(url: String): Result<String> =
-    download(url).mapCatching { (_, body) ->
+fun OkHttpClient.downloadText(url: String): Result<String> {
+    if (url.startsWith("file:/")) return runCatching { File(URI.create(url)).readText() }
+
+    return download(url).mapCatching { (_, body) ->
         body.use { it.string() }
     }
+}
 
 /**
  * Download from [url] with optional [acceptEncoding] and return a [Result] with the [Response] and non-nullable
@@ -230,7 +245,7 @@ fun OkHttpClient.ping(url: String): Response =
  */
 fun OkHttpClient.execute(request: Request): Response =
     newCall(request).execute().also { response ->
-        OkHttpClientHelper.logger.debug {
+        logger.debug {
             if (response.cacheResponse != null) {
                 "Retrieved ${response.request.url} from local cache."
             } else {

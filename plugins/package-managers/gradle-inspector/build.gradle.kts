@@ -29,26 +29,23 @@ plugins {
 }
 
 dependencies {
-    api(project(":analyzer"))
-    api(project(":model"))
+    api(projects.analyzer)
+    api(projects.model)
 
-    implementation(project(":downloader"))
-    implementation(project(":plugins:package-managers:gradle-model"))
-    implementation(project(":utils:common-utils"))
-    implementation(project(":utils:ort-utils"))
-    implementation(project(":utils:spdx-utils"))
+    implementation(projects.downloader)
+    implementation(projects.plugins.packageManagers.gradleModel)
+    implementation(projects.utils.commonUtils)
+    implementation(projects.utils.ortUtils)
+    implementation(projects.utils.spdxUtils)
 
-    // Use the latest version that is not affected by https://github.com/gradle/gradle/issues/23208.
-    implementation("org.gradle:gradle-tooling-api:7.4.2")
+    implementation("org.gradle:gradle-tooling-api:${gradle.gradleVersion}")
 
-    implementation(libs.log4jApi)
-    implementation(libs.log4jApiKotlin)
-
-    funTestImplementation(testFixtures(project(":analyzer")))
+    funTestImplementation(projects.plugins.versionControlSystems.gitVersionControlSystem)
+    funTestImplementation(testFixtures(projects.analyzer))
 }
 
 val processResources = tasks.named<Copy>("processResources") {
-    val gradlePluginProject = project(":plugins:package-managers:gradle-plugin")
+    val gradlePluginProject = project.project(projects.plugins.packageManagers.gradlePlugin.path)
     val gradlePluginJarTask = gradlePluginProject.tasks.named<Jar>("fatJar")
     val gradlePluginJarFile = gradlePluginJarTask.get().outputs.files.singleFile
 
@@ -59,7 +56,7 @@ val processResources = tasks.named<Copy>("processResources") {
     from(gradlePluginJarFile)
 
     // Ensure a constant file name without a version suffix.
-    rename(gradlePluginJarFile.name, "gradle-plugin.jar")
+    rename(Regex.escape(gradlePluginJarFile.name), "gradle-plugin.jar")
 }
 
 // Work around https://youtrack.jetbrains.com/issue/IDEA-173367.
@@ -79,7 +76,7 @@ tasks.named<JacocoReport>("jacocoFunTestReport") {
 }
 
 tasks.named<Test>("funTest") {
-    val gradlePackageManagerProject = project(":plugins:package-managers:gradle-package-manager")
+    val gradlePackageManagerProject = project.project(projects.plugins.packageManagers.gradlePackageManager.path)
     val gradlePackageManagerFunTestTask = gradlePackageManagerProject.tasks.named<Test>("funTest")
 
     // Enforce ordering to avoid conflicts e.g. during Android SDK component installation.

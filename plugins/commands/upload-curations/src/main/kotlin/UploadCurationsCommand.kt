@@ -26,10 +26,11 @@ import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.types.enum
 import com.github.ajalt.clikt.parameters.types.file
+import com.github.ajalt.mordant.rendering.Theme
 
 import java.net.URI
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.clients.clearlydefined.ClearlyDefinedService
 import org.ossreviewtoolkit.clients.clearlydefined.ClearlyDefinedService.ContributionInfo
@@ -41,7 +42,6 @@ import org.ossreviewtoolkit.clients.clearlydefined.CurationDescribed
 import org.ossreviewtoolkit.clients.clearlydefined.CurationLicensed
 import org.ossreviewtoolkit.clients.clearlydefined.HarvestStatus
 import org.ossreviewtoolkit.clients.clearlydefined.Patch
-import org.ossreviewtoolkit.clients.clearlydefined.callBlocking
 import org.ossreviewtoolkit.clients.clearlydefined.getDefinitionsChunked
 import org.ossreviewtoolkit.clients.clearlydefined.toCoordinates
 import org.ossreviewtoolkit.model.Package
@@ -53,14 +53,13 @@ import org.ossreviewtoolkit.model.utils.toClearlyDefinedSourceLocation
 import org.ossreviewtoolkit.plugins.commands.api.OrtCommand
 import org.ossreviewtoolkit.plugins.commands.api.utils.inputGroup
 import org.ossreviewtoolkit.utils.common.expandTilde
-import org.ossreviewtoolkit.utils.ort.OkHttpClientHelper
+import org.ossreviewtoolkit.utils.ort.okHttpClient
+import org.ossreviewtoolkit.utils.ort.runBlocking
 
 class UploadCurationsCommand : OrtCommand(
     name = "upload-curations",
     help = "Upload ORT package curations to ClearlyDefined."
 ) {
-    private companion object : Logging
-
     private val inputFile by option(
         "--input-file", "-i",
         help = "The file with package curations to upload."
@@ -75,7 +74,7 @@ class UploadCurationsCommand : OrtCommand(
         help = "The ClearlyDefined server to upload to. Must be one of ${Server.entries.map { it.name }}."
     ).enum<Server>().default(Server.DEVELOPMENT)
 
-    private val service by lazy { ClearlyDefinedService.create(server, OkHttpClientHelper.buildClient()) }
+    private val service by lazy { ClearlyDefinedService.create(server, okHttpClient) }
 
     override fun run() {
         val allCurations = inputFile.readValueOrDefault(emptyList<PackageCuration>())
@@ -93,7 +92,7 @@ class UploadCurationsCommand : OrtCommand(
             pkg.toClearlyDefinedCoordinates()?.let { curation to it }
         }.toMap()
 
-        val definitions = service.getDefinitionsChunked(curationsToCoordinates.values)
+        val definitions = runBlocking { service.getDefinitionsChunked(curationsToCoordinates.values) }
 
         val curationsByHarvestStatus = curations.groupBy { curation ->
             definitions[curationsToCoordinates[curation]]?.getHarvestStatus() ?: logger.warn {
@@ -130,7 +129,7 @@ class UploadCurationsCommand : OrtCommand(
                 )
 
                 runCatching {
-                    service.callBlocking { putCuration(patch) }
+                    runBlocking { service.putCuration(patch) }
                 }.onSuccess {
                     echo("was uploaded successfully:\n${it.url}")
                     ++uploadedCurationsCount
@@ -143,7 +142,7 @@ class UploadCurationsCommand : OrtCommand(
         echo("Successfully uploaded $uploadedCurationsCount of $count curations.")
 
         if (uploadedCurationsCount != count) {
-            echo("At least one curation failed to be uploaded.")
+            echo(Theme.Default.danger("At least one curation failed to be uploaded."))
             throw ProgramResult(2)
         }
     }

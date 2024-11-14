@@ -28,9 +28,11 @@ import io.kotest.matchers.collections.containExactly
 import io.kotest.matchers.collections.containExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
+import io.kotest.matchers.maps.beEmpty
 import io.kotest.matchers.maps.containExactly as containExactlyEntries
 import io.kotest.matchers.maps.shouldContainExactly
 import io.kotest.matchers.nulls.beNull
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -41,12 +43,12 @@ import java.lang.IllegalArgumentException
 import org.ossreviewtoolkit.model.Severity
 import org.ossreviewtoolkit.model.SourceCodeOrigin
 import org.ossreviewtoolkit.utils.common.EnvironmentVariableFilter
-import org.ossreviewtoolkit.utils.test.shouldNotBeNull
+import org.ossreviewtoolkit.utils.ort.ORT_REFERENCE_CONFIG_FILENAME
 
 class OrtConfigurationTest : WordSpec({
     "OrtConfiguration" should {
         "be deserializable from YAML" {
-            val refConfig = File("src/main/resources/$REFERENCE_CONFIG_FILENAME")
+            val refConfig = File("src/main/resources/$ORT_REFERENCE_CONFIG_FILENAME")
             val ortConfig = OrtConfiguration.load(file = refConfig)
 
             ortConfig.allowedProcessEnvironmentVariableNames should containExactlyInAnyOrder("PASSPORT", "USER_HOME")
@@ -57,10 +59,12 @@ class OrtConfigurationTest : WordSpec({
             ortConfig.enableRepositoryPackageConfigurations shouldBe true
             ortConfig.enableRepositoryPackageCurations shouldBe true
 
+            ortConfig.forceOverwrite shouldBe true
+
             with(ortConfig.licenseFilePatterns) {
                 licenseFilenames shouldContainExactly listOf("license*")
                 patentFilenames shouldContainExactly listOf("patents")
-                rootLicenseFilenames shouldContainExactly listOf("readme*")
+                otherLicenseFilenames shouldContainExactly listOf("readme*")
             }
 
             ortConfig.packageCurationProviders should containExactly(
@@ -69,23 +73,25 @@ class OrtConfigurationTest : WordSpec({
                 ProviderPluginConfiguration(
                     type = "File",
                     id = "SomeCurationsFile",
-                    config = mapOf("path" to "/some-path/curations.yml", "mustExist" to "true")
+                    options = mapOf("path" to "/some-path/curations.yml", "mustExist" to "true")
                 ),
                 ProviderPluginConfiguration(
                     type = "File",
                     id = "SomeCurationsDir",
-                    config = mapOf("path" to "/some-path/curations-dir", "mustExist" to "false")
+                    options = mapOf("path" to "/some-path/curations-dir", "mustExist" to "false")
                 ),
                 ProviderPluginConfiguration(type = "OrtConfig", enabled = true),
                 ProviderPluginConfiguration(
                     type = "ClearlyDefined",
-                    config = mapOf("serverUrl" to "https://api.clearlydefined.io", "minTotalLicenseScore" to "80")
+                    options = mapOf("serverUrl" to "https://api.clearlydefined.io", "minTotalLicenseScore" to "80")
                 ),
                 ProviderPluginConfiguration(
                     type = "SW360",
-                    config = mapOf(
+                    options = mapOf(
                         "restUrl" to "https://your-sw360-rest-url",
-                        "authUrl" to "https://your-authentication-url",
+                        "authUrl" to "https://your-authentication-url"
+                    ),
+                    secrets = mapOf(
                         "username" to "username",
                         "password" to "password",
                         "clientId" to "clientId",
@@ -123,38 +129,47 @@ class OrtConfigurationTest : WordSpec({
             }
 
             with(ortConfig.advisor) {
-                nexusIq shouldNotBeNull {
-                    serverUrl shouldBe "https://rest-api-url-of-your-nexus-iq-server"
-                    browseUrl shouldBe "https://web-browsing-url-of-your-nexus-iq-server"
-                    username shouldBe "username"
-                    password shouldBe "password"
-                }
+                config shouldNotBeNull {
+                    get("GitHubDefects") shouldNotBeNull {
+                        options shouldContainExactly mapOf(
+                            "endpointUrl" to "https://api.github.com/graphql",
+                            "labelFilter" to "!duplicate, !enhancement, !invalid, !question, !documentation, *",
+                            "maxNumberOfIssuesPerRepository" to "50",
+                            "parallelRequests" to "5"
+                        )
 
-                vulnerableCode shouldNotBeNull {
-                    serverUrl shouldBe "http://localhost:8000"
-                    apiKey shouldBe "0123456789012345678901234567890123456789"
-                }
+                        secrets shouldContainExactly mapOf(
+                            "token" to "githubAccessToken"
+                        )
+                    }
 
-                gitHubDefects shouldNotBeNull {
-                    token shouldBe "githubAccessToken"
-                    labelFilter shouldContainExactlyInAnyOrder listOf(
-                        "!duplicate",
-                        "!enhancement",
-                        "!invalid",
-                        "!question",
-                        "!documentation",
-                        "*"
-                    )
-                    maxNumberOfIssuesPerRepository shouldBe 50
-                    parallelRequests shouldBe 5
-                }
+                    get("OssIndex") shouldNotBeNull {
+                        options shouldContainExactly mapOf(
+                            "serverUrl" to "https://ossindex.sonatype.org/"
+                        )
 
-                osv shouldNotBeNull {
-                    serverUrl shouldBe "https://api.osv.dev"
-                }
+                        secrets shouldContainExactly mapOf(
+                            "username" to "username",
+                            "password" to "password"
+                        )
+                    }
 
-                options shouldNotBeNull {
-                    this["CustomAdvisor"]?.get("apiKey") shouldBe "<some_api_key>"
+                    get("OSV") shouldNotBeNull {
+                        options shouldContainExactly mapOf(
+                            "serverUrl" to "https://api.osv.dev"
+                        )
+                    }
+
+                    get("VulnerableCode") shouldNotBeNull {
+                        options shouldContainExactly mapOf(
+                            "serverUrl" to "http://localhost:8000",
+                            "readTimeout" to "40"
+                        )
+
+                        secrets shouldContainExactly mapOf(
+                            "apiKey" to "0123456789012345678901234567890123456789"
+                        )
+                    }
                 }
             }
 
@@ -171,6 +186,7 @@ class OrtConfigurationTest : WordSpec({
                     enabled shouldBe true
 
                     fileStorage shouldNotBeNull {
+                        s3FileStorage should beNull()
                         httpFileStorage should beNull()
                         localFileStorage shouldNotBeNull {
                             directory shouldBe File("~/.ort/scanner/archive")
@@ -183,7 +199,7 @@ class OrtConfigurationTest : WordSpec({
                             schema shouldBe "public"
                             username shouldBe "username"
                             password shouldBe "password"
-                            sslmode shouldBe "required"
+                            sslmode shouldBe "require"
                             sslcert shouldBe "/defaultdir/postgresql.crt"
                             sslkey shouldBe "/defaultdir/postgresql.pk8"
                             sslrootcert shouldBe "/defaultdir/root.crt"
@@ -193,8 +209,6 @@ class OrtConfigurationTest : WordSpec({
                     }
                 }
 
-                createMissingArchives shouldBe false
-
                 detectedLicenseMapping shouldContainExactly mapOf(
                     "BSD (Three Clause License)" to "BSD-3-clause",
                     "LicenseRef-scancode-generic-cla" to "NOASSERTION"
@@ -202,6 +216,7 @@ class OrtConfigurationTest : WordSpec({
 
                 fileListStorage shouldNotBeNull {
                     fileStorage shouldNotBeNull {
+                        s3FileStorage should beNull()
                         httpFileStorage should beNull()
                         localFileStorage shouldNotBeNull {
                             directory shouldBe File("~/.ort/scanner/file-lists")
@@ -214,7 +229,7 @@ class OrtConfigurationTest : WordSpec({
                             schema shouldBe "public"
                             username shouldBe "username"
                             password shouldBe "password"
-                            sslmode shouldBe "required"
+                            sslmode shouldBe "require"
                             sslcert shouldBe "/defaultdir/postgresql.crt"
                             sslkey shouldBe "/defaultdir/postgresql.pk8"
                             sslrootcert shouldBe "/defaultdir/root.crt"
@@ -224,11 +239,12 @@ class OrtConfigurationTest : WordSpec({
                     }
                 }
 
-                options shouldNotBeNull {
+                config shouldNotBeNull {
                     get("ScanCode") shouldNotBeNull {
-                        this shouldContainExactly mapOf(
+                        options shouldContainExactly mapOf(
                             "commandLine" to "--copyright --license --info --strip-root --timeout 300",
                             "commandLineNonConfig" to "--processes 4",
+                            "preferFileLicense" to "false",
                             "minVersion" to "3.2.1-rc2",
                             "maxVersion" to "32.0.0"
                         )
@@ -238,10 +254,8 @@ class OrtConfigurationTest : WordSpec({
                         val urlMapping = "https://my-repo.example.org(?<repoPath>.*) -> " +
                             "ssh://my-mapped-repo.example.org\${repoPath}"
 
-                        this shouldContainExactly mapOf(
+                        options shouldContainExactly mapOf(
                             "serverUrl" to "https://fossid.example.com/instance/",
-                            "user" to "user",
-                            "apiKey" to "XYZ",
                             "namingProjectPattern" to "\$Var1_\$Var2",
                             "namingScanPattern" to "\$Var1_#projectBaseCode_\$Var3",
                             "namingVariableVar1" to "myOrg",
@@ -254,14 +268,25 @@ class OrtConfigurationTest : WordSpec({
                             "detectLicenseDeclarations" to "true",
                             "detectCopyrightStatements" to "true",
                             "timeout" to "60",
-                            "urlMappingExample" to urlMapping
+                            "urlMappingExample" to urlMapping,
+                            "sensitivity" to "10"
                         )
+
+                        secrets shouldContainExactly mapOf(
+                            "user" to "user",
+                            "apiKey" to "XYZ"
+                        )
+                    }
+
+                    get("SCANOSS") shouldNotBeNull {
+                        options shouldContainExactly mapOf("apiUrl" to "https://api.osskb.org/")
+                        secrets shouldContainExactly mapOf("apiKey" to "your API key")
                     }
                 }
 
                 storages shouldNotBeNull {
                     keys shouldContainExactlyInAnyOrder setOf(
-                        "local", "http", "clearlyDefined", "postgres", "sw360Configuration"
+                        "local", "http", "aws", "clearlyDefined", "postgres", "sw360Configuration"
                     )
 
                     val localStorage = this["local"]
@@ -279,6 +304,16 @@ class OrtConfigurationTest : WordSpec({
                         headers should containExactlyEntries("key1" to "value1", "key2" to "value2")
                     }
 
+                    val s3Storage = this["aws"]
+                    s3Storage.shouldBeInstanceOf<FileBasedStorageConfiguration>()
+                    s3Storage.backend.s3FileStorage shouldNotBeNull {
+                        bucketName shouldBe "ort-scan-results"
+                        awsRegion shouldBe "us-east-1"
+                        accessKeyId shouldBe "accessKey"
+                        secretAccessKey shouldBe "secret"
+                        compression shouldBe false
+                    }
+
                     val cdStorage = this["clearlyDefined"]
                     cdStorage.shouldBeInstanceOf<ClearlyDefinedStorageConfiguration>()
                     cdStorage.serverUrl shouldBe "https://api.clearlydefined.io"
@@ -290,11 +325,12 @@ class OrtConfigurationTest : WordSpec({
                         schema shouldBe "public"
                         username shouldBe "username"
                         password shouldBe "password"
-                        sslmode shouldBe "required"
+                        sslmode shouldBe "require"
                         sslcert shouldBe "/defaultdir/postgresql.crt"
                         sslkey shouldBe "/defaultdir/postgresql.pk8"
                         sslrootcert shouldBe "/defaultdir/root.crt"
                     }
+
                     postgresStorage.type shouldBe StorageType.PROVENANCE_BASED
 
                     val sw360Storage = this["sw360Configuration"]
@@ -308,7 +344,7 @@ class OrtConfigurationTest : WordSpec({
                     sw360Storage.token shouldBe "token"
                 }
 
-                storageReaders shouldContainExactly listOf("local", "postgres", "http", "clearlyDefined")
+                storageReaders shouldContainExactly listOf("local", "postgres", "http", "aws", "clearlyDefined")
                 storageWriters shouldContainExactly listOf("postgres")
 
                 ignorePatterns shouldContainExactly listOf("**/META-INF/DEPENDENCIES")
@@ -316,6 +352,7 @@ class OrtConfigurationTest : WordSpec({
                 provenanceStorage shouldNotBeNull {
                     fileStorage shouldNotBeNull {
                         httpFileStorage should beNull()
+                        s3FileStorage should beNull()
                         localFileStorage shouldNotBeNull {
                             directory shouldBe File("~/.ort/scanner/provenance")
                             compression shouldBe false
@@ -328,7 +365,7 @@ class OrtConfigurationTest : WordSpec({
                             schema shouldBe "public"
                             username shouldBe "username"
                             password shouldBe "password"
-                            sslmode shouldBe "required"
+                            sslmode shouldBe "require"
                             sslcert shouldBe "/defaultdir/postgresql.crt"
                             sslkey shouldBe "/defaultdir/postgresql.pk8"
                             sslrootcert shouldBe "/defaultdir/root.crt"
@@ -338,12 +375,21 @@ class OrtConfigurationTest : WordSpec({
             }
 
             with(ortConfig.reporter) {
-                options shouldNotBeNull {
-                    keys shouldContainExactlyInAnyOrder setOf("FossId")
+                config shouldNotBeNull {
+                    keys shouldContainExactlyInAnyOrder setOf("CycloneDx", "FossId")
+
+                    get("CycloneDx") shouldNotBeNull {
+                        options shouldContainExactly mapOf(
+                            "schema.version" to "1.6"
+                        )
+                        secrets should beEmpty()
+                    }
 
                     get("FossId") shouldNotBeNull {
-                        this shouldContainExactly mapOf(
-                            "serverUrl" to "https://fossid.example.com/instance/",
+                        options shouldContainExactly mapOf(
+                            "serverUrl" to "https://fossid.example.com/instance/"
+                        )
+                        secrets shouldContainExactly mapOf(
                             "user" to "user",
                             "apiKey" to "XYZ"
                         )
@@ -493,7 +539,7 @@ class OrtConfigurationTest : WordSpec({
             }
         }
 
-        "support environmental variables" {
+        "support environment variables" {
             val user = "user"
             val password = "password"
             val url = "url"

@@ -17,7 +17,7 @@
  * License-Filename: LICENSE
  */
 
-@file:Suppress("TooManyFunctions")
+@file:Suppress("MatchingDeclarationName", "TooManyFunctions")
 
 package org.ossreviewtoolkit.utils.common
 
@@ -44,10 +44,7 @@ import org.apache.commons.compress.archivers.zip.ZipFile
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import org.apache.commons.compress.compressors.xz.XZCompressorInputStream
-import org.apache.commons.compress.utils.SeekableInMemoryByteChannel
-import org.apache.logging.log4j.kotlin.Logging
-
-object ArchiveUtils : Logging
+import org.apache.logging.log4j.kotlin.logger
 
 enum class ArchiveType(extension: String, vararg aliases: String) {
     SEVENZIP(".7z"),
@@ -114,7 +111,7 @@ fun File.unpackTryAllTypes(targetDirectory: File, filter: (ArchiveEntry) -> Bool
         runCatching {
             unpack(targetDirectory, forceArchiveType = archiveType, filter)
         }.onSuccess {
-            ArchiveUtils.logger.debug { "Unpacked stream as $archiveType to '$targetDirectory'." }
+            logger.debug { "Unpacked stream as $archiveType to '$targetDirectory'." }
         }.onFailure {
             suppressedExceptions += IOException("Unpacking '$this' as $archiveType failed.", it)
         }.isSuccess
@@ -128,7 +125,7 @@ fun File.unpackTryAllTypes(targetDirectory: File, filter: (ArchiveEntry) -> Bool
  * and all entries not matched by the given [filter].
  */
 fun File.unpack7Zip(targetDirectory: File, filter: (ArchiveEntry) -> Boolean = { true }) {
-    SevenZFile(this).use { zipFile ->
+    SevenZFile.Builder().setFile(this).get().use { zipFile ->
         val canonicalTargetDirectory = targetDirectory.canonicalFile
 
         while (true) {
@@ -142,7 +139,7 @@ fun File.unpack7Zip(targetDirectory: File, filter: (ArchiveEntry) -> Boolean = {
             val target = targetDirectory.resolve(entry.name)
 
             if (!target.canonicalFile.startsWith(canonicalTargetDirectory)) {
-                ArchiveUtils.logger.warn {
+                logger.warn {
                     "Skipping entry '${entry.name}' which points to outside of '$targetDirectory'."
                 }
 
@@ -161,16 +158,10 @@ fun File.unpack7Zip(targetDirectory: File, filter: (ArchiveEntry) -> Boolean = {
 }
 
 /**
- * Unpack the [ByteArray] assuming it is a Zip archive, ignoring entries not matched by [filter].
- */
-fun ByteArray.unpackZip(targetDirectory: File, filter: (ArchiveEntry) -> Boolean = { true }) =
-    ZipFile(SeekableInMemoryByteChannel(this)).unpack(targetDirectory, filter)
-
-/**
  * Unpack the [File] assuming it is a Zip archive ignoring all entries not matched by [filter].
  */
 fun File.unpackZip(targetDirectory: File, filter: (ArchiveEntry) -> Boolean = { true }) =
-    ZipFile(this).unpack(targetDirectory, filter)
+    ZipFile.Builder().setFile(this).get().unpack(targetDirectory, filter)
 
 /**
  * Unpack the [ZipFile]. In contrast to [InputStream.unpackZip] this properly parses the ZIP's central directory, see
@@ -192,7 +183,7 @@ private fun ZipFile.unpack(targetDirectory: File, filter: (ArchiveEntry) -> Bool
             val target = targetDirectory.resolve(entry.name)
 
             if (!target.canonicalFile.startsWith(canonicalTargetDirectory)) {
-                ArchiveUtils.logger.warn {
+                logger.warn {
                     "Skipping entry '${entry.name}' which points to outside of '$targetDirectory'."
                 }
 
@@ -238,7 +229,7 @@ fun File.unpackDeb(targetDirectory: File, filter: (ArchiveEntry) -> Boolean = { 
             file.unpack(subDirectory, filter = filter)
         }
     } finally {
-        tempDir.safeDeleteRecursively(force = true)
+        tempDir.safeDeleteRecursively()
     }
 }
 
@@ -268,7 +259,7 @@ fun InputStream.unpackTar(targetDirectory: File, filter: (ArchiveEntry) -> Boole
  * Unpack this [ArchiveInputStream] to the [targetDirectory], skipping all entries for which [shouldSkip] returns true,
  * and using what [mode] returns as the file mode bits.
  */
-private fun ArchiveInputStream.unpack(
+private fun <E : ArchiveEntry> ArchiveInputStream<E>.unpack(
     targetDirectory: File,
     shouldSkip: (ArchiveEntry) -> Boolean,
     mode: (ArchiveEntry) -> Int
@@ -285,7 +276,7 @@ private fun ArchiveInputStream.unpack(
         val target = targetDirectory.resolve(entry.name)
 
         if (!target.canonicalFile.startsWith(canonicalTargetDirectory)) {
-            ArchiveUtils.logger.warn {
+            logger.warn {
                 "Skipping entry '${entry.name}' which points to outside of '$targetDirectory'."
             }
 

@@ -22,23 +22,22 @@ package org.ossreviewtoolkit.plugins.scanners.scancode
 import java.io.File
 import java.time.Instant
 
-import kotlin.math.max
-
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.model.ScanSummary
 import org.ossreviewtoolkit.model.ScannerDetails
+import org.ossreviewtoolkit.model.config.PluginConfiguration
 import org.ossreviewtoolkit.model.config.ScannerConfiguration
 import org.ossreviewtoolkit.scanner.CommandLinePathScannerWrapper
 import org.ossreviewtoolkit.scanner.ScanContext
-import org.ossreviewtoolkit.scanner.ScanResultsStorage
-import org.ossreviewtoolkit.scanner.ScannerCriteria
+import org.ossreviewtoolkit.scanner.ScanStorage
+import org.ossreviewtoolkit.scanner.ScannerMatcher
+import org.ossreviewtoolkit.scanner.ScannerWrapperConfig
 import org.ossreviewtoolkit.scanner.ScannerWrapperFactory
 import org.ossreviewtoolkit.utils.common.Options
 import org.ossreviewtoolkit.utils.common.Os
 import org.ossreviewtoolkit.utils.common.ProcessCapture
 import org.ossreviewtoolkit.utils.common.safeDeleteRecursively
-import org.ossreviewtoolkit.utils.common.splitOnWhitespace
 import org.ossreviewtoolkit.utils.common.withoutPrefix
 import org.ossreviewtoolkit.utils.ort.createOrtTempDir
 
@@ -47,71 +46,52 @@ import org.semver4j.RangesListFactory
 import org.semver4j.Semver
 
 /**
- * A wrapper for [ScanCode](https://github.com/nexB/scancode-toolkit).
+ * A wrapper for [ScanCode](https://github.com/aboutcode-org/scancode-toolkit).
  *
- * This scanner can be configured in [ScannerConfiguration.options] using the key "ScanCode". It offers the following
- * configuration options:
+ * This scanner can be configured in [ScannerConfiguration.config] using the key "ScanCode". It offers the following
+ * configuration [options][PluginConfiguration.options]:
  *
  * * **"commandLine":** Command line options that modify the result. These are added to the [ScannerDetails] when
- *   looking up results from the [ScanResultsStorage]. Defaults to [DEFAULT_CONFIGURATION_OPTIONS].
+ *   looking up results from a [ScanStorage]. Defaults to [ScanCodeConfig.DEFAULT_COMMAND_LINE_OPTIONS].
  * * **"commandLineNonConfig":** Command line options that do not modify the result and should therefore not be
- *   considered in [configuration], like "--processes". Defaults to [DEFAULT_NON_CONFIGURATION_OPTIONS].
+ *   considered in [configuration], like "--processes". Defaults to
+ *   [ScanCodeConfig.DEFAULT_COMMAND_LINE_NON_CONFIG_OPTIONS].
+ * * **preferFileLicense**: A flag to indicate whether the "high-level" per-file license reported by ScanCode starting
+ *   with version 32 should be used instead of the individual "low-level" per-line license findings. The per-file
+ *   license may be different from the conjunction of per-line licenses and is supposed to contain fewer
+ *   false-positives. However, no exact line numbers can be associated to the per-file license anymore. If enabled, the
+ *   start line of the per-file license finding is set to the minimum of all start lines for per-line findings in that
+ *   file, the end line is set to the maximum of all end lines for per-line findings in that file, and the score is set
+ *   to the arithmetic average of the scores of all per-line findings in that file.
  */
-class ScanCode internal constructor(name: String, private val options: Options) : CommandLinePathScannerWrapper(name) {
-    companion object : Logging {
+class ScanCode internal constructor(
+    name: String,
+    private val config: ScanCodeConfig,
+    private val wrapperConfig: ScannerWrapperConfig
+) : CommandLinePathScannerWrapper(name) {
+    // This constructor is required by the `RequirementsCommand`.
+    constructor(name: String, wrapperConfig: ScannerWrapperConfig) : this(name, ScanCodeConfig.DEFAULT, wrapperConfig)
+
+    companion object {
         const val SCANNER_NAME = "ScanCode"
 
         private const val LICENSE_REFERENCES_OPTION_VERSION = "32.0.0"
-        private const val OUTPUT_FORMAT = "json-pp"
-        internal const val TIMEOUT = 300
-
-        /**
-         * Configuration options that are relevant for [configuration] because they change the result file.
-         */
-        private val DEFAULT_CONFIGURATION_OPTIONS = listOf(
-            "--copyright",
-            "--license",
-            "--info",
-            "--strip-root",
-            "--timeout", TIMEOUT.toString()
-        )
-
-        /**
-         * Configuration options that are not relevant for [configuration] because they do not change the result
-         * file.
-         */
-        private val DEFAULT_NON_CONFIGURATION_OPTIONS = listOf(
-            "--processes", max(1, Runtime.getRuntime().availableProcessors() - 1).toString()
-        )
-
-        private val OUTPUT_FORMAT_OPTION = if (OUTPUT_FORMAT.startsWith("json")) {
-            "--$OUTPUT_FORMAT"
-        } else {
-            "--output-$OUTPUT_FORMAT"
-        }
+        private const val OUTPUT_FORMAT_OPTION = "--json-pp"
     }
 
-    class Factory : ScannerWrapperFactory<ScanCode>(SCANNER_NAME) {
-        override fun create(options: Options) = ScanCode(type, options)
+    class Factory : ScannerWrapperFactory<ScanCodeConfig>(SCANNER_NAME) {
+        override fun create(config: ScanCodeConfig, wrapperConfig: ScannerWrapperConfig) =
+            ScanCode(type, config, wrapperConfig)
+
+        override fun parseConfig(options: Options, secrets: Options) = ScanCodeConfig.create(options)
     }
 
-    override val criteria by lazy { ScannerCriteria.create(details, options) }
-
-    override val configuration by lazy {
-        buildList {
-            addAll(configurationOptions)
-            add(OUTPUT_FORMAT_OPTION)
-        }.joinToString(" ")
-    }
-
-    private val configurationOptions = options["commandLine"]?.splitOnWhitespace() ?: DEFAULT_CONFIGURATION_OPTIONS
-    private val nonConfigurationOptions = options["commandLineNonConfig"]?.splitOnWhitespace()
-        ?: DEFAULT_NON_CONFIGURATION_OPTIONS
+    private val commandLineOptions by lazy { getCommandLineOptions(version) }
 
     internal fun getCommandLineOptions(version: String) =
         buildList {
-            addAll(configurationOptions)
-            addAll(nonConfigurationOptions)
+            addAll(config.commandLine)
+            addAll(config.commandLineNonConfig)
 
             if (Semver(version).isGreaterThanOrEqualTo(LICENSE_REFERENCES_OPTION_VERSION)) {
                 // Required to be able to map ScanCode license keys to SPDX IDs.
@@ -119,7 +99,21 @@ class ScanCode internal constructor(name: String, private val options: Options) 
             }
         }
 
-    val commandLineOptions by lazy { getCommandLineOptions(version) }
+    override val configuration by lazy {
+        buildList {
+            addAll(config.commandLine)
+            add(OUTPUT_FORMAT_OPTION)
+
+            // Add this in the style of a fake command line option for consistency with the above.
+            if (config.preferFileLicense) add("--prefer-file-license")
+        }.joinToString(" ")
+    }
+
+    override val matcher by lazy { ScannerMatcher.create(details, wrapperConfig.matcherConfig) }
+
+    override val readFromStorage by lazy { wrapperConfig.readFromStorageWithDefault(matcher) }
+
+    override val writeToStorage by lazy { wrapperConfig.writeToStorageWithDefault(matcher) }
 
     override fun command(workingDir: File?) =
         listOfNotNull(workingDir, if (Os.isWindows) "scancode.bat" else "scancode").joinToString(File.separator)
@@ -153,25 +147,17 @@ class ScanCode internal constructor(name: String, private val options: Options) 
         val process = runScanCode(path, resultFile)
 
         return with(process) {
-            if (stderr.isNotBlank()) logger.debug { stderr }
-
             // Do not throw yet if the process exited with an error as some errors might turn out to be tolerable during
             // parsing.
+            if (isError && stdout.isNotBlank()) logger.debug { stdout }
+            if (stderr.isNotBlank()) logger.debug { stderr }
 
-            resultFile.readText().also { resultFile.parentFile.safeDeleteRecursively(force = true) }
+            resultFile.readText().also { resultFile.parentFile.safeDeleteRecursively() }
         }
     }
 
-    override fun createSummary(result: String, startTime: Instant, endTime: Instant): ScanSummary {
-        val summary = parseResult(result).toScanSummary()
-
-        val issues = summary.issues.toMutableList()
-
-        mapUnknownErrors(issues)
-        mapTimeoutErrors(issues)
-
-        return summary.copy(issues = issues)
-    }
+    override fun createSummary(result: String, startTime: Instant, endTime: Instant): ScanSummary =
+        parseResult(result).toScanSummary(config.preferFileLicense)
 
     /**
      * Execute ScanCode with the configured arguments to scan the given [path] and produce [resultFile].
@@ -180,8 +166,8 @@ class ScanCode internal constructor(name: String, private val options: Options) 
         ProcessCapture(
             command(),
             *commandLineOptions.toTypedArray(),
-            path.absolutePath,
-            OUTPUT_FORMAT_OPTION,
-            resultFile.absolutePath
+            // The output format option needs to directly precede the result file path.
+            OUTPUT_FORMAT_OPTION, resultFile.absolutePath,
+            path.absolutePath
         )
 }

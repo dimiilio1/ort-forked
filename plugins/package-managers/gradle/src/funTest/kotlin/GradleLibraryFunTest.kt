@@ -22,8 +22,8 @@ package org.ossreviewtoolkit.plugins.packagemanagers.gradle
 import io.kotest.core.spec.style.StringSpec
 import io.kotest.matchers.should
 
-import org.ossreviewtoolkit.analyzer.managers.create
-import org.ossreviewtoolkit.analyzer.managers.resolveSingleProject
+import org.ossreviewtoolkit.analyzer.create
+import org.ossreviewtoolkit.analyzer.resolveSingleProject
 import org.ossreviewtoolkit.model.toYaml
 import org.ossreviewtoolkit.utils.test.getAssetFile
 import org.ossreviewtoolkit.utils.test.matchExpectedResult
@@ -33,7 +33,8 @@ class GradleLibraryFunTest : StringSpec({
         val definitionFile = getAssetFile("projects/synthetic/gradle-library/build.gradle")
         val expectedResultFile = getAssetFile("projects/synthetic/gradle-library-expected-output-root.yml")
 
-        val result = create("Gradle").resolveSingleProject(definitionFile, resolveScopes = true)
+        val result = create("Gradle", "javaVersion" to "17")
+            .resolveSingleProject(definitionFile, resolveScopes = true)
 
         result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
     }
@@ -42,7 +43,8 @@ class GradleLibraryFunTest : StringSpec({
         val definitionFile = getAssetFile("projects/synthetic/gradle-library/app/build.gradle")
         val expectedResultFile = getAssetFile("projects/synthetic/gradle-library-expected-output-app.yml")
 
-        val result = create("Gradle").resolveSingleProject(definitionFile, resolveScopes = true)
+        val result = create("Gradle", "javaVersion" to "17")
+            .resolveSingleProject(definitionFile, resolveScopes = true)
 
         result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
     }
@@ -51,7 +53,8 @@ class GradleLibraryFunTest : StringSpec({
         val definitionFile = getAssetFile("projects/synthetic/gradle-library/lib/build.gradle")
         val expectedResultFile = getAssetFile("projects/synthetic/gradle-library-expected-output-lib.yml")
 
-        val result = create("Gradle").resolveSingleProject(definitionFile, resolveScopes = true)
+        val result = create("Gradle", "javaVersion" to "17")
+            .resolveSingleProject(definitionFile, resolveScopes = true)
 
         result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
     }

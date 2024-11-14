@@ -19,14 +19,12 @@
 
 package org.ossreviewtoolkit.clients.clearlydefined
 
-import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
-
 import java.io.IOException
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -37,6 +35,7 @@ import okhttp3.ResponseBody
 
 import retrofit2.HttpException
 import retrofit2.Retrofit
+import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import retrofit2.converter.scalars.ScalarsConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -93,9 +92,10 @@ interface ClearlyDefinedService {
     /**
      * See https://github.com/clearlydefined/service/blob/661934a/schemas/swagger.yaml#L8-L14.
      */
-    enum class Server(val apiUrl: String, val webUrl: String? = null, val contributionUrl: String? = null) {
+    enum class Server(val apiUrl: String, val webUrl: String? = null, val projectUrl: String? = null) {
         /**
-         * The production server.
+         * The production server. Endpoints are rate limited (e.g. "/curations" to 250 requests per minute), see
+         * https://docs.clearlydefined.io/docs/get-involved/using-data#production-instance-rate-limits
          */
         PRODUCTION(
             "https://api.clearlydefined.io",
@@ -104,7 +104,8 @@ interface ClearlyDefinedService {
         ),
 
         /**
-         * The development server.
+         * The development server. Endpoints are rate limited (e.g. "/curations" to 250 requests per minute), see
+         * https://docs.clearlydefined.io/docs/get-involved/using-data#development-instance-rate-limits.
          */
         DEVELOPMENT(
             "https://dev-api.clearlydefined.io",
@@ -216,24 +217,18 @@ interface ClearlyDefinedService {
      * https://api.clearlydefined.io/api-docs/#/definitions/get_definitions. This function represents the part of
      * the definition's endpoint that allows searching for package coordinates based on a pattern. The pattern string
      * should contain the parts of the coordinates (typically namespace, name, and version) relevant for the search.
-     * Result is a list with the ClearlyDefined URIs to all the definitions that are matched by the pattern.
+     * The result is a list with the ClearlyDefined URIs to all the definitions that are matched by the pattern.
      */
     @GET("definitions")
     suspend fun searchDefinitions(@Query("pattern") pattern: String): List<String>
 
     /**
-     * Get the curation for the component described by [type], [provider], [namespace] (use "-" if not applicable),
-     * [name] and [revision], see
+     * Get the curation for the component with the given [coordinates]. If the [revision][Coordinates.revision] is
+     * empty, the latest revision will be used (if that makes sense for the provider), see
      * https://api.clearlydefined.io/api-docs/#/curations/get_curations__type___provider___namespace___name___revision_.
      */
-    @GET("curations/{type}/{provider}/{namespace}/{name}/{revision}")
-    suspend fun getCuration(
-        @Path("type") type: ComponentType,
-        @Path("provider") provider: Provider,
-        @Path("namespace") namespace: String,
-        @Path("name") name: String,
-        @Path("revision") revision: String
-    ): Curation
+    @GET("curations/{coordinates}")
+    suspend fun getCuration(@Path("coordinates", encoded = true) coordinates: Coordinates): Curation
 
     /**
      * Return a batch of curations for the components given as [coordinates], see
@@ -256,32 +251,23 @@ interface ClearlyDefinedService {
     suspend fun harvest(@Body request: Collection<HarvestRequest>): String
 
     /**
-     * Get information about the harvest tools that have produced data for the component described by [type],
-     * [provider], [namespace] (use "-" if not applicable), [name], and [revision], see
+     * Get information about the harvest tools that have produced data for the component with the given [coordinates].
+     * If the [revision][Coordinates.revision] is empty, the latest revision will be used (if that makes sense for the
+     * provider), see
      * https://api.clearlydefined.io/api-docs/#/harvest/get_harvest__type___provider___namespace___name___revision_.
-     * This can be used to quickly find out whether results of a specific tool are already available.
      */
-    @GET("harvest/{type}/{provider}/{namespace}/{name}/{revision}?form=list")
-    suspend fun harvestTools(
-        @Path("type") type: ComponentType,
-        @Path("provider") provider: Provider,
-        @Path("namespace") namespace: String,
-        @Path("name") name: String,
-        @Path("revision") revision: String
-    ): List<String>
+    @GET("harvest/{coordinates}?form=list")
+    suspend fun harvestTools(@Path("coordinates", encoded = true) coordinates: Coordinates): List<String>
 
     /**
-     * Get the harvested data for the component described by [type], [provider], [namespace] (use "-" if not
-     * applicable), [name], and [revision] that was produced by [tool] with version [toolVersion], see
+     * Get the harvested data for the component with the given [coordinates] that was produced by [tool] with version
+     * [toolVersion]. If the [revision][Coordinates.revision] is empty, the latest revision will be used (if that makes
+     * sense for the provider), see
      * https://api.clearlydefined.io/api-docs/#/harvest/get_harvest__type___provider___namespace___name___revision___tool___toolVersion_
      */
-    @GET("harvest/{type}/{provider}/{namespace}/{name}/{revision}/{tool}/{toolVersion}?form=streamed")
+    @GET("harvest/{coordinates}/{tool}/{toolVersion}?form=streamed")
     suspend fun harvestToolData(
-        @Path("type") type: ComponentType,
-        @Path("provider") provider: Provider,
-        @Path("namespace") namespace: String,
-        @Path("name") name: String,
-        @Path("revision") revision: String,
+        @Path("coordinates", encoded = true) coordinates: Coordinates,
         @Path("tool") tool: String,
         @Path("toolVersion") toolVersion: String
     ): ResponseBody
@@ -301,15 +287,12 @@ suspend fun <T> ClearlyDefinedService.call(block: suspend ClearlyDefinedService.
         throw IOException(errorMessage, e)
     }
 
-fun <T> ClearlyDefinedService.callBlocking(block: suspend ClearlyDefinedService.() -> T): T =
-    runBlocking(Dispatchers.IO) { call(block) }
-
-fun ClearlyDefinedService.getDefinitionsChunked(
+suspend fun ClearlyDefinedService.getDefinitionsChunked(
     coordinates: Collection<Coordinates>,
     chunkSize: Int = ClearlyDefinedService.MAX_REQUEST_CHUNK_SIZE
 ): Map<Coordinates, ClearlyDefinedService.Defined> =
     buildMap {
-        runBlocking(Dispatchers.IO) {
+        withContext(Dispatchers.IO) {
             coordinates.chunked(chunkSize).map { chunk ->
                 async { call { getDefinitions(chunk) } }
             }.awaitAll()
@@ -318,12 +301,12 @@ fun ClearlyDefinedService.getDefinitionsChunked(
         }
     }
 
-fun ClearlyDefinedService.getCurationsChunked(
+suspend fun ClearlyDefinedService.getCurationsChunked(
     coordinates: Collection<Coordinates>,
     chunkSize: Int = ClearlyDefinedService.MAX_REQUEST_CHUNK_SIZE
 ): Map<Coordinates, Curation> =
     buildMap {
-        runBlocking(Dispatchers.IO) {
+        withContext(Dispatchers.IO) {
             coordinates.chunked(chunkSize).map { chunk ->
                 async { call { getCurations(chunk).values } }
             }.awaitAll()

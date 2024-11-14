@@ -27,7 +27,6 @@ import org.jetbrains.gradle.ext.settings
 
 plugins {
     // Apply third-party plugins.
-    alias(libs.plugins.dependencyAnalysis)
     alias(libs.plugins.gitSemver)
     alias(libs.plugins.ideaExt)
     alias(libs.plugins.versions)
@@ -43,7 +42,12 @@ semver {
 
 // Only override a default version (which usually is "unspecified"), but not a custom version.
 if (version == Project.DEFAULT_VERSION) {
-    version = semver.version
+    version = semver.semVersion.takeIf { it.isPreRelease }
+        // To get rid of a build part's "+" prefix because Docker tags do not support it, use only the original "build"
+        // part as the "pre-release" part.
+        ?.toString()?.replace("${semver.defaultPreRelease}+", "")
+        // Fall back to a plain version without pre-release or build parts.
+        ?: semver.version
 }
 
 logger.lifecycle("Building ORT version $version.")
@@ -62,9 +66,11 @@ idea {
     }
 }
 
-extensions.findByName("buildScan")?.withGroovyBuilder {
-    setProperty("termsOfServiceUrl", "https://gradle.com/terms-of-service")
-    setProperty("termsOfServiceAgree", "yes")
+extensions.findByName("develocity")?.withGroovyBuilder {
+    getProperty("buildScan")?.withGroovyBuilder {
+        setProperty("termsOfUseUrl", "https://gradle.com/terms-of-service")
+        setProperty("termsOfUseAgree", "yes")
+    }
 }
 
 tasks.named<DependencyUpdatesTask>("dependencyUpdates") {
@@ -86,14 +92,15 @@ tasks.named<DependencyUpdatesTask>("dependencyUpdates") {
 // all dependencies at once is beneficial, e.g. for debugging version conflict resolution.
 // [1]: https://docs.gradle.org/current/userguide/viewing_debugging_dependencies.html#sec:listing_dependencies
 tasks.register("allDependencies") {
-    val dependenciesTasks = allprojects.map { it.tasks.named<DependencyReportTask>("dependencies") }
+    group = "Help"
+    description = "Displays all dependencies declared in all projects."
+
+    val dependenciesTasks = getTasksByName("dependencies", /* recursive = */ true).sorted()
     dependsOn(dependenciesTasks)
 
     // Ensure deterministic output by requiring to run tasks after each other in always the same order.
     dependenciesTasks.zipWithNext().forEach { (a, b) ->
-        b.configure {
-            mustRunAfter(a)
-        }
+        b.mustRunAfter(a)
     }
 }
 
@@ -147,7 +154,7 @@ val checkLicenseHeaders by tasks.registering {
             val headerLines = LicenseUtils.extractHeader(file)
 
             val holders = CopyrightUtils.extractHolders(headerLines)
-            if (holders.singleOrNull() != CopyrightUtils.expectedHolder) {
+            if (holders.singleOrNull() != CopyrightUtils.EXPECTED_HOLDER) {
                 hasErrors = true
                 logger.error("Unexpected copyright holder(s) in file '$file': $holders")
             }
@@ -181,7 +188,7 @@ val checkGitAttributes by tasks.registering {
                 // Skip empty and comment lines.
                 .map { it.trim() }
                 .filter { it.isNotEmpty() && it.first() !in commentChars }
-                // The patterns is the part before the first whitespace.
+                // The pattern is the part before the first whitespace.
                 .mapTo(mutableSetOf()) { line -> line.takeWhile { !it.isWhitespace() } }
                 // Create ignore rules from valid patterns.
                 .mapIndexedNotNull { index, pattern ->

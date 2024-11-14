@@ -131,7 +131,7 @@ packages:
   - "MIT"
   declared_licenses_processed:
     spdx_expression: "MIT"
-  description: ""
+  description: "HTTP/REST API client library."
   homepage_url: "https://lostisland.github.io/faraday"
   binary_artifact:
     url: ""
@@ -518,7 +518,7 @@ packages:
   - "Bob Example"
   declared_licenses: []
   declared_licenses_processed: {}
-  description: ""
+  description: "Test project with gemspec"
   homepage_url: ""
   binary_artifact:
     url: ""

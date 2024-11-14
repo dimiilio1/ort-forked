@@ -19,33 +19,24 @@
 
 package org.ossreviewtoolkit.utils.spdx
 
+import java.lang.invoke.MethodHandles
+
+import org.apache.logging.log4j.kotlin.loggerOf
+
+import org.ossreviewtoolkit.utils.common.collectMessages
 import org.ossreviewtoolkit.utils.spdx.SpdxExpression.Strictness
 
-/**
- * Create an [SpdxExpression] by concatenating [this][SpdxLicense] and [other] using [SpdxOperator.AND].
- */
-infix fun SpdxLicense.and(other: SpdxLicense) = this and other.toExpression()
+private val logger = loggerOf(MethodHandles.lookup().lookupClass())
 
 /**
- * Create an [SpdxExpression] by concatenating [this][SpdxLicense] and [other] using [SpdxOperator.AND].
+ * Convert an [SpdxExpression] to `NOASSERTION` if null, to `NONE` if blank, or to its string representation otherwise.
  */
-infix fun SpdxLicense.and(other: SpdxExpression) = SpdxCompoundExpression(toExpression(), SpdxOperator.AND, other)
-
-/**
- * Create an [SpdxExpression] by concatenating [this][SpdxLicense] and [other] using [SpdxOperator.OR].
- */
-infix fun SpdxLicense.or(other: SpdxLicense) = this or other.toExpression()
-
-/**
- * Create an [SpdxExpression] by concatenating [this][SpdxLicense] and [other] using [SpdxOperator.OR].
- */
-infix fun SpdxLicense.or(other: SpdxExpression) = SpdxCompoundExpression(toExpression(), SpdxOperator.OR, other)
-
-/**
- * Create an [SpdxExpression] by concatenating [this][SpdxLicense] and [exception] using [SpdxExpression.WITH].
- */
-infix fun SpdxLicense.with(exception: SpdxLicenseException) =
-    SpdxLicenseWithExceptionExpression(toExpression(), exception.id)
+fun SpdxExpression?.nullOrBlankToSpdxNoassertionOrNone(): String =
+    when {
+        this == null -> SpdxConstants.NOASSERTION
+        toString().isBlank() -> SpdxConstants.NONE
+        else -> toString()
+    }
 
 /**
  * Create an [SpdxLicenseIdExpression] from this [SpdxLicense].
@@ -79,11 +70,22 @@ fun String.isSpdxExpressionOrNotPresent(strictness: Strictness = Strictness.ALLO
     SpdxConstants.isNotPresent(this) || isSpdxExpression(strictness)
 
 /**
- * Parses the string as an [SpdxExpression] of the given [strictness] and returns the result on success, or throws an
+ * Parse this string as an [SpdxExpression] of the given [strictness] and return the result on success, or throw an
  * [SpdxException] if the string cannot be parsed.
  */
 fun String.toSpdx(strictness: Strictness = Strictness.ALLOW_ANY): SpdxExpression =
     SpdxExpression.parse(this, strictness)
+
+/**
+ * Parse this string as an [SpdxExpression] of the given [strictness] and return the result on success, or null if this
+ * string cannot be parsed.
+ */
+fun String.toSpdxOrNull(strictness: Strictness = Strictness.ALLOW_ANY): SpdxExpression? =
+    runCatching {
+        toSpdx(strictness)
+    }.onFailure {
+        logger.debug { "Could not parse '$this' as an SPDX license: ${it.collectMessages()}" }
+    }.getOrNull()
 
 /**
  * Convert a [String] to an SPDX "idstring" (like license IDs, package IDs, etc.) which may only contain letters,

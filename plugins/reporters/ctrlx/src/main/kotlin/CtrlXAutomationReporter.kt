@@ -25,11 +25,21 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.encodeToStream
 
 import org.ossreviewtoolkit.model.licenses.LicenseView
+import org.ossreviewtoolkit.plugins.api.OrtPlugin
+import org.ossreviewtoolkit.plugins.api.PluginDescriptor
 import org.ossreviewtoolkit.reporter.Reporter
+import org.ossreviewtoolkit.reporter.ReporterFactory
 import org.ossreviewtoolkit.reporter.ReporterInput
 import org.ossreviewtoolkit.utils.spdx.SpdxConstants
+import org.ossreviewtoolkit.utils.spdx.SpdxLicense
 
-class CtrlXAutomationReporter : Reporter {
+@OrtPlugin(
+    displayName = "CtrlX Automation Reporter",
+    description = "A reporter for the ctrlX Automation format.",
+    factory = ReporterFactory::class
+)
+class CtrlXAutomationReporter(override val descriptor: PluginDescriptor = CtrlXAutomationReporterFactory.descriptor) :
+    Reporter {
     companion object {
         const val REPORT_FILENAME = "fossinfo.json"
 
@@ -42,11 +52,7 @@ class CtrlXAutomationReporter : Reporter {
         )
     }
 
-    override val type = "CtrlXAutomation"
-
-    override fun generateReport(input: ReporterInput, outputDir: File, options: Map<String, String>): List<File> {
-        val reportFile = outputDir.resolve(REPORT_FILENAME)
-
+    override fun generateReport(input: ReporterInput, outputDir: File): List<Result<File>> {
         val packages = input.ortResult.getPackages(omitExcluded = true)
         val components = packages.mapTo(mutableListOf()) { (pkg, _) ->
             val qualifiedName = when (pkg.id.type) {
@@ -68,13 +74,14 @@ class CtrlXAutomationReporter : Reporter {
                 input.ortResult.getRepositoryLicenseChoices()
             )
             val licenses = effectiveLicense?.decompose()?.map {
-                val id = it.toString()
-                val text = input.licenseTextProvider.getLicenseText(id)
-                License(name = id, spdx = id, text = text.orEmpty())
+                val name = it.toString()
+                val spdxId = SpdxLicense.forId(name)?.id
+                val text = input.licenseTextProvider.getLicenseText(name)
+                License(name = name, spdx = spdxId, text = text.orEmpty())
             }
 
             // The specification requires at least one license.
-            val componentLicenses = licenses.takeUnless { it.isNullOrEmpty() } ?: listOf(LICENSE_NOASSERTION)
+            val componentLicenses = licenses.orEmpty().ifEmpty { listOf(LICENSE_NOASSERTION) }
 
             Component(
                 name = qualifiedName,
@@ -87,9 +94,14 @@ class CtrlXAutomationReporter : Reporter {
             )
         }
 
-        val info = FossInfo(components = components)
-        reportFile.outputStream().use { JSON.encodeToStream(info, it) }
+        val reportFileResult = runCatching {
+            val info = FossInfo(components = components)
 
-        return listOf(reportFile)
+            outputDir.resolve(REPORT_FILENAME).apply {
+                outputStream().use { JSON.encodeToStream(info, it) }
+            }
+        }
+
+        return listOf(reportFileResult)
     }
 }

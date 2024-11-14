@@ -21,6 +21,7 @@ package org.ossreviewtoolkit.advisor
 
 import io.kotest.core.spec.style.WordSpec
 import io.kotest.matchers.maps.beEmpty
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.beTheSameInstanceAs
@@ -38,7 +39,8 @@ import org.ossreviewtoolkit.model.OrtResult
 import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.Project
 import org.ossreviewtoolkit.model.config.AdvisorConfiguration
-import org.ossreviewtoolkit.utils.test.shouldNotBeNull
+import org.ossreviewtoolkit.plugins.api.PluginConfig
+import org.ossreviewtoolkit.plugins.api.PluginDescriptor
 
 class AdvisorTest : WordSpec({
     "retrieveFindings" should {
@@ -63,7 +65,7 @@ class AdvisorTest : WordSpec({
             val result = advisor.advise(originResult)
 
             result.advisor shouldNotBeNull {
-                results.advisorResults should beEmpty()
+                results should beEmpty()
             }
 
             coVerify(exactly = 0) {
@@ -104,7 +106,7 @@ class AdvisorTest : WordSpec({
             val result = advisor.advise(originResult)
 
             result.advisor shouldNotBeNull {
-                results.advisorResults shouldBe expectedResults
+                results shouldBe expectedResults
             }
         }
     }
@@ -118,7 +120,7 @@ private fun createAdvisor(providers: List<AdviceProvider>): Advisor {
 
     val factories = providers.map { provider ->
         val factory = mockk<AdviceProviderFactory>()
-        every { factory.create(advisorConfig) } returns provider
+        every { factory.create(PluginConfig(emptyMap(), emptyMap())) } returns provider
         factory
     }
 
@@ -146,7 +148,7 @@ private fun createPackage(index: Int): Package =
 
 private fun mockkAdviceProvider(): AdviceProvider =
     mockk<AdviceProvider>().apply {
-        every { providerName } returns "provider"
+        every { descriptor } returns PluginDescriptor("Provider", "provider", "", emptyList())
     }
 
 private fun mockkAdvisorResult(): AdvisorResult =

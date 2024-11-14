@@ -19,16 +19,18 @@
 
 package org.ossreviewtoolkit.plugins.scanners.scanoss
 
-import org.ossreviewtoolkit.clients.scanoss.ScanOssService
 import org.ossreviewtoolkit.model.config.ScannerConfiguration
 import org.ossreviewtoolkit.utils.common.Options
 
 /**
  * A data class that holds the configuration options supported by the [ScanOss] scanner. An instance of this class is
- * created from the options contained in a [ScannerConfiguration] object under the key _ScanOss_. It offers the
+ * created from the [scanner config][ScannerConfiguration.config] object under the key _ScanOss_. It offers the
  * following configuration options:
+ *
+ * **"options.apiUrl":** The URL of the ScanOSS server.
+ * **"secrets.apiKey":** The API key to authenticate with the ScanOSS server.
  */
-internal data class ScanOssConfig(
+data class ScanOssConfig(
     /** URL of the ScanOSS server. */
     val apiUrl: String,
 
@@ -42,9 +44,11 @@ internal data class ScanOssConfig(
         /** Name of the configuration property for the API key. */
         const val API_KEY_PROPERTY = "apiKey"
 
-        fun create(options: Options): ScanOssConfig {
-            val apiUrl = options[API_URL_PROPERTY] ?: ScanOssService.DEFAULT_API_URL
-            val apiKey = options[API_KEY_PROPERTY].orEmpty()
+        fun create(options: Options, secrets: Options): ScanOssConfig {
+            // TODO: Remove the hard-coded default URL once https://github.com/scanoss/scanoss.java/issues/11 is
+            //       resolved.
+            val apiUrl = options[API_URL_PROPERTY] ?: "https://api.osskb.org/"
+            val apiKey = secrets[API_KEY_PROPERTY].orEmpty()
 
             return ScanOssConfig(apiUrl, apiKey)
         }

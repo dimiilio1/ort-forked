@@ -27,12 +27,12 @@ import freemarker.template.TemplateExceptionHandler
 
 import java.io.File
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.model.AdvisorCapability
-import org.ossreviewtoolkit.model.AdvisorRecord
 import org.ossreviewtoolkit.model.AdvisorResult
 import org.ossreviewtoolkit.model.AdvisorResultFilter
+import org.ossreviewtoolkit.model.AdvisorRun
 import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.Issue
 import org.ossreviewtoolkit.model.OrtResult
@@ -41,8 +41,6 @@ import org.ossreviewtoolkit.model.RuleViolation
 import org.ossreviewtoolkit.model.Severity
 import org.ossreviewtoolkit.model.SnippetFinding
 import org.ossreviewtoolkit.model.TextLocation
-import org.ossreviewtoolkit.model.Vulnerability
-import org.ossreviewtoolkit.model.VulnerabilityReference
 import org.ossreviewtoolkit.model.config.RuleViolationResolution
 import org.ossreviewtoolkit.model.config.VulnerabilityResolution
 import org.ossreviewtoolkit.model.licenses.LicenseView
@@ -50,11 +48,13 @@ import org.ossreviewtoolkit.model.licenses.ResolvedLicense
 import org.ossreviewtoolkit.model.licenses.ResolvedLicenseFileInfo
 import org.ossreviewtoolkit.model.licenses.ResolvedLicenseInfo
 import org.ossreviewtoolkit.model.licenses.filterExcluded
+import org.ossreviewtoolkit.model.vulnerabilities.Vulnerability
+import org.ossreviewtoolkit.model.vulnerabilities.VulnerabilityReference
 import org.ossreviewtoolkit.reporter.Reporter
 import org.ossreviewtoolkit.reporter.ReporterInput
 import org.ossreviewtoolkit.utils.common.expandTilde
 import org.ossreviewtoolkit.utils.spdx.SpdxConstants
-import org.ossreviewtoolkit.utils.spdx.model.SpdxLicenseChoice
+import org.ossreviewtoolkit.utils.spdx.SpdxLicenseChoice
 
 /**
  * A class to process [Apache Freemarker][1] templates, intended to be called by a [Reporter] that uses the generated
@@ -67,11 +67,6 @@ class FreemarkerTemplateProcessor(
     private val filePrefix: String = "",
     private val fileExtension: String = ""
 ) {
-    companion object : Logging {
-        const val OPTION_TEMPLATE_ID = "template.id"
-        const val OPTION_TEMPLATE_PATH = "template.path"
-    }
-
     private val freemarkerConfig: Configuration by lazy {
         Configuration(Configuration.VERSION_2_3_30).apply {
             defaultEncoding = "UTF-8"
@@ -93,8 +88,12 @@ class FreemarkerTemplateProcessor(
      * Process all Freemarker templates referenced in "template.id" and "template.path" options and returns the
      * generated files.
      */
-    fun processTemplates(input: ReporterInput, outputDir: File, options: Map<String, String>): List<File> =
-        processTemplatesInternal(createDataModel(input), outputDir, options)
+    fun processTemplates(
+        input: ReporterInput,
+        outputDir: File,
+        templateIds: List<String>,
+        templatePaths: List<String>
+    ): List<Result<File>> = processTemplatesInternal(createDataModel(input), outputDir, templateIds, templatePaths)
 
     /**
      * Process all Freemarker templates referenced in "template.id" and "template.path" options and returns the
@@ -103,11 +102,9 @@ class FreemarkerTemplateProcessor(
     private fun processTemplatesInternal(
         dataModel: Map<String, Any>,
         outputDir: File,
-        options: Map<String, String>
-    ): List<File> {
-        val templatePaths = options[OPTION_TEMPLATE_PATH]?.split(',').orEmpty()
-        val templateIds = options[OPTION_TEMPLATE_ID]?.split(',').orEmpty()
-
+        templateIds: List<String>,
+        templatePaths: List<String>
+    ): List<Result<File>> {
         val templateFiles = templatePaths.map { path ->
             File(path).expandTilde().also {
                 require(it.isFile) { "Could not find template file at ${it.absolutePath}." }
@@ -115,34 +112,40 @@ class FreemarkerTemplateProcessor(
         }
 
         val fileExtensionWithDot = fileExtension.takeIf { it.isEmpty() } ?: ".$fileExtension"
-        val outputFiles = mutableListOf<File>()
+        val reportFileResults = mutableListOf<Result<File>>()
 
-        templateIds.forEach { id ->
+        templateIds.mapTo(reportFileResults) { id ->
             val outputFile = outputDir.resolve("$filePrefix$id$fileExtensionWithDot")
 
-            logger.info { "Generating output file '$outputFile' using template id '$id'." }
+            logger.info { "Generating file '$outputFile' using template id '$id'." }
 
-            val template = freemarkerConfig.getTemplate("$id.ftl")
-            outputFile.writer().use { template.process(dataModel, it) }
+            runCatching {
+                val template = freemarkerConfig.getTemplate("$id.ftl")
 
-            outputFiles += outputFile
+                outputFile.apply {
+                    writer().use { template.process(dataModel, it) }
+                }
+            }
         }
 
-        templateFiles.forEach { file ->
+        templateFiles.mapTo(reportFileResults) { file ->
             val outputFile = outputDir.resolve("$filePrefix${file.nameWithoutExtension}$fileExtensionWithDot")
 
-            logger.info { "Generating output file '$outputFile' using template file '${file.absolutePath}'." }
+            logger.info { "Generating file '$outputFile' using template file '${file.absolutePath}'." }
 
-            val template = freemarkerConfig.run {
-                setDirectoryForTemplateLoading(file.parentFile)
-                getTemplate(file.name)
+            runCatching {
+                val template = freemarkerConfig.run {
+                    setDirectoryForTemplateLoading(file.parentFile)
+                    getTemplate(file.name)
+                }
+
+                outputFile.apply {
+                    writer().use { template.process(dataModel, it) }
+                }
             }
-            outputFile.writer().use { template.process(dataModel, it) }
-
-            outputFiles += outputFile
         }
 
-        return outputFiles
+        return reportFileResults
     }
 
     /**
@@ -198,6 +201,7 @@ class FreemarkerTemplateProcessor(
     /**
      * A collection of helper functions for the Freemarker templates.
      */
+    @Suppress("TooManyFunctions")
     class TemplateHelper(private val input: ReporterInput) {
         /**
          * Return only those [packages] that are a dependency of at least one of the provided [projects][projectIds].
@@ -220,7 +224,7 @@ class FreemarkerTemplateProcessor(
         @Suppress("UNUSED") // This function is used in the templates.
         fun filterForCategory(licenses: Collection<ResolvedLicense>, category: String): List<ResolvedLicense> =
             licenses.filter { resolvedLicense ->
-                input.licenseClassifications[resolvedLicense.license]?.contains(category) ?: true
+                input.licenseClassifications[resolvedLicense.license]?.contains(category) != false
             }
 
         /**
@@ -275,14 +279,19 @@ class FreemarkerTemplateProcessor(
         @JvmOverloads
         @Suppress("UNUSED") // This function is used in the templates.
         fun hasUnresolvedIssues(threshold: Severity = input.ortConfig.severeIssueThreshold) =
-            input.ortResult.getIssues().any { (identifier, issues) ->
-                issues.any { issue ->
-                    val isResolved = input.resolutionProvider.isResolved(issue)
-                    val isExcluded = input.ortResult.isExcluded(identifier)
+            input.ortResult.getOpenIssues(minSeverity = threshold).isNotEmpty()
 
-                    issue.severity >= threshold && !isResolved && !isExcluded
-                }
-            }
+        /**
+         * If there are any issue caused by reaching the snippets limit, return the text of the issue. Otherwise return
+         * the empty string.
+         */
+        @Suppress("UNUSED") // This function is used in the templates.
+        fun getSnippetsLimitIssue() =
+            input.ortResult.scanner?.scanResults?.flatMap { result ->
+                result.summary.issues
+            }?.firstOrNull {
+                it.message.contains("snippets limit")
+            }?.message.orEmpty()
 
         /**
          * Return `true` if there are any unresolved and non-excluded [RuleViolation]s whose severity is equal to or
@@ -291,26 +300,23 @@ class FreemarkerTemplateProcessor(
         @JvmOverloads
         @Suppress("UNUSED") // This function is used in the templates.
         fun hasUnresolvedRuleViolations(threshold: Severity = input.ortConfig.severeRuleViolationThreshold) =
-            input.ortResult.evaluator?.violations?.any { violation ->
-                val isResolved = input.resolutionProvider.isResolved(violation)
-                val isExcluded = violation.pkg?.let { input.ortResult.isExcluded(it) } ?: false
-
-                violation.severity >= threshold && !isResolved && !isExcluded
-            } ?: false
+            input.ortResult.getRuleViolations(omitResolved = true, minSeverity = threshold).any { violation ->
+                violation.pkg?.let { input.ortResult.isExcluded(it) } == true
+            }
 
         /**
          * Return a list of [RuleViolation]s for which no [RuleViolationResolution] is provided.
          */
         @Suppress("UNUSED") // This function is used in the templates.
         fun filterForUnresolvedRuleViolations(ruleViolation: List<RuleViolation>): List<RuleViolation> =
-            ruleViolation.filterNot { input.resolutionProvider.isResolved(it) }
+            ruleViolation.filterNot { input.ortResult.isResolved(it) }
 
         /**
          * Return a list of [Vulnerability]s for which no [VulnerabilityResolution] is provided.
          */
         @Suppress("UNUSED") // This function is used in the templates.
         fun filterForUnresolvedVulnerabilities(vulnerabilities: List<Vulnerability>): List<Vulnerability> =
-            vulnerabilities.filterNot { input.resolutionProvider.isResolved(it) }
+            vulnerabilities.filterNot { input.ortResult.isResolved(it) }
 
         /**
          * Return a list of [SnippetFinding]s grouped by the source file being matched by those snippets.
@@ -339,7 +345,7 @@ class FreemarkerTemplateProcessor(
          */
         @Suppress("UNUSED") // This function is used in the templates.
         fun collectLicenses(snippetsFindings: Collection<SnippetFinding>): Set<String> =
-            snippetsFindings.flatMap { findings -> findings.snippets }.map { snippet -> snippet.licenses.toString() }
+            snippetsFindings.flatMap { findings -> findings.snippets }.map { snippet -> snippet.license.toString() }
                 .toSet()
 
         /**
@@ -348,12 +354,12 @@ class FreemarkerTemplateProcessor(
          * therefore, it should contain a corresponding warning.
          */
         fun hasAdvisorIssues(capability: AdvisorCapability, severity: Severity): Boolean =
-            input.ortResult.advisor?.results?.filterResults(
-                AdvisorRecord.resultsWithIssues(
+            input.ortResult.advisor?.filterResults(
+                AdvisorRun.resultsWithIssues(
                     capability = capability,
                     minSeverity = severity
                 )
-            )?.isNotEmpty() ?: false
+            )?.isNotEmpty() == true
 
         /**
          * Return the subset of the available advisor results produced by an advisor with the given [capability] that
@@ -365,7 +371,7 @@ class FreemarkerTemplateProcessor(
             severity: Severity
         ): Map<Identifier, List<AdvisorResult>> =
             input.filteredAdvisorResults(
-                AdvisorRecord.resultsWithIssues(
+                AdvisorRun.resultsWithIssues(
                     capability = capability,
                     minSeverity = severity
                 )
@@ -375,13 +381,13 @@ class FreemarkerTemplateProcessor(
          * Return the subset of the available advisor results that contain vulnerabilities.
          */
         fun advisorResultsWithVulnerabilities(): Map<Identifier, List<AdvisorResult>> =
-            input.filteredAdvisorResults(AdvisorRecord.RESULTS_WITH_VULNERABILITIES)
+            input.filteredAdvisorResults(AdvisorRun.RESULTS_WITH_VULNERABILITIES)
 
         /**
          * Return the subset of the available advisor results that contain defects.
          */
         fun advisorResultsWithDefects(): Map<Identifier, List<AdvisorResult>> =
-            input.filteredAdvisorResults(AdvisorRecord.RESULTS_WITH_DEFECTS)
+            input.filteredAdvisorResults(AdvisorRun.RESULTS_WITH_DEFECTS)
 
         /**
          * Return the package from the current [OrtResult] with the given [id] or the empty package if the ID cannot be
@@ -395,9 +401,8 @@ class FreemarkerTemplateProcessor(
 }
 
 /**
- * Return a map with wrapper beans for the enum classes that are relevant for templates.These enums can then be
- * referenced directly by templates.
- * See https://freemarker.apache.org/docs/pgui_misc_beanwrapper.html#jdk_15_enums.
+ * Return a map with wrapper beans for the enum classes that are relevant for templates. These enums can then be
+ * referenced directly by templates, see https://freemarker.apache.org/docs/pgui_misc_beanwrapper.html#jdk_15_enums.
  */
 private fun enumModel(): Map<String, Any> {
     val beansWrapper = BeansWrapperBuilder(Configuration.VERSION_2_3_30).build()
@@ -449,4 +454,4 @@ private fun List<ResolvedLicense>.merge(): ResolvedLicense {
  * results are available.
  */
 private fun ReporterInput.filteredAdvisorResults(filter: AdvisorResultFilter): Map<Identifier, List<AdvisorResult>> =
-    ortResult.advisor?.results?.filterResults(filter).orEmpty()
+    ortResult.advisor?.filterResults(filter).orEmpty()

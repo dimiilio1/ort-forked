@@ -22,19 +22,18 @@ package org.ossreviewtoolkit.plugins.commands.scanner
 import com.github.ajalt.clikt.core.BadParameterValue
 import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.clikt.core.terminal
-import com.github.ajalt.clikt.parameters.groups.mutuallyExclusiveOptions
-import com.github.ajalt.clikt.parameters.groups.required
-import com.github.ajalt.clikt.parameters.groups.single
 import com.github.ajalt.clikt.parameters.options.RawOption
 import com.github.ajalt.clikt.parameters.options.associate
 import com.github.ajalt.clikt.parameters.options.convert
 import com.github.ajalt.clikt.parameters.options.default
+import com.github.ajalt.clikt.parameters.options.deprecated
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.options.split
 import com.github.ajalt.clikt.parameters.types.enum
 import com.github.ajalt.clikt.parameters.types.file
+import com.github.ajalt.mordant.rendering.Theme
 
 import java.time.Duration
 
@@ -42,8 +41,9 @@ import kotlin.time.toKotlinDuration
 
 import kotlinx.coroutines.runBlocking
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
+import org.ossreviewtoolkit.downloader.DefaultWorkingTreeCache
 import org.ossreviewtoolkit.model.FileFormat
 import org.ossreviewtoolkit.model.OrtResult
 import org.ossreviewtoolkit.model.PackageType
@@ -51,23 +51,20 @@ import org.ossreviewtoolkit.model.config.OrtConfiguration
 import org.ossreviewtoolkit.model.utils.DefaultResolutionProvider
 import org.ossreviewtoolkit.model.utils.mergeLabels
 import org.ossreviewtoolkit.plugins.commands.api.OrtCommand
-import org.ossreviewtoolkit.plugins.commands.api.utils.OPTION_GROUP_INPUT
 import org.ossreviewtoolkit.plugins.commands.api.utils.SeverityStatsPrinter
 import org.ossreviewtoolkit.plugins.commands.api.utils.configurationGroup
 import org.ossreviewtoolkit.plugins.commands.api.utils.outputGroup
 import org.ossreviewtoolkit.plugins.commands.api.utils.readOrtResult
 import org.ossreviewtoolkit.plugins.commands.api.utils.writeOrtResult
-import org.ossreviewtoolkit.plugins.scanners.scancode.ScanCode
 import org.ossreviewtoolkit.scanner.ScanStorages
 import org.ossreviewtoolkit.scanner.Scanner
-import org.ossreviewtoolkit.scanner.ScannerWrapper
 import org.ossreviewtoolkit.scanner.ScannerWrapperFactory
 import org.ossreviewtoolkit.scanner.provenance.DefaultNestedProvenanceResolver
 import org.ossreviewtoolkit.scanner.provenance.DefaultPackageProvenanceResolver
 import org.ossreviewtoolkit.scanner.provenance.DefaultProvenanceDownloader
-import org.ossreviewtoolkit.scanner.utils.DefaultWorkingTreeCache
 import org.ossreviewtoolkit.utils.common.expandTilde
 import org.ossreviewtoolkit.utils.common.safeMkdirs
+import org.ossreviewtoolkit.utils.ort.ORT_FAILURE_STATUS_CODE
 import org.ossreviewtoolkit.utils.ort.ORT_RESOLUTIONS_FILENAME
 import org.ossreviewtoolkit.utils.ort.ortConfigDirectory
 
@@ -75,24 +72,13 @@ class ScannerCommand : OrtCommand(
     name = "scan",
     help = "Run external license / copyright scanners."
 ) {
-    private companion object : Logging
-
-    private val input by mutuallyExclusiveOptions(
-        option(
-            "--ort-file", "-i",
-            help = "An ORT result file with an analyzer result to use. Source code is downloaded automatically if " +
-                "needed. Must not be used together with '--input-path'."
-        ).convert { it.expandTilde() }
-            .file(mustExist = true, canBeFile = true, canBeDir = false, mustBeWritable = false, mustBeReadable = true)
-            .convert { it.absoluteFile.normalize() },
-        option(
-            "--input-path", "-p",
-            help = "An input directory or file to scan. Must not be used together with '--ort-file'."
-        ).convert { it.expandTilde() }
-            .file(mustExist = true, canBeFile = true, canBeDir = true, mustBeWritable = false, mustBeReadable = true)
-            .convert { it.absoluteFile.normalize() },
-        name = OPTION_GROUP_INPUT
-    ).single().required()
+    private val input by option(
+        "--ort-file", "-i",
+        help = "An ORT result file with an analyzer result to use. Source code is downloaded automatically if needed."
+    ).convert { it.expandTilde() }
+        .file(mustExist = true, canBeFile = true, canBeDir = false, mustBeWritable = false, mustBeReadable = true)
+        .convert { it.absoluteFile.normalize() }
+        .required()
 
     private val outputDir by option(
         "--output-dir", "-o",
@@ -116,14 +102,15 @@ class ScannerCommand : OrtCommand(
 
     private val scanners by option(
         "--scanners", "-s",
-        help = "A comma-separated list of scanners to use.\nPossible values are: ${ScannerWrapper.ALL.keys}"
-    ).convertToScannerWrapperFactories().default(listOf(ScanCode.Factory()))
+        help = "A comma-separated list of scanners to use.\nPossible values are: ${ScannerWrapperFactory.ALL.keys}"
+    ).convertToScannerWrapperFactories()
+        .default(listOfNotNull(ScannerWrapperFactory.ALL.let { it.values.singleOrNull() ?: it["ScanCode"] }))
 
     private val projectScanners by option(
         "--project-scanners",
         help = "A comma-separated list of scanners to use for scanning the source code of projects. By default, " +
             "projects and packages are scanned with the same scanners as specified by '--scanners'.\n" +
-            "Possible values are: ${ScannerWrapper.ALL.keys}"
+            "Possible values are: ${ScannerWrapperFactory.ALL.keys}"
     ).convertToScannerWrapperFactories()
 
     private val packageTypes by option(
@@ -134,7 +121,7 @@ class ScannerCommand : OrtCommand(
     private val skipExcluded by option(
         "--skip-excluded",
         help = "Do not scan excluded projects or packages. Works only with the '--ort-file' parameter."
-    ).flag()
+    ).flag().deprecated("Use the global option 'ort -P ort.scanner.skipExcluded=... scan' instead.")
 
     private val resolutionsFile by option(
         "--resolutions-file",
@@ -159,7 +146,7 @@ class ScannerCommand : OrtCommand(
 
         val scannerRun = ortResult.scanner
         if (scannerRun == null) {
-            echo("No scanner run was created.")
+            echo(Theme.Default.danger("No scanner run was created."))
             throw ProgramResult(1)
         }
 
@@ -167,11 +154,12 @@ class ScannerCommand : OrtCommand(
         echo("The scan took $duration.")
 
         val resolutionProvider = DefaultResolutionProvider.create(ortResult, resolutionsFile)
-        val issues = scannerRun.getIssues().flatMap { it.value }
+        val issues = scannerRun.getAllIssues().flatMap { it.value }
         SeverityStatsPrinter(terminal, resolutionProvider).stats(issues)
-            .print().conclude(ortConfig.severeIssueThreshold, 2)
+            .print().conclude(ortConfig.severeIssueThreshold, ORT_FAILURE_STATUS_CODE)
     }
 
+    @Suppress("ForbiddenMethodCall")
     private fun runScanners(
         scannerWrapperFactories: List<ScannerWrapperFactory<*>>,
         projectScannerWrapperFactories: List<ScannerWrapperFactory<*>>,
@@ -179,10 +167,17 @@ class ScannerCommand : OrtCommand(
     ): OrtResult {
         val packageScannerWrappers = scannerWrapperFactories
             .takeIf { PackageType.PACKAGE in packageTypes }.orEmpty()
-            .map { it.create(ortConfig.scanner.options?.get(it.type).orEmpty()) }
+            .map {
+                val config = ortConfig.scanner.config?.get(it.type)
+                it.create(config?.options.orEmpty(), config?.secrets.orEmpty())
+            }
+
         val projectScannerWrappers = projectScannerWrapperFactories
             .takeIf { PackageType.PROJECT in packageTypes }.orEmpty()
-            .map { it.create(ortConfig.scanner.options?.get(it.type).orEmpty()) }
+            .map {
+                val config = ortConfig.scanner.config?.get(it.type)
+                it.create(config?.options.orEmpty(), config?.secrets.orEmpty())
+            }
 
         if (projectScannerWrappers.isNotEmpty()) {
             echo("Scanning projects with:")
@@ -201,14 +196,19 @@ class ScannerCommand : OrtCommand(
         val scanStorages = ScanStorages.createFromConfig(ortConfig.scanner)
         val workingTreeCache = DefaultWorkingTreeCache()
 
-        logger.info {
-            val readers = scanStorages.readers.map { it.javaClass.simpleName }
-            "Using the following scan storages for reading results: $readers"
-        }
+        with(scanStorages) {
+            logger.info {
+                val storages = listOf(packageProvenanceStorage, nestedProvenanceStorage).map { it.javaClass.simpleName }
+                "Using the following provenance storages: $storages"
+            }
 
-        logger.info {
-            val writers = scanStorages.writers.map { it.javaClass.simpleName }
-            "Using the following scan storages for writing results: $writers"
+            logger.info {
+                "Using the following scan storages for reading results: " + readers.map { it.javaClass.simpleName }
+            }
+
+            logger.info {
+                "Using the following scan storages for writing results: " + writers.map { it.javaClass.simpleName }
+            }
         }
 
         try {
@@ -234,7 +234,7 @@ class ScannerCommand : OrtCommand(
 
             val ortResult = readOrtResult(input)
             return runBlocking {
-                scanner.scan(ortResult, skipExcluded, labels)
+                scanner.scan(ortResult, skipExcluded || ortConfig.scanner.skipExcluded, labels)
             }
         } finally {
             runBlocking { workingTreeCache.shutdown() }
@@ -245,7 +245,7 @@ class ScannerCommand : OrtCommand(
 private fun RawOption.convertToScannerWrapperFactories() =
     convert { scannerNames ->
         scannerNames.split(",").map { name ->
-            ScannerWrapper.ALL[name]
-                ?: throw BadParameterValue("Scanner '$name' is not one of ${ScannerWrapper.ALL.keys}.")
+            ScannerWrapperFactory.ALL[name]
+                ?: throw BadParameterValue("Scanner '$name' is not one of ${ScannerWrapperFactory.ALL.keys}.")
         }
     }

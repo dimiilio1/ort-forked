@@ -29,7 +29,7 @@ import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insert
-import org.jetbrains.exposed.sql.select
+import org.jetbrains.exposed.sql.selectAll
 
 import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.RemoteArtifact
@@ -68,7 +68,7 @@ class PostgresPackageProvenanceStorage(
 
     override fun readProvenance(id: Identifier, sourceArtifact: RemoteArtifact): PackageProvenanceResolutionResult? =
         database.transaction {
-            table.select {
+            table.selectAll().where {
                 table.identifier eq id.toCoordinates() and
                     (table.artifactUrl eq sourceArtifact.url) and
                     (table.artifactHash eq sourceArtifact.hash.value)
@@ -77,7 +77,7 @@ class PostgresPackageProvenanceStorage(
 
     override fun readProvenance(id: Identifier, vcs: VcsInfo): PackageProvenanceResolutionResult? =
         database.transaction {
-            table.select {
+            table.selectAll().where {
                 table.identifier eq id.toCoordinates() and
                     (table.vcsType eq vcs.type.toString()) and
                     (table.vcsUrl eq vcs.url) and
@@ -88,12 +88,12 @@ class PostgresPackageProvenanceStorage(
 
     override fun readProvenances(id: Identifier): List<PackageProvenanceResolutionResult> =
         database.transaction {
-            table.select {
+            table.selectAll().where {
                 table.identifier eq id.toCoordinates()
             }.map { it[table.result] }
         }
 
-    override fun putProvenance(
+    override fun writeProvenance(
         id: Identifier,
         sourceArtifact: RemoteArtifact,
         result: PackageProvenanceResolutionResult
@@ -114,7 +114,7 @@ class PostgresPackageProvenanceStorage(
         }
     }
 
-    override fun putProvenance(id: Identifier, vcs: VcsInfo, result: PackageProvenanceResolutionResult) {
+    override fun writeProvenance(id: Identifier, vcs: VcsInfo, result: PackageProvenanceResolutionResult) {
         database.transaction {
             table.deleteWhere {
                 table.identifier eq id.toCoordinates() and
@@ -131,6 +131,14 @@ class PostgresPackageProvenanceStorage(
                 it[vcsRevision] = vcs.revision
                 it[vcsPath] = vcs.path
                 it[table.result] = result
+            }
+        }
+    }
+
+    override fun deleteProvenances(id: Identifier) {
+        database.transaction {
+            table.deleteWhere {
+                table.identifier eq id.toCoordinates()
             }
         }
     }

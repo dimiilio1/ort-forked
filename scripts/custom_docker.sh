@@ -27,10 +27,10 @@ DOCKER_IMAGE_ROOT="${DOCKER_IMAGE_ROOT:-ghcr.io/oss-review-toolkit}"
 valid_components=("android" "swift" "sbt" "dart" "dotnet" "php" "haskell")
 
 # Define the Dockerfile template
-dockerfile_template="FROM ghcr.io/oss-review-toolkit/ort\n"
+dockerfile_template="FROM ${DOCKER_IMAGE_ROOT}/ort-minimal\n"
 
 # Default output file
-output_file="Dockerfile.custom"
+output_file="Dockerfile-custom"
 
 function usage() {
     echo "Usage: $0 -c <component1> [<component2> ...] -o <output_file>"

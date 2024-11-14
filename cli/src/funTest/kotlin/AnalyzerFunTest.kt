@@ -27,9 +27,8 @@ import io.kotest.matchers.should
 import java.util.concurrent.TimeUnit
 
 import org.ossreviewtoolkit.analyzer.Analyzer
-import org.ossreviewtoolkit.analyzer.PackageManager
-import org.ossreviewtoolkit.analyzer.managers.analyze
-import org.ossreviewtoolkit.downloader.vcs.GitRepo
+import org.ossreviewtoolkit.analyzer.PackageManagerFactory
+import org.ossreviewtoolkit.analyzer.analyze
 import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
@@ -37,10 +36,10 @@ import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
 import org.ossreviewtoolkit.model.config.PackageManagerConfiguration
 import org.ossreviewtoolkit.model.config.RepositoryConfiguration
 import org.ossreviewtoolkit.model.toYaml
+import org.ossreviewtoolkit.plugins.versioncontrolsystems.git.GitRepo
 import org.ossreviewtoolkit.utils.test.getAssetFile
 import org.ossreviewtoolkit.utils.test.matchExpectedResult
 import org.ossreviewtoolkit.utils.test.patchActualResult
-import org.ossreviewtoolkit.utils.test.shouldNotBeNull
 
 class AnalyzerFunTest : WordSpec({
     "An analysis" should {
@@ -55,22 +54,9 @@ class AnalyzerFunTest : WordSpec({
             )
             val outputDir = tempdir().also { GitRepo().download(pkg, it) }
 
-            val result = analyze(outputDir).toYaml()
+            val result = analyze(outputDir, packageManagers = emptySet()).toYaml()
 
             patchActualResult(result, patchStartAndEndTime = true) should matchExpectedResult(expectedResultFile)
-        }
-
-        "resolve dependencies from other package managers" {
-            val definitionFile = getAssetFile("projects/synthetic/spdx-subproject-conan/project-xyz.spdx.yml")
-            val expectedResultFile = getAssetFile(
-                "projects/synthetic/spdx-project-xyz-expected-output-subproject-conan.yml"
-            )
-
-            val ortResult = analyze(definitionFile.parentFile, allowDynamicVersions = true)
-
-            ortResult.analyzer.shouldNotBeNull {
-                result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
-            }
         }
     }
 
@@ -84,7 +70,7 @@ class AnalyzerFunTest : WordSpec({
             val repoConfig = RepositoryConfiguration()
 
             val analyzer = Analyzer(analyzerConfig)
-            val gradleFactory = PackageManager.ALL.getValue("Gradle")
+            val gradleFactory = PackageManagerFactory.ALL.getValue("Gradle")
             val gradle = gradleFactory.create(inputDir, analyzerConfig, repoConfig)
             val info = Analyzer.ManagedFileInfo(
                 inputDir,

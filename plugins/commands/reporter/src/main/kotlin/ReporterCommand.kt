@@ -38,10 +38,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.model.config.CopyrightGarbage
 import org.ossreviewtoolkit.model.config.LicenseFilePatterns
+import org.ossreviewtoolkit.model.config.PluginConfiguration
 import org.ossreviewtoolkit.model.config.RepositoryConfiguration
 import org.ossreviewtoolkit.model.config.createFileArchiver
 import org.ossreviewtoolkit.model.config.orEmpty
@@ -51,22 +52,25 @@ import org.ossreviewtoolkit.model.licenses.LicenseInfoResolver
 import org.ossreviewtoolkit.model.licenses.orEmpty
 import org.ossreviewtoolkit.model.readValue
 import org.ossreviewtoolkit.model.readValueOrDefault
-import org.ossreviewtoolkit.model.utils.CompositePackageConfigurationProvider
 import org.ossreviewtoolkit.model.utils.DefaultResolutionProvider
+import org.ossreviewtoolkit.plugins.api.PluginConfig
 import org.ossreviewtoolkit.plugins.commands.api.OrtCommand
 import org.ossreviewtoolkit.plugins.commands.api.utils.configurationGroup
 import org.ossreviewtoolkit.plugins.commands.api.utils.inputGroup
 import org.ossreviewtoolkit.plugins.commands.api.utils.outputGroup
 import org.ossreviewtoolkit.plugins.commands.api.utils.readOrtResult
+import org.ossreviewtoolkit.plugins.packageconfigurationproviders.api.CompositePackageConfigurationProvider
 import org.ossreviewtoolkit.plugins.packageconfigurationproviders.api.SimplePackageConfigurationProvider
 import org.ossreviewtoolkit.plugins.packageconfigurationproviders.dir.DirPackageConfigurationProvider
 import org.ossreviewtoolkit.reporter.DefaultLicenseTextProvider
 import org.ossreviewtoolkit.reporter.HowToFixTextProvider
-import org.ossreviewtoolkit.reporter.Reporter
+import org.ossreviewtoolkit.reporter.ReporterFactory
 import org.ossreviewtoolkit.reporter.ReporterInput
 import org.ossreviewtoolkit.utils.common.collectMessages
 import org.ossreviewtoolkit.utils.common.expandTilde
 import org.ossreviewtoolkit.utils.common.safeMkdirs
+import org.ossreviewtoolkit.utils.config.setPackageConfigurations
+import org.ossreviewtoolkit.utils.config.setResolutions
 import org.ossreviewtoolkit.utils.ort.ORT_COPYRIGHT_GARBAGE_FILENAME
 import org.ossreviewtoolkit.utils.ort.ORT_CUSTOM_LICENSE_TEXTS_DIRNAME
 import org.ossreviewtoolkit.utils.ort.ORT_HOW_TO_FIX_TEXT_PROVIDER_FILENAME
@@ -74,13 +78,12 @@ import org.ossreviewtoolkit.utils.ort.ORT_LICENSE_CLASSIFICATIONS_FILENAME
 import org.ossreviewtoolkit.utils.ort.ORT_RESOLUTIONS_FILENAME
 import org.ossreviewtoolkit.utils.ort.ortConfigDirectory
 import org.ossreviewtoolkit.utils.ort.showStackTrace
+import org.ossreviewtoolkit.utils.spdx.SpdxConstants.LICENSE_REF_PREFIX
 
 class ReporterCommand : OrtCommand(
     name = "report",
     help = "Present Analyzer, Scanner and Evaluator results in various formats."
 ) {
-    private companion object : Logging
-
     private val ortFile by option(
         "--ort-file", "-i",
         help = "The ORT result file to use."
@@ -101,9 +104,10 @@ class ReporterCommand : OrtCommand(
 
     private val reportFormats by option(
         "--report-formats", "-f",
-        help = "The comma-separated reports to generate, any of ${Reporter.ALL.keys}."
+        help = "A comma-separated list of report formats to generate, any of ${ReporterFactory.ALL.keys}."
     ).convert { name ->
-        Reporter.ALL[name] ?: throw BadParameterValue("Report formats must be one or more of ${Reporter.ALL.keys}.")
+        ReporterFactory.ALL[name]
+            ?: throw BadParameterValue("Report formats must be one or more of ${ReporterFactory.ALL.keys}.")
     }.split(",").required().outputGroup()
 
     private val copyrightGarbageFile by option(
@@ -120,7 +124,7 @@ class ReporterCommand : OrtCommand(
         "--custom-license-texts-dir",
         help = "A directory which maps custom license IDs to license texts. It should contain one text file per " +
             "license with the license ID as the filename. A custom license text is used only if its ID has a " +
-            "'LicenseRef-' prefix and if the respective license text is not known by ORT."
+            "'$LICENSE_REF_PREFIX' prefix and if the respective license text is not known by ORT."
     ).convert { it.expandTilde() }
         .file(mustExist = false, canBeFile = false, canBeDir = true, mustBeWritable = false, mustBeReadable = false)
         .convert { it.absoluteFile.normalize() }
@@ -189,8 +193,8 @@ class ReporterCommand : OrtCommand(
             "format, and the value is an arbitrary key-value pair. For example: " +
             "-O PlainTextTemplate=template.id=NOTICE_SUMMARY"
     ).splitPair().convert { (format, option) ->
-        require(format in Reporter.ALL.keys) {
-            "Report formats must be one or more of ${Reporter.ALL.keys}."
+        require(format in ReporterFactory.ALL.keys) {
+            "Report formats must be one or more of ${ReporterFactory.ALL.keys}."
         }
 
         format to Pair(option.substringBefore("="), option.substringAfter("=", ""))
@@ -204,22 +208,24 @@ class ReporterCommand : OrtCommand(
             ortResult = ortResult.replaceConfig(config)
         }
 
-        val resolutionProvider =
-            ortResult.resolvedConfiguration.resolutions.takeUnless { refreshResolutions }?.let { resolutions ->
-                DefaultResolutionProvider(resolutions)
-            } ?: DefaultResolutionProvider.create(ortResult, resolutionsFile)
+        if (refreshResolutions || ortResult.resolvedConfiguration.resolutions == null) {
+            val resolutionProvider = DefaultResolutionProvider.create(ortResult, resolutionsFile)
+            ortResult = ortResult.setResolutions(resolutionProvider)
+        }
 
         val licenseTextDirectories = listOfNotNull(customLicenseTextsDir.takeIf { it.isDirectory })
 
         val resolvedPackageConfigurations = ortResult.resolvedConfiguration.packageConfigurations
         val packageConfigurationProvider = when {
             resolvedPackageConfigurations != null && packageConfigurationsDir == null -> {
-                SimplePackageConfigurationProvider(resolvedPackageConfigurations)
+                SimplePackageConfigurationProvider(configurations = resolvedPackageConfigurations)
             }
 
             ortConfig.enableRepositoryPackageConfigurations -> {
                 CompositePackageConfigurationProvider(
-                    SimplePackageConfigurationProvider(ortResult.repository.config.packageConfigurations),
+                    SimplePackageConfigurationProvider(
+                        configurations = ortResult.repository.config.packageConfigurations
+                    ),
                     DirPackageConfigurationProvider(packageConfigurationsDir)
                 )
             }
@@ -233,10 +239,12 @@ class ReporterCommand : OrtCommand(
             }
         }
 
+        ortResult = ortResult.setPackageConfigurations(packageConfigurationProvider)
+
         val copyrightGarbage = copyrightGarbageFile.takeIf { it.isFile }?.readValue<CopyrightGarbage>().orEmpty()
 
         val licenseInfoResolver = LicenseInfoResolver(
-            provider = DefaultLicenseInfoProvider(ortResult, packageConfigurationProvider),
+            provider = DefaultLicenseInfoProvider(ortResult),
             copyrightGarbage = copyrightGarbage,
             addAuthorsToCopyrights = ortConfig.addAuthorsToCopyrights,
             archiver = ortConfig.scanner.archive.createFileArchiver(),
@@ -255,8 +263,6 @@ class ReporterCommand : OrtCommand(
         val input = ReporterInput(
             ortResult,
             ortConfig,
-            packageConfigurationProvider,
-            resolutionProvider,
             DefaultLicenseTextProvider(licenseTextDirectories),
             copyrightGarbage,
             licenseInfoResolver,
@@ -264,28 +270,32 @@ class ReporterCommand : OrtCommand(
             howToFixTextProvider
         )
 
-        val reportOptionsMap = sortedMapOf<String, MutableMap<String, String>>(String.CASE_INSENSITIVE_ORDER)
+        val reportConfigMap = sortedMapOf<String, PluginConfiguration>(String.CASE_INSENSITIVE_ORDER)
 
-        ortConfig.reporter.options?.forEach { (reporterName, option) ->
-            val reportSpecificOptionsMap = reportOptionsMap.getOrPut(reporterName) { mutableMapOf() }
-            reportSpecificOptionsMap += option
+        // Obtain reporter-specific options defined in ORT's configuration.
+        ortConfig.reporter.config?.forEach { (reporterName, config) ->
+            reportConfigMap[reporterName] = config
         }
 
+        // Allow overwriting reporter-specific options via the command line.
         reportOptions.forEach { (reporterName, option) ->
-            val reportSpecificOptionsMap = reportOptionsMap.getOrPut(reporterName) { mutableMapOf() }
-            reportSpecificOptionsMap[option.first] = option.second
+            val reportSpecificConfig = reportConfigMap.getOrPut(reporterName) { PluginConfiguration.EMPTY }
+            val updatedConfig = reportSpecificConfig.copy(options = reportSpecificConfig.options + option)
+            reportConfigMap[reporterName] = updatedConfig
         }
 
         val reportDurationMap = measureTimedValue {
+            @Suppress("ForbiddenMethodCall")
             runBlocking(Dispatchers.Default) {
                 reportFormats.map { reporter ->
                     async {
                         val threadName = Thread.currentThread().name
-                        echo("Generating the '${reporter.type}' report in thread '$threadName'...")
+                        echo("Generating the '${reporter.descriptor.id}' report in thread '$threadName'...")
 
                         reporter to measureTimedValue {
-                            val options = reportOptionsMap[reporter.type].orEmpty()
-                            runCatching { reporter.generateReport(input, outputDir, options) }
+                            val options = reportConfigMap[reporter.descriptor.id] ?: PluginConfiguration.EMPTY
+                            reporter.create(PluginConfig(options.options, options.secrets))
+                                .generateReport(input, outputDir)
                         }
                     }
                 }.awaitAll()
@@ -295,19 +305,21 @@ class ReporterCommand : OrtCommand(
         var failureCount = 0
 
         reportDurationMap.value.forEach { (reporter, timedValue) ->
-            val name = reporter.type
+            val name = reporter.descriptor.id
+            val fileResults = timedValue.value
 
-            timedValue.value.onSuccess { files ->
-                val fileList = files.joinToString { "'$it'" }
-                echo("Successfully created '$name' report(s) at $fileList in ${timedValue.duration}.")
-            }.onFailure { e ->
-                e.showStackTrace()
+            fileResults.forEach { fileResult ->
+                fileResult.onSuccess { file ->
+                    echo("Successfully created '$name' report at $file in ${timedValue.duration}.")
+                }.onFailure { e ->
+                    e.showStackTrace()
 
-                logger.error {
-                    "Could not create '$name' report in ${timedValue.duration}: ${e.collectMessages()}"
+                    logger.error {
+                        "Could not create '$name' report in ${timedValue.duration}: ${e.collectMessages()}"
+                    }
+
+                    ++failureCount
                 }
-
-                ++failureCount
             }
         }
 

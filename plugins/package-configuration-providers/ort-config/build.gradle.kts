@@ -19,12 +19,14 @@
 
 plugins {
     // Apply precompiled plugins.
-    id("ort-library-conventions")
+    id("ort-plugin-conventions")
 }
 
 dependencies {
-    api(project(":plugins:package-configuration-providers:package-configuration-provider-api"))
+    api(projects.plugins.packageConfigurationProviders.packageConfigurationProviderApi)
 
-    implementation(project(":downloader"))
-    implementation(project(":plugins:package-configuration-providers:dir-package-configuration-provider"))
+    implementation(projects.downloader)
+    implementation(projects.plugins.packageConfigurationProviders.dirPackageConfigurationProvider)
+
+    ksp(projects.plugins.packageConfigurationProviders.packageConfigurationProviderApi)
 }

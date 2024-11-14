@@ -52,13 +52,14 @@ data class RepositoryConfiguration(
     val resolutions: Resolutions = Resolutions(),
 
     /**
-     * Defines curations for artifacts contained in this repository.
+     * Defines curations for packages used as dependencies by projects in this repository, or curations for license
+     * findings in the source code of a project in this repository.
      */
     @JsonInclude(value = JsonInclude.Include.CUSTOM, valueFilter = CurationsFilter::class)
     val curations: Curations = Curations(),
 
     /**
-     * Defines configurations for this repository.
+     * Defines configurations for packages used as dependencies by projects in this repository.
      */
     @JsonInclude(value = JsonInclude.Include.NON_EMPTY)
     val packageConfigurations: List<PackageConfiguration> = emptyList(),
@@ -67,5 +68,11 @@ data class RepositoryConfiguration(
      * Defines license choices within this repository.
      */
     @JsonInclude(value = JsonInclude.Include.CUSTOM, valueFilter = LicenseChoicesFilter::class)
-    val licenseChoices: LicenseChoices = LicenseChoices()
+    val licenseChoices: LicenseChoices = LicenseChoices(),
+
+    /**
+     * Defines snippet choices for projects in this repository.
+     */
+    @JsonInclude(value = JsonInclude.Include.NON_EMPTY)
+    val snippetChoices: List<SnippetChoices> = emptyList()
 )

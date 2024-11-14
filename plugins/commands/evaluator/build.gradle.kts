@@ -23,17 +23,21 @@ plugins {
 }
 
 dependencies {
-    api(project(":plugins:commands:command-api"))
+    api(projects.plugins.commands.commandApi)
 
-    implementation(platform(project(":plugins:package-configuration-providers")))
-    implementation(platform(project(":plugins:package-curation-providers")))
+    implementation(projects.plugins.packageConfigurationProviders.packageConfigurationProviderApi)
+    implementation(projects.plugins.packageCurationProviders.packageCurationProviderApi)
 
-    implementation(project(":evaluator"))
-    implementation(project(":model"))
-    implementation(project(":utils:common-utils"))
-    implementation(project(":utils:ort-utils"))
-    implementation(project(":utils:spdx-utils"))
+    // TODO: Get rid of these hard-coded dependencies on plugins.
+    implementation(projects.plugins.packageConfigurationProviders.dirPackageConfigurationProvider)
+    implementation(projects.plugins.packageCurationProviders.filePackageCurationProvider)
+
+    implementation(projects.evaluator)
+    implementation(projects.model)
+    implementation(projects.utils.commonUtils)
+    implementation(projects.utils.configUtils)
+    implementation(projects.utils.ortUtils)
+    implementation(projects.utils.spdxUtils)
 
     implementation(libs.clikt)
-    implementation(libs.log4jApiKotlin)
 }

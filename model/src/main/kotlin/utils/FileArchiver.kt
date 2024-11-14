@@ -24,12 +24,13 @@ import java.io.File
 import kotlin.time.measureTime
 import kotlin.time.measureTimedValue
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.model.KnownProvenance
 import org.ossreviewtoolkit.utils.common.FileMatcher
 import org.ossreviewtoolkit.utils.common.collectMessages
 import org.ossreviewtoolkit.utils.common.packZip
+import org.ossreviewtoolkit.utils.common.safeDeleteRecursively
 import org.ossreviewtoolkit.utils.common.unpackZip
 import org.ossreviewtoolkit.utils.ort.createOrtTempFile
 import org.ossreviewtoolkit.utils.ort.ortDataDirectory
@@ -50,7 +51,7 @@ class FileArchiver(
      */
     private val storage: ProvenanceFileStorage
 ) {
-    companion object : Logging {
+    companion object {
         val DEFAULT_ARCHIVE_DIR by lazy { ortDataDirectory.resolve("scanner/archive") }
     }
 
@@ -94,13 +95,18 @@ class FileArchiver(
 
         logger.info { "Wrote archive of directory '$directory' to storage in $writeDuration." }
 
-        zipFile.delete()
+        zipFile.parentFile.safeDeleteRecursively()
     }
 
     /**
      * Unarchive the archive corresponding to [provenance].
      */
     fun unarchive(directory: File, provenance: KnownProvenance): Boolean {
+        if (!storage.hasData(provenance)) {
+            logger.info { "Could not find archive of directory '$directory'." }
+            return false
+        }
+
         val (zipInputStream, readDuration) = measureTimedValue { storage.getData(provenance) }
 
         logger.info { "Read archive of directory '$directory' from storage in $readDuration." }

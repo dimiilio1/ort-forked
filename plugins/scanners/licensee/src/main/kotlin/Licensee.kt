@@ -25,7 +25,7 @@ import java.time.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNamingStrategy
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.model.Issue
 import org.ossreviewtoolkit.model.LicenseFinding
@@ -35,7 +35,8 @@ import org.ossreviewtoolkit.model.TextLocation
 import org.ossreviewtoolkit.scanner.CommandLinePathScannerWrapper
 import org.ossreviewtoolkit.scanner.ScanContext
 import org.ossreviewtoolkit.scanner.ScanException
-import org.ossreviewtoolkit.scanner.ScannerCriteria
+import org.ossreviewtoolkit.scanner.ScannerMatcher
+import org.ossreviewtoolkit.scanner.ScannerWrapperConfig
 import org.ossreviewtoolkit.scanner.ScannerWrapperFactory
 import org.ossreviewtoolkit.utils.common.Options
 import org.ossreviewtoolkit.utils.common.Os
@@ -45,18 +46,25 @@ private val JSON = Json {
     namingStrategy = JsonNamingStrategy.SnakeCase
 }
 
-class Licensee internal constructor(name: String, private val options: Options) : CommandLinePathScannerWrapper(name) {
-    companion object : Logging {
+class Licensee internal constructor(name: String, private val wrapperConfig: ScannerWrapperConfig) :
+    CommandLinePathScannerWrapper(name) {
+    companion object {
         val CONFIGURATION_OPTIONS = listOf("--json")
     }
 
-    class Factory : ScannerWrapperFactory<Licensee>("Licensee") {
-        override fun create(options: Options) = Licensee(type, options)
+    class Factory : ScannerWrapperFactory<Unit>("Licensee") {
+        override fun create(config: Unit, wrapperConfig: ScannerWrapperConfig) = Licensee(type, wrapperConfig)
+
+        override fun parseConfig(options: Options, secrets: Options) = Unit
     }
 
     override val configuration = CONFIGURATION_OPTIONS.joinToString(" ")
 
-    override val criteria by lazy { ScannerCriteria.create(details, options) }
+    override val matcher by lazy { ScannerMatcher.create(details, wrapperConfig.matcherConfig) }
+
+    override val readFromStorage by lazy { wrapperConfig.readFromStorageWithDefault(matcher) }
+
+    override val writeToStorage by lazy { wrapperConfig.writeToStorageWithDefault(matcher) }
 
     override fun command(workingDir: File?) =
         listOfNotNull(workingDir, if (Os.isWindows) "licensee.bat" else "licensee").joinToString(File.separator)

@@ -33,10 +33,12 @@ import java.nio.file.attribute.BasicFileAttributes
 import java.util.EnumSet
 import java.util.Locale
 
+import kotlin.io.path.deleteRecursively
+
 /**
- * Return a string of hexadecimal digits representing the bytes in the array.
+ * Call [also] only if the receiver is null, e.g. for error handling, and return the receiver in any case.
  */
-fun ByteArray.encodeHex(): String = joinToString("") { String.format(Locale.ROOT, "%02x", it) }
+inline fun <T> T.alsoIfNull(block: (T) -> Unit): T = this ?: also(block)
 
 /**
  * Return a map that associates duplicates as identified by [keySelector] with belonging lists of collection entries.
@@ -115,25 +117,24 @@ fun File.isSymbolicLink(): Boolean =
 fun File.realFile(): File = toPath().toRealPath().toFile()
 
 /**
- * Delete files recursively without following symbolic links (Unix) or junctions (Windows). If [force] is `true`, files
- * which were not deleted in the first attempt are set to be writable and then tried to be deleted again. If
- * [baseDirectory] is given, all empty parent directories along the path to [baseDirectory] are also deleted;
- * [baseDirectory] itself is not deleted. Throws an [IOException] if a file could not be deleted.
+ * Delete a directory recursively without following symbolic links (Unix) or junctions (Windows). If a [baseDirectory]
+ * is provided, all empty parent directories along the path to [baseDirectory] are also deleted; [baseDirectory] itself
+ * is not deleted. Throws an [IOException] if a directory or file could not be deleted.
  */
-fun File.safeDeleteRecursively(force: Boolean = false, baseDirectory: File? = null) {
-    if (isDirectory && !isSymbolicLink()) {
-        Files.newDirectoryStream(toPath()).use { stream ->
-            stream.forEach { path ->
-                path.toFile().safeDeleteRecursively(force)
-            }
-        }
+fun File.safeDeleteRecursively(baseDirectory: File? = null) {
+    if (Os.isWindows) {
+        // Note that Kotlin's `Path.deleteRecursively()` extension function cannot delete files on Windows that have the
+        // read-only attribute set, so fall back to manually making them writable.
+        walkBottomUp().onEnter { !it.isSymbolicLink() }.forEach { it.setWritable(true) }
     }
 
-    if (baseDirectory == this) return
+    // Note that Kotlin's `File.deleteRecursively()` extension function cannot delete files on Linux with unmappable
+    // characters in their names, so use `Path.deleteRecursively()` instead.
+    toPath().deleteRecursively()
 
-    if (!delete() && force && setWritable(true)) {
-        // Try again.
-        delete()
+    if (baseDirectory == this) {
+        safeMkdirs()
+        return
     }
 
     if (baseDirectory != null) {
@@ -142,8 +143,6 @@ fun File.safeDeleteRecursively(force: Boolean = false, baseDirectory: File? = nu
             parent = parent.parentFile
         }
     }
-
-    if (exists()) throw IOException("Could not delete file '$absolutePath'.")
 }
 
 /**
@@ -223,6 +222,11 @@ fun JsonNode?.fieldNamesOrEmpty(): Iterator<String> = this?.fieldNames() ?: Clas
 fun JsonNode?.fieldsOrEmpty(): Iterator<Map.Entry<String, JsonNode>> = this?.fields() ?: ClassUtil.emptyIterator()
 
 /**
+ * Return true if and only if this [JsonNode]
+ */
+fun JsonNode.isNotEmpty(): Boolean = !isEmpty
+
+/**
  * Convenience function for [JsonNode] that returns an empty string if [JsonNode.textValue] is called on a null object,
  * or the text value is null.
  */
@@ -294,14 +298,6 @@ fun String.collapseWhitespace() = trim().replace(CONSECUTIVE_WHITESPACE_REGEX, "
 private val CONSECUTIVE_WHITESPACE_REGEX = Regex("\\s+")
 
 /**
- * Decode a hex-string and return the value as a [ByteArray].
- */
-fun String.decodeHex(): ByteArray {
-    require(length % 2 == 0) { "The string must have an even number of characters." }
-    return chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-}
-
-/**
  * Return the string encoded for safe use as a file name or [emptyValue] encoded for safe use as a file name, if this
  * string is empty. Throws an exception if [emptyValue] is empty.
  */
@@ -340,16 +336,6 @@ fun String.fileSystemEncode() =
         .take(255)
 
 /**
- * Return true if the string represents a false value, otherwise return false.
- */
-fun String?.isFalse() = this?.toBoolean()?.not() ?: false
-
-/**
- * Return true if the string represents a true value, otherwise return false.
- */
-fun String?.isTrue() = this?.toBoolean() ?: false
-
-/**
  * True if the string is a valid [URI], false otherwise.
  */
 fun String.isValidUri() = runCatching { URI(this) }.isSuccess
@@ -368,7 +354,7 @@ fun String.normalizeLineBreaks() = replace(NON_LINUX_LINE_BREAKS, "\n")
  * Return the [percent-encoded](https://en.wikipedia.org/wiki/Percent-encoding) string.
  */
 fun String.percentEncode(): String =
-    java.net.URLEncoder.encode(this, "UTF-8")
+    java.net.URLEncoder.encode(this, Charsets.UTF_8)
         // As "encode" above actually performs encoding for forms, not for query strings, spaces are encoded as
         // "+" instead of "%20", so apply the proper mapping here afterwards ("+" in the original string is
         // encoded as "%2B").

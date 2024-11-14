@@ -21,59 +21,74 @@ package org.ossreviewtoolkit.plugins.reporters.webapp
 
 import java.io.File
 import java.io.FileOutputStream
-import java.util.Base64
 import java.util.zip.Deflater
+
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.encodingWith
 
 import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
 import org.apache.commons.compress.compressors.gzip.GzipParameters
 
+import org.ossreviewtoolkit.plugins.api.OrtPlugin
+import org.ossreviewtoolkit.plugins.api.OrtPluginOption
+import org.ossreviewtoolkit.plugins.api.PluginDescriptor
 import org.ossreviewtoolkit.plugins.reporters.evaluatedmodel.EvaluatedModel
 import org.ossreviewtoolkit.reporter.Reporter
+import org.ossreviewtoolkit.reporter.ReporterFactory
 import org.ossreviewtoolkit.reporter.ReporterInput
 
 private const val PLACEHOLDER = "ORT_REPORT_DATA_PLACEHOLDER"
 
+data class WebAppReporterConfig(
+    /**
+     * If true, subtrees occurring multiple times in the dependency tree are stripped.
+     */
+    @OrtPluginOption(defaultValue = "false")
+    val deduplicateDependencyTree: Boolean
+)
+
 /**
  * A [Reporter] that generates a web application that allows browsing an ORT result interactively.
- *
- * This reporter supports the following options:
- * - *deduplicateDependencyTree*: Controls whether subtrees occurring multiple times in the dependency tree are
- *   stripped.
  */
-class WebAppReporter : Reporter {
-    companion object {
-        const val OPTION_DEDUPLICATE_DEPENDENCY_TREE = "deduplicateDependencyTree"
-    }
-
-    override val type = "WebApp"
-
+@OrtPlugin(
+    displayName = "WebApp Reporter",
+    description = "Generates a web application to browse an ORT result interactively.",
+    factory = ReporterFactory::class
+)
+class WebAppReporter(
+    override val descriptor: PluginDescriptor = WebAppReporterFactory.descriptor,
+    private val config: WebAppReporterConfig
+) : Reporter {
     private val reportFilename = "scan-report-web-app.html"
 
-    override fun generateReport(input: ReporterInput, outputDir: File, options: Map<String, String>): List<File> {
+    override fun generateReport(input: ReporterInput, outputDir: File): List<Result<File>> {
         val template = javaClass.getResource("/scan-report-template.html").readText()
-        val evaluatedModel = EvaluatedModel.create(input, options[OPTION_DEDUPLICATE_DEPENDENCY_TREE].toBoolean())
+        val evaluatedModel = EvaluatedModel.create(input, config.deduplicateDependencyTree)
 
         val index = template.indexOf(PLACEHOLDER)
         val prefix = template.substring(0, index)
         val suffix = template.substring(index + PLACEHOLDER.length, template.length)
 
-        val outputFile = outputDir.resolve(reportFilename)
+        val reportFileResult = runCatching {
+            val outputFile = outputDir.resolve(reportFilename)
 
-        outputFile.writeText(prefix)
+            outputFile.writeText(prefix)
 
-        FileOutputStream(outputFile, /* append = */ true).use { outputStream ->
-            val b64OutputStream = Base64.getEncoder().wrap(outputStream)
+            FileOutputStream(outputFile, /* append = */ true).use { outputStream ->
+                val b64OutputStream = outputStream.encodingWith(Base64.Mime)
 
-            val gzipParameters = GzipParameters().apply {
-                compressionLevel = Deflater.BEST_COMPRESSION
+                val gzipParameters = GzipParameters().apply {
+                    compressionLevel = Deflater.BEST_COMPRESSION
+                }
+
+                GzipCompressorOutputStream(b64OutputStream, gzipParameters).bufferedWriter().use { gzipWriter ->
+                    evaluatedModel.toJson(gzipWriter, prettyPrint = false)
+                }
             }
-            GzipCompressorOutputStream(b64OutputStream, gzipParameters).bufferedWriter().use { gzipWriter ->
-                evaluatedModel.toJson(gzipWriter, prettyPrint = false)
-            }
+
+            outputFile.apply { appendText(suffix) }
         }
 
-        outputFile.appendText(suffix)
-
-        return listOf(outputFile)
+        return listOf(reportFileResult)
     }
 }

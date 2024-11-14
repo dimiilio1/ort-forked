@@ -19,10 +19,10 @@
 
 package org.ossreviewtoolkit.plugins.packagemanagers.carthage
 
-import com.fasterxml.jackson.module.kotlin.readValue
-
 import java.io.File
 import java.net.URI
+
+import kotlinx.serialization.json.Json
 
 import org.ossreviewtoolkit.analyzer.AbstractPackageManagerFactory
 import org.ossreviewtoolkit.analyzer.PackageManager
@@ -38,7 +38,6 @@ import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
 import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
 import org.ossreviewtoolkit.model.config.RepositoryConfiguration
-import org.ossreviewtoolkit.model.jsonMapper
 import org.ossreviewtoolkit.model.orEmpty
 import org.ossreviewtoolkit.utils.common.splitOnWhitespace
 import org.ossreviewtoolkit.utils.common.unquote
@@ -52,7 +51,7 @@ class Carthage(
     analysisRoot: File,
     analyzerConfig: AnalyzerConfiguration,
     repoConfig: RepositoryConfiguration
-) : PackageManager(name, analysisRoot, analyzerConfig, repoConfig) {
+) : PackageManager(name, "Carthage", analysisRoot, analyzerConfig, repoConfig) {
     class Factory : AbstractPackageManagerFactory<Carthage>("Carthage") {
         // TODO: Add support for the Cartfile.
         //       This would require to resolve the actual dependency versions as a Cartfile supports dynamic versions.
@@ -171,7 +170,7 @@ class Carthage(
                     URI(id).toURL().readText()
                 }
 
-                val binarySpec = jsonMapper.readValue<Map<String, String>>(binarySpecString)
+                val binarySpec = Json.decodeFromString<Map<String, String>>(binarySpecString)
                 createPackageFromBinarySpec(binarySpec, id, revision)
             }
         }

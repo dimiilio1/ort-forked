@@ -26,7 +26,7 @@ import java.io.ByteArrayInputStream
 import java.io.FileNotFoundException
 import java.io.IOException
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.RemoteArtifact
@@ -37,8 +37,6 @@ import org.ossreviewtoolkit.utils.ort.showStackTrace
 import org.ossreviewtoolkit.utils.ort.storage.FileStorage
 
 class FileBasedPackageProvenanceStorage(val backend: FileStorage) : PackageProvenanceStorage {
-    private companion object : Logging
-
     override fun readProvenance(id: Identifier, sourceArtifact: RemoteArtifact): PackageProvenanceResolutionResult? =
         readResults(id).find { it.sourceArtifact == sourceArtifact }?.result
 
@@ -61,6 +59,7 @@ class FileBasedPackageProvenanceStorage(val backend: FileStorage) : PackageProve
                     // If the file cannot be found it means no scan results have been stored yet.
                     emptyList()
                 }
+
                 else -> {
                     logger.info {
                         "Could not read resolved provenances for '${id.toCoordinates()}' from path '$path': " +
@@ -73,16 +72,16 @@ class FileBasedPackageProvenanceStorage(val backend: FileStorage) : PackageProve
         }
     }
 
-    override fun putProvenance(
+    override fun writeProvenance(
         id: Identifier,
         sourceArtifact: RemoteArtifact,
         result: PackageProvenanceResolutionResult
-    ) = putProvenance(id, sourceArtifact, null, result)
+    ) = writeProvenance(id, sourceArtifact, null, result)
 
-    override fun putProvenance(id: Identifier, vcs: VcsInfo, result: PackageProvenanceResolutionResult) =
-        putProvenance(id, null, vcs, result)
+    override fun writeProvenance(id: Identifier, vcs: VcsInfo, result: PackageProvenanceResolutionResult) =
+        writeProvenance(id, null, vcs, result)
 
-    private fun putProvenance(
+    private fun writeProvenance(
         id: Identifier,
         sourceArtifact: RemoteArtifact?,
         vcs: VcsInfo?,
@@ -110,8 +109,16 @@ class FileBasedPackageProvenanceStorage(val backend: FileStorage) : PackageProve
                             it.collectMessages()
                     }
                 }
+
                 else -> throw it
             }
+        }
+    }
+
+    override fun deleteProvenances(id: Identifier) {
+        val path = storagePath(id)
+        if (!backend.delete(path)) {
+            logger.warn { "Could not delete resolved provenances for '${id.toCoordinates()}' at path '$path'." }
         }
     }
 }

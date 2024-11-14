@@ -23,8 +23,11 @@ import io.kotest.core.spec.style.WordSpec
 import io.kotest.matchers.collections.beEmpty
 import io.kotest.matchers.collections.containExactly
 import io.kotest.matchers.collections.shouldHaveSize
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
+
+import kotlinx.coroutines.flow.flowOf
 
 import org.ossreviewtoolkit.clients.fossid.PolymorphicList
 import org.ossreviewtoolkit.clients.fossid.model.result.MatchType
@@ -32,38 +35,39 @@ import org.ossreviewtoolkit.clients.fossid.model.result.MatchedLines
 import org.ossreviewtoolkit.clients.fossid.model.result.Snippet
 import org.ossreviewtoolkit.model.Issue
 import org.ossreviewtoolkit.model.TextLocation
-import org.ossreviewtoolkit.utils.test.shouldNotBeNull
 
 class FossIdSnippetMappingTest : WordSpec({
     "mapSnippetFindings" should {
         "group snippets by source file location" {
             val issues = mutableListOf<Issue>()
-            val listSnippets = mapOf(
-                "src/main/java/Tokenizer.java" to setOf(
-                    createSnippet(
-                        1,
-                        MatchType.FULL,
-                        "pkg:github/vdurmont/semver4j@3.1.0",
-                        "MIT",
-                        "src/main/java/com/vdurmont/semver4j/Tokenizer.java"
+            val listSnippets = flowOf(
+                "src/main/java/Tokenizer.java" to
+                    setOf(
+                        createSnippet(
+                            1,
+                            MatchType.FULL,
+                            "pkg:github/vdurmont/semver4j@3.1.0",
+                            "MIT",
+                            "src/main/java/com/vdurmont/semver4j/Tokenizer.java"
+                        ),
+                        createSnippet(
+                            2,
+                            MatchType.FULL,
+                            "pkg:maven/com.vdurmont/semver4j@3.1.0",
+                            "MIT",
+                            "com/vdurmont/semver4j/Tokenizer.java"
+                        )
                     ),
-                    createSnippet(
-                        2,
-                        MatchType.FULL,
-                        "pkg:maven/com.vdurmont/semver4j@3.1.0",
-                        "MIT",
-                        "com/vdurmont/semver4j/Tokenizer.java"
+                "src/main/java/com/vdurmont/semver4j/Requirement.java" to
+                    setOf(
+                        createSnippet(
+                            3,
+                            MatchType.PARTIAL,
+                            "pkg:github/vdurmont/semver4j@3.1.0",
+                            "MIT",
+                            "com/vdurmont/semver4j/Requirement.java"
+                        )
                     )
-                ),
-                "src/main/java/com/vdurmont/semver4j/Requirement.java" to setOf(
-                    createSnippet(
-                        3,
-                        MatchType.PARTIAL,
-                        "pkg:github/vdurmont/semver4j@3.1.0",
-                        "MIT",
-                        "com/vdurmont/semver4j/Requirement.java"
-                    )
-                )
             )
             val localFile = ((1..24) + (45..675)).toPolymorphicList()
             val remoteFile = (1..655).toPolymorphicList()
@@ -78,7 +82,14 @@ class FossIdSnippetMappingTest : WordSpec({
                 snippetMatchedLines
             )
 
-            val mappedSnippets = mapSnippetFindings(rawResults, issues)
+            val mappedSnippets = mapSnippetFindings(
+                rawResults,
+                500,
+                issues,
+                emptyMap(),
+                emptyList(),
+                mutableSetOf()
+            )
 
             issues should beEmpty()
             mappedSnippets shouldHaveSize 3
@@ -90,10 +101,12 @@ class FossIdSnippetMappingTest : WordSpec({
                     "pkg:maven/com.vdurmont/semver4j@3.1.0"
                 )
             }
+
             mappedSnippets.elementAtOrNull(1) shouldNotBeNull {
                 sourceLocation shouldBe TextLocation("src/main/java/com/vdurmont/semver4j/Requirement.java", 1, 24)
                 snippets.map { it.purl } should containExactly("pkg:github/vdurmont/semver4j@3.1.0")
             }
+
             mappedSnippets.elementAtOrNull(2) shouldNotBeNull {
                 sourceLocation shouldBe TextLocation("src/main/java/com/vdurmont/semver4j/Requirement.java", 45, 675)
                 snippets.map { it.purl } should containExactly("pkg:github/vdurmont/semver4j@3.1.0")

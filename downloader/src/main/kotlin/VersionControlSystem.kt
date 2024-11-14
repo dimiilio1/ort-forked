@@ -21,9 +21,8 @@ package org.ossreviewtoolkit.downloader
 
 import java.io.File
 import java.io.IOException
-import java.util.ServiceLoader
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.VcsInfo
@@ -31,6 +30,7 @@ import org.ossreviewtoolkit.model.VcsType
 import org.ossreviewtoolkit.model.config.LicenseFilePatterns
 import org.ossreviewtoolkit.model.orEmpty
 import org.ossreviewtoolkit.utils.common.CommandLineTool
+import org.ossreviewtoolkit.utils.common.Plugin
 import org.ossreviewtoolkit.utils.common.collectMessages
 import org.ossreviewtoolkit.utils.common.uppercaseFirstChar
 import org.ossreviewtoolkit.utils.ort.ORT_REPO_CONFIG_FILENAME
@@ -44,23 +44,20 @@ abstract class VersionControlSystem(
      * the version control system is available.
      */
     private val commandLineTool: CommandLineTool? = null
-) {
-    companion object : Logging {
-        private val LOADER = ServiceLoader.load(VersionControlSystem::class.java)
-
+) : Plugin {
+    companion object {
         /**
-         * The set of all available [Version Control Systems][VersionControlSystem] in the classpath, sorted by
-         * priority.
+         * All [version control systems][VersionControlSystem] available in the classpath, sorted by their priority.
          */
-        val ALL: Set<VersionControlSystem> by lazy {
-            LOADER.iterator().asSequence().toSortedSet(compareByDescending { it.priority })
+        val ALL by lazy {
+            Plugin.getAll<VersionControlSystem>().toList().sortedByDescending { (_, vcs) -> vcs.priority }.toMap()
         }
 
         /**
          * Return the applicable VCS for the given [vcsType], or null if none is applicable.
          */
         fun forType(vcsType: VcsType) =
-            ALL.find {
+            ALL.values.find {
                 it.isAvailable() && it.isApplicableType(vcsType)
             }
 
@@ -85,10 +82,11 @@ abstract class VersionControlSystem(
                 when (val type = VcsHost.parseUrl(vcsUrl).type) {
                     VcsType.UNKNOWN -> {
                         // ...then eventually try to determine the type also dynamically.
-                        ALL.find {
+                        ALL.values.find {
                             it.isAvailable() && it.isApplicableUrl(vcsUrl)
                         }
                     }
+
                     else -> forType(type)
                 }.also {
                     urlToVcsMap[vcsUrl] = it
@@ -111,7 +109,7 @@ abstract class VersionControlSystem(
             return if (absoluteVcsDirectory in dirToVcsMap) {
                 dirToVcsMap[absoluteVcsDirectory]
             } else {
-                ALL.asSequence().mapNotNull {
+                ALL.values.asSequence().mapNotNull {
                     if (it is CommandLineTool && !it.isInPath()) {
                         null
                     } else {
@@ -156,7 +154,7 @@ abstract class VersionControlSystem(
         /**
          * Return glob patterns for files that should be checkout out in addition to explicit sparse checkout paths.
          */
-        internal fun getSparseCheckoutGlobPatterns(): List<String> {
+        fun getSparseCheckoutGlobPatterns(): List<String> {
             val globPatterns = mutableListOf("*$ORT_REPO_CONFIG_FILENAME")
             val licensePatterns = LicenseFilePatterns.getInstance()
             return licensePatterns.allLicenseFilenames.generateCapitalizationVariants().mapTo(globPatterns) { "**/$it" }
@@ -165,11 +163,6 @@ abstract class VersionControlSystem(
         private fun Collection<String>.generateCapitalizationVariants() =
             flatMap { listOf(it, it.uppercase(), it.uppercaseFirstChar()) }
     }
-
-    /**
-     * The [VcsType] of this [VersionControlSystem].
-     */
-    abstract val type: VcsType
 
     /**
      * The priority in which this VCS should be probed. A higher value means a higher priority.
@@ -187,9 +180,10 @@ abstract class VersionControlSystem(
     abstract fun getVersion(): String
 
     /**
-     * Return the name of the default branch for the repository at [url], or null if there is no default remote branch.
+     * Return the name of the default branch for the repository at [url]. It is expected that there always is a default
+     * branch name that implementations can fall back to, and that the returned name is non-empty.
      */
-    abstract fun getDefaultBranchName(url: String): String?
+    abstract fun getDefaultBranchName(url: String): String
 
     /**
      * Return a working tree instance for this VCS.
@@ -199,7 +193,7 @@ abstract class VersionControlSystem(
     /**
      * Return true if this VCS can handle the given [vcsType].
      */
-    fun isApplicableType(vcsType: VcsType) = vcsType == type
+    fun isApplicableType(vcsType: VcsType) = VcsType.forName(type) == vcsType
 
     /**
      * Return true if this [VersionControlSystem] can be used to download from the provided [vcsUrl]. First, try to find
@@ -209,13 +203,13 @@ abstract class VersionControlSystem(
     fun isApplicableUrl(vcsUrl: String): Boolean {
         if (vcsUrl.isBlank() || vcsUrl.endsWith(".html")) return false
 
-        return VcsHost.parseUrl(vcsUrl).type == type || isApplicableUrlInternal(vcsUrl)
+        return isApplicableType(VcsHost.parseUrl(vcsUrl).type) || isApplicableUrlInternal(vcsUrl)
     }
 
     /**
      * Return true if this [VersionControlSystem] is available for use.
      */
-    fun isAvailable(): Boolean = commandLineTool?.isInPath() ?: true
+    fun isAvailable(): Boolean = commandLineTool?.isInPath() != false
 
     /**
      * Test - in a way specific to this [VersionControlSystem] - whether it can be used to download from the provided
@@ -247,7 +241,7 @@ abstract class VersionControlSystem(
         }
 
         val revisionCandidates = getRevisionCandidates(workingTree, pkg, allowMovingRevisions).getOrElse {
-            throw DownloadException("$type failed to get revisions from URL '${pkg.vcsProcessed.url}'.", it)
+            throw DownloadException("$type failed to get revisions from URL ${pkg.vcsProcessed.url}.", it)
         }
 
         val results = mutableListOf<Result<String>>()
@@ -259,14 +253,16 @@ abstract class VersionControlSystem(
         }
 
         val workingTreeRevision = results.last().getOrElse {
-            throw DownloadException("$type failed to download from URL '${pkg.vcsProcessed.url}'.", it)
+            throw DownloadException(
+                "$type failed to download from ${pkg.vcsProcessed.url} to '${workingTree.getRootPath()}'.", it
+            )
         }
 
         pkg.vcsProcessed.path.let {
-            if (it.isNotBlank() && !workingTree.workingDir.resolve(it).exists()) {
+            if (it.isNotBlank() && !workingTree.getRootPath().resolve(it).exists()) {
                 throw DownloadException(
-                    "The $type working directory at '${workingTree.workingDir}' does not contain the requested path " +
-                        "'$it'."
+                    "The $type working directory at '${workingTree.getRootPath()}' does not contain the requested " +
+                        "path '$it'."
                 )
             }
         }
@@ -363,7 +359,7 @@ abstract class VersionControlSystem(
 
         addMetadataRevision(pkg.vcsProcessed.revision)
 
-        if (type == VcsType.GIT && pkg.vcsProcessed.revision == "master") {
+        if (VcsType.forName(type) == VcsType.GIT && pkg.vcsProcessed.revision == "master") {
             // Also try with Git's upcoming default branch name in case the repository is already using it.
             addMetadataRevision("main")
         }

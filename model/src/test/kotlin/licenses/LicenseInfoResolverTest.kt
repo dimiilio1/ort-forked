@@ -29,6 +29,7 @@ import io.kotest.matchers.collections.containExactlyInAnyOrder
 import io.kotest.matchers.collections.haveSize
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.neverNullMatcher
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 
@@ -38,7 +39,6 @@ import java.lang.IllegalArgumentException
 import org.ossreviewtoolkit.model.ArtifactProvenance
 import org.ossreviewtoolkit.model.CopyrightFinding
 import org.ossreviewtoolkit.model.Hash
-import org.ossreviewtoolkit.model.HashAlgorithm
 import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.LicenseFinding
 import org.ossreviewtoolkit.model.LicenseSource
@@ -65,7 +65,6 @@ import org.ossreviewtoolkit.utils.spdx.SpdxSingleLicenseExpression
 import org.ossreviewtoolkit.utils.spdx.getLicenseText
 import org.ossreviewtoolkit.utils.spdx.toSpdx
 import org.ossreviewtoolkit.utils.test.createDefault
-import org.ossreviewtoolkit.utils.test.shouldNotBeNull
 import org.ossreviewtoolkit.utils.test.transformingCollectionEmptyMatcher
 import org.ossreviewtoolkit.utils.test.transformingCollectionMatcher
 
@@ -337,8 +336,8 @@ class LicenseInfoResolverTest : WordSpec({
 
         "apply path excludes" {
             val sourceArtifact = RemoteArtifact(
-                url = "http://example.com",
-                hash = Hash("", HashAlgorithm.NONE)
+                url = "https://example.com/",
+                hash = Hash.NONE
             )
             val sourceArtifactProvenance = ArtifactProvenance(
                 sourceArtifact = sourceArtifact
@@ -662,7 +661,7 @@ private fun createResolver(
     archiver: FileArchiver = FileArchiver.createDefault()
 ) = LicenseInfoResolver(
     provider = SimpleLicenseInfoProvider(data),
-    copyrightGarbage = CopyrightGarbage(copyrightGarbage.toSortedSet()),
+    copyrightGarbage = CopyrightGarbage(copyrightGarbage),
     addAuthorsToCopyrights = addAuthorsToCopyrights,
     archiver = archiver
 )

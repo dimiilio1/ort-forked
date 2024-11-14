@@ -25,7 +25,7 @@ import java.io.ByteArrayInputStream
 import java.io.FileNotFoundException
 import java.io.IOException
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.model.RepositoryProvenance
 import org.ossreviewtoolkit.model.yamlMapper
@@ -35,8 +35,6 @@ import org.ossreviewtoolkit.utils.ort.showStackTrace
 import org.ossreviewtoolkit.utils.ort.storage.FileStorage
 
 class FileBasedNestedProvenanceStorage(private val backend: FileStorage) : NestedProvenanceStorage {
-    private companion object : Logging
-
     override fun readNestedProvenance(root: RepositoryProvenance): NestedProvenanceResolutionResult? =
         readResults(root).find { it.nestedProvenance.root == root }
 
@@ -53,6 +51,7 @@ class FileBasedNestedProvenanceStorage(private val backend: FileStorage) : Neste
                     // If the file cannot be found it means no scan results have been stored, yet.
                     emptyList()
                 }
+
                 else -> {
                     logger.info {
                         "Could not read resolved nested provenances for '$root' from path '$path': " +
@@ -65,7 +64,7 @@ class FileBasedNestedProvenanceStorage(private val backend: FileStorage) : Neste
         }
     }
 
-    override fun putNestedProvenance(root: RepositoryProvenance, result: NestedProvenanceResolutionResult) {
+    override fun writeNestedProvenance(root: RepositoryProvenance, result: NestedProvenanceResolutionResult) {
         val results = readResults(root).toMutableList()
         results.removeAll { it.nestedProvenance.root == root }
         results += result
@@ -87,6 +86,7 @@ class FileBasedNestedProvenanceStorage(private val backend: FileStorage) : Neste
                             it.collectMessages()
                     }
                 }
+
                 else -> throw it
             }
         }

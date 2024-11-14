@@ -25,7 +25,6 @@ import java.io.File
 import java.time.Instant
 
 import org.ossreviewtoolkit.downloader.VersionControlSystem
-import org.ossreviewtoolkit.model.AdvisorRecord
 import org.ossreviewtoolkit.model.AdvisorResult
 import org.ossreviewtoolkit.model.AdvisorRun
 import org.ossreviewtoolkit.model.ArtifactProvenance
@@ -66,7 +65,7 @@ fun advisorRunOf(vararg results: Pair<Identifier, List<AdvisorResult>>): Advisor
         endTime = Instant.now(),
         environment = Environment(),
         config = AdvisorConfiguration(),
-        results = AdvisorRecord(results.toMap())
+        results = results.toMap()
     )
 
 /**
@@ -89,11 +88,14 @@ fun patchExpectedResult(
     definitionFile: File? = null,
     custom: Map<String, String> = emptyMap()
 ): String {
+    val env = Environment()
+
     val replacements = buildMap {
-        put("<REPLACE_JAVA>", System.getProperty("java.version"))
-        put("<REPLACE_OS>", System.getProperty("os.name"))
-        put("\"<REPLACE_PROCESSORS>\"", Runtime.getRuntime().availableProcessors().toString())
-        put("\"<REPLACE_MAX_MEMORY>\"", Runtime.getRuntime().maxMemory().toString())
+        put("<REPLACE_JDK>", env.buildJdk)
+        put("<REPLACE_JAVA>", env.javaVersion)
+        put("<REPLACE_OS>", env.os)
+        put("\"<REPLACE_PROCESSORS>\"", env.processors.toString())
+        put("\"<REPLACE_MAX_MEMORY>\"", env.maxMemory.toString())
 
         if (definitionFile != null) {
             val projectDir = definitionFile.parentFile
@@ -102,7 +104,7 @@ fun patchExpectedResult(
             val path = vcsDir.getPathToRoot(projectDir)
 
             put("<REPLACE_DEFINITION_FILE_PATH>", "$path/${definitionFile.name}")
-            put("<REPLACE_ABSOLUTE_DEFINITION_FILE_PATH>", definitionFile.absolutePath)
+            put("<REPLACE_ABSOLUTE_DEFINITION_FILE_PATH>", definitionFile.absoluteFile.invariantSeparatorsPath)
             put("<REPLACE_URL>", url)
             put("<REPLACE_REVISION>", vcsDir.getRevision())
             put("<REPLACE_PATH>", path)
@@ -133,7 +135,7 @@ fun patchActualResult(
 
     return custom.entries.fold(result) { text, (pattern, replacement) -> text.replace(pattern.toRegex(), replacement) }
         .replace(ORT_VERSION_REGEX) { "${it.groupValues[1]}: \"HEAD\"" }
-        .replace(JAVA_VERSION_REGEX) { "${it.groupValues[1]}: \"${System.getProperty("java.version")}\"" }
+        .replace(JAVA_VERSION_REGEX) { "${it.groupValues[1]}: \"${Environment.JAVA_VERSION}\"" }
         .replace(ENV_VAR_REGEX) { "${it.groupValues[1]} {}" }
         .replace(ENV_TOOL_REGEX) { "${it.groupValues[1]} {}" }
         .replace(TIMESTAMP_REGEX) { "${it.groupValues[1]}: \"${Instant.EPOCH}\"" }
@@ -154,7 +156,7 @@ fun scannerRunOf(vararg pkgScanResults: Pair<Identifier, List<ScanResult>>): Sca
                 provenance = ArtifactProvenance(
                     sourceArtifact = RemoteArtifact(
                         url = id.toPurl(),
-                        hash = Hash(value = "", algorithm = HashAlgorithm.NONE)
+                        hash = Hash.NONE
                     )
                 )
             )
@@ -188,6 +190,7 @@ fun scannerRunOf(vararg pkgScanResults: Pair<Identifier, List<ScanResult>>): Sca
             }
         )
     }
+
     val scanners = pkgScanResults.associate { (id, scanResultsForId) ->
         id to scanResultsForId.mapTo(mutableSetOf()) { it.scanner.name }
     }

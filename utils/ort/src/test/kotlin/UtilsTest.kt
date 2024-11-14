@@ -24,6 +24,8 @@ import io.kotest.inspectors.forAll
 import io.kotest.matchers.collections.beEmpty
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldHaveSingleElement
+import io.kotest.matchers.nulls.beNull
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 
@@ -39,7 +41,10 @@ import java.net.PasswordAuthentication
 import java.net.URI
 import java.nio.file.Paths
 
-import org.ossreviewtoolkit.utils.test.shouldNotBeNull
+import kotlin.coroutines.EmptyCoroutineContext
+
+import org.apache.logging.log4j.kotlin.CoroutineThreadContext
+import org.apache.logging.log4j.kotlin.withLoggingContext
 
 class UtilsTest : WordSpec({
     "filterVersionNames" should {
@@ -253,6 +258,16 @@ class UtilsTest : WordSpec({
 
             filterVersionNames("3.9.0.99", names).shouldContainExactly("3.9.0.99-a3d9827", "sdk-3.9.0.99", "v3.9.0.99")
         }
+
+        "find names that match the version without an ignorable suffix" {
+            val names = listOf(
+                "6.2.8",
+                "6.2.9",
+                "6.2.10"
+            )
+
+            filterVersionNames("6.2.9.Final", names).shouldContainExactly("6.2.9")
+        }
     }
 
     "normalizeVcsUrl" should {
@@ -460,6 +475,21 @@ class UtilsTest : WordSpec({
             auth shouldNotBeNull {
                 userName shouldBe "foo"
                 String(password) shouldBe "bar"
+            }
+        }
+    }
+
+    "runBlocking" should {
+        "preserve Log4j's MDC context which kotlinx.coroutines.runBlocking does not" {
+            withLoggingContext(mapOf("key" to "value")) {
+                @Suppress("ForbiddenMethodCall")
+                kotlinx.coroutines.runBlocking(EmptyCoroutineContext) {
+                    coroutineContext[CoroutineThreadContext.Key]?.contextData?.map?.get("key") should beNull()
+                }
+
+                runBlocking(EmptyCoroutineContext) {
+                    coroutineContext[CoroutineThreadContext.Key]?.contextData?.map?.get("key") shouldBe "value"
+                }
             }
         }
     }

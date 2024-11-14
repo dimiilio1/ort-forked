@@ -24,44 +24,17 @@ import java.net.Authenticator
 import java.net.PasswordAuthentication
 import java.net.URI
 
-import org.ossreviewtoolkit.utils.common.Os
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+
+import kotlinx.coroutines.CoroutineScope
+
+import org.apache.logging.log4j.kotlin.CoroutineThreadContext
+
 import org.ossreviewtoolkit.utils.common.toSafeUri
 import org.ossreviewtoolkit.utils.common.toUri
 import org.ossreviewtoolkit.utils.common.withoutPrefix
 import org.ossreviewtoolkit.utils.common.withoutSuffix
-
-/**
- * The directory to store ORT (read-only) configuration in.
- */
-val ortConfigDirectory by lazy {
-    Os.env[ORT_CONFIG_DIR_ENV_NAME]?.takeUnless {
-        it.isEmpty()
-    }?.let {
-        File(it)
-    } ?: ortDataDirectory.resolve("config")
-}
-
-/**
- * The directory to store ORT (read-write) tools in.
- */
-val ortToolsDirectory by lazy {
-    Os.env[ORT_TOOLS_DIR_ENV_NAME]?.takeUnless {
-        it.isEmpty()
-    }?.let {
-        File(it)
-    } ?: ortDataDirectory.resolve("tools")
-}
-
-/**
- * The directory to store ORT (read-write) data in, like caches and archives.
- */
-val ortDataDirectory by lazy {
-    Os.env[ORT_DATA_DIR_ENV_NAME]?.takeUnless {
-        it.isEmpty()
-    }?.let {
-        File(it)
-    } ?: Os.userHomeDirectory.resolve(".ort")
-}
 
 /**
  * Global variable that gets toggled by a command line parameter parsed in the main entry points of the modules.
@@ -71,7 +44,8 @@ var printStackTrace = false
 private val versionSeparators = listOf('-', '_', '.')
 private val versionSeparatorsPattern = versionSeparators.joinToString("", "[", "]")
 
-private val ignorablePrefixSuffixPattern = listOf("rel", "release", "final").joinToString("|", "(", ")")
+private val ignorablePrefixSuffix = listOf("rel", "release", "final")
+private val ignorablePrefixSuffixPattern = ignorablePrefixSuffix.joinToString("|", "(", ")")
 private val ignorablePrefixSuffixRegex = Regex(
     "(^$ignorablePrefixSuffixPattern$versionSeparatorsPattern|$versionSeparatorsPattern$ignorablePrefixSuffixPattern$)"
 )
@@ -97,6 +71,10 @@ fun filterVersionNames(version: String, names: List<String>, project: String? = 
         VersionVariant(versionLower.replace(separatorRegex, it.toString()), listOf(it))
     }
 
+    ignorablePrefixSuffix.mapTo(versionVariants) {
+        VersionVariant(versionLower.removeSuffix(it).trimEnd(*versionSeparators.toCharArray()), versionSeparators)
+    }
+
     // The list of supported version separators.
     val versionHasSeparator = versionSeparators.any { it in version }
 
@@ -108,7 +86,7 @@ fun filterVersionNames(version: String, names: List<String>, project: String? = 
             // for version "3.3.1" accept "3.3.1-npm-packages" but not "3.3.1.0".
             val hasIgnorableSuffixOnly = name.withoutPrefix(versionVariant.name)?.let { tail ->
                 tail.firstOrNull() !in versionVariant.separators
-            } ?: false
+            } == true
 
             // Allow to ignore prefixes in names that are separated by something else than the current separator, e.g.
             // for version "0.10" accept "docutils-0.10" but not "1.0.10".
@@ -126,14 +104,14 @@ fun filterVersionNames(version: String, names: List<String>, project: String? = 
                     || (last in currentSeparators && (forelast == null || !forelast.isDigit()))
                     // The prefix ends with 'v' and the forelast character is a separator.
                     || (last == 'v' && (forelast == null || forelast in currentSeparators))
-            } ?: false
+            } == true
 
             hasIgnorableSuffixOnly || hasIgnorablePrefixOnly
         }
     }
 
     return filteredNames.filter {
-        // startsWith("") returns "true" for any string, so we get an unfiltered list if "project" is "null".
+        // startsWith("") returns "true" for any string, so this yields an unfiltered list if "project" is "null".
         it.startsWith(project.orEmpty())
     }.let {
         // Fall back to the original list if filtering by project results in an empty list.
@@ -198,7 +176,7 @@ fun normalizeVcsUrl(vcsUrl: String): String {
         }
     }
 
-    // If we have no protocol by now and the host is Git-specific, assume https.
+    // If there is no protocol by now and the host is Git-specific, assume https.
     if (url.startsWith("github.com") || url.startsWith("gitlab.com")) {
         url = "https://$url"
     }
@@ -240,3 +218,14 @@ fun normalizeVcsUrl(vcsUrl: String): String {
 
     return url
 }
+
+/**
+ * A wrapper for [kotlinx.coroutines.runBlocking] which always adds a [CoroutineThreadContext] to the newly created
+ * coroutine context. This ensures that Log4j's MDC context is not lost when `runBlocking` is used.
+ *
+ * This function should be used instead of [kotlinx.coroutines.runBlocking] in all code that can be used as a library to
+ * preserve any MDC context set by a consumer.
+ */
+fun <T> runBlocking(context: CoroutineContext = EmptyCoroutineContext, block: suspend CoroutineScope.() -> T): T =
+    @Suppress("ForbiddenMethodCall")
+    kotlinx.coroutines.runBlocking(context + CoroutineThreadContext()) { block() }

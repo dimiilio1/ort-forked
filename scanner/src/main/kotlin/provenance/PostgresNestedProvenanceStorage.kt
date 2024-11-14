@@ -29,7 +29,7 @@ import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insert
-import org.jetbrains.exposed.sql.select
+import org.jetbrains.exposed.sql.selectAll
 
 import org.ossreviewtoolkit.model.RepositoryProvenance
 import org.ossreviewtoolkit.model.utils.DatabaseUtils.checkDatabaseEncoding
@@ -66,20 +66,20 @@ class PostgresNestedProvenanceStorage(
 
     override fun readNestedProvenance(root: RepositoryProvenance): NestedProvenanceResolutionResult? =
         database.transaction {
-            table.select {
+            table.selectAll().where {
                 table.vcsType eq root.vcsInfo.type.toString() and
                     (table.vcsUrl eq root.vcsInfo.url) and
                     (table.vcsRevision eq root.resolvedRevision)
             }.map { it[table.result] }.find { it.nestedProvenance.root == root }
         }
 
-    override fun putNestedProvenance(root: RepositoryProvenance, result: NestedProvenanceResolutionResult) {
+    override fun writeNestedProvenance(root: RepositoryProvenance, result: NestedProvenanceResolutionResult) {
         database.transaction {
-            val idsToRemove = table.select {
+            val idsToRemove = table.selectAll().where {
                 table.vcsType eq root.vcsInfo.type.toString() and
                     (table.vcsUrl eq root.vcsInfo.url) and
                     (table.vcsRevision eq root.resolvedRevision)
-            }.filter { it[table.result].nestedProvenance.root == root }.map { it[table.id].value }
+            }.filter { it[table.result].nestedProvenance.root == root }.map { it[table.id] }
 
             table.deleteWhere { table.id inList idsToRemove }
 

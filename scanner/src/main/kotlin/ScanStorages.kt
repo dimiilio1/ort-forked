@@ -19,7 +19,7 @@
 
 package org.ossreviewtoolkit.scanner
 
-import org.ossreviewtoolkit.model.Identifier
+import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.ScanResult
 import org.ossreviewtoolkit.model.config.ClearlyDefinedStorageConfiguration
 import org.ossreviewtoolkit.model.config.FileBasedStorageConfiguration
@@ -37,8 +37,8 @@ import org.ossreviewtoolkit.scanner.provenance.ResolvedArtifactProvenance
 import org.ossreviewtoolkit.scanner.provenance.ResolvedRepositoryProvenance
 import org.ossreviewtoolkit.scanner.provenance.UnresolvedPackageProvenance
 import org.ossreviewtoolkit.scanner.storages.ClearlyDefinedStorage
-import org.ossreviewtoolkit.scanner.storages.FileBasedStorage
-import org.ossreviewtoolkit.scanner.storages.PostgresStorage
+import org.ossreviewtoolkit.scanner.storages.PackageBasedFileStorage
+import org.ossreviewtoolkit.scanner.storages.PackageBasedPostgresStorage
 import org.ossreviewtoolkit.scanner.storages.ProvenanceBasedFileStorage
 import org.ossreviewtoolkit.scanner.storages.ProvenanceBasedPostgresStorage
 import org.ossreviewtoolkit.scanner.storages.Sw360Storage
@@ -80,11 +80,11 @@ class ScanStorages(
     }
 
     /**
-     * Read all [ScanResult]s for the provided [id]. Returns an empty list if no stored scan results or no stored
-     * provenance can be found.
+     * Read all [ScanResult]s for the provided [package][pkg]. Returns an empty list if no stored scan results or no
+     * stored provenance can be found.
      */
-    fun read(id: Identifier): List<ScanResult> {
-        val packageProvenances = packageProvenanceStorage.readProvenances(id)
+    fun read(pkg: Package): List<ScanResult> {
+        val packageProvenances = packageProvenanceStorage.readProvenances(pkg.id)
 
         val nestedProvenances = packageProvenances.mapNotNull { result ->
             when (result) {
@@ -104,11 +104,11 @@ class ScanStorages(
 
         nestedProvenances.forEach { nestedProvenance ->
             results += readers.filterIsInstance<PackageBasedScanStorageReader>().flatMap { reader ->
-                reader.read(id, nestedProvenance).flatMap { it.merge() }
+                reader.read(pkg, nestedProvenance).flatMap { it.merge() }
             }
 
             results += readers.filterIsInstance<ProvenanceBasedScanStorageReader>().mapNotNull { reader ->
-                val scanResults = nestedProvenance.getProvenances().associateWith { reader.read(it) }
+                val scanResults = nestedProvenance.allProvenances.associateWith { reader.read(it) }
                 NestedProvenanceScanResult(nestedProvenance, scanResults).takeIf { it.isComplete() }?.merge()
             }.flatten()
         }
@@ -132,15 +132,14 @@ private fun createStorage(config: ScanStorageConfiguration): ScanStorage =
 
 private fun createFileBasedStorage(config: FileBasedStorageConfiguration) =
     when (config.type) {
-        StorageType.PACKAGE_BASED -> FileBasedStorage(config.backend.createFileStorage())
+        StorageType.PACKAGE_BASED -> PackageBasedFileStorage(config.backend.createFileStorage())
         StorageType.PROVENANCE_BASED -> ProvenanceBasedFileStorage(config.backend.createFileStorage())
     }
 
 private fun createPostgresStorage(config: PostgresStorageConfiguration) =
     when (config.type) {
-        StorageType.PACKAGE_BASED -> PostgresStorage(
-            DatabaseUtils.createHikariDataSource(config = config.connection, applicationNameSuffix = TOOL_NAME),
-            config.connection.parallelTransactions
+        StorageType.PACKAGE_BASED -> PackageBasedPostgresStorage(
+            DatabaseUtils.createHikariDataSource(config = config.connection, applicationNameSuffix = TOOL_NAME)
         )
         StorageType.PROVENANCE_BASED -> ProvenanceBasedPostgresStorage(
             DatabaseUtils.createHikariDataSource(config = config.connection, applicationNameSuffix = TOOL_NAME)

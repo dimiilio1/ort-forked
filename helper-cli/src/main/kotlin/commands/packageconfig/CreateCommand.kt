@@ -19,7 +19,6 @@
 
 package org.ossreviewtoolkit.helper.commands.packageconfig
 
-import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.UsageError
 import com.github.ajalt.clikt.parameters.options.convert
 import com.github.ajalt.clikt.parameters.options.default
@@ -31,6 +30,7 @@ import com.github.ajalt.clikt.parameters.types.file
 
 import java.io.File
 
+import org.ossreviewtoolkit.helper.utils.OrtHelperCommand
 import org.ossreviewtoolkit.helper.utils.PathExcludeGenerator
 import org.ossreviewtoolkit.helper.utils.sortPathExcludes
 import org.ossreviewtoolkit.helper.utils.write
@@ -42,13 +42,13 @@ import org.ossreviewtoolkit.model.config.PackageConfiguration
 import org.ossreviewtoolkit.model.config.VcsMatcher
 import org.ossreviewtoolkit.model.licenses.LicenseClassifications
 import org.ossreviewtoolkit.model.readValue
-import org.ossreviewtoolkit.scanner.storages.FileBasedStorage
+import org.ossreviewtoolkit.scanner.storages.PackageBasedFileStorage
 import org.ossreviewtoolkit.utils.common.expandTilde
 import org.ossreviewtoolkit.utils.common.safeMkdirs
 import org.ossreviewtoolkit.utils.ort.storage.LocalFileStorage
 import org.ossreviewtoolkit.utils.spdx.SpdxSingleLicenseExpression
 
-internal class CreateCommand : CliktCommand(
+internal class CreateCommand : OrtHelperCommand(
     help = "Creates one package configuration for the source artifact scan and one for the VCS scan, if " +
         "a corresponding scan result exists in the given ORT result for the respective provenance. The output " +
         "package configuration YAML files are written to the given output directory."
@@ -118,8 +118,8 @@ internal class CreateCommand : CliktCommand(
     override fun run() {
         outputDir.safeMkdirs()
 
-        val scanResultsStorage = FileBasedStorage(LocalFileStorage(scanResultsStorageDir))
-        val scanResults = scanResultsStorage.read(packageId).getOrThrow().run {
+        val scanResultsStorage = PackageBasedFileStorage(LocalFileStorage(scanResultsStorageDir))
+        val scanResults = scanResultsStorage.readForId(id = packageId).getOrThrow().run {
             listOfNotNull(
                 find { it.provenance is RepositoryProvenance },
                 find { it.provenance is ArtifactProvenance }
@@ -207,11 +207,13 @@ internal class CreateCommand : CliktCommand(
             )
 
         nonOffendingLicenseCategories.flatMapTo(result) { categoryName ->
-            licenseClassifications.licensesByCategory[categoryName] ?: throw UsageError(
-                message = "The given license category '$categoryName' was not found in " +
-                    "'${licenseClassificationsFile!!.absolutePath}'.",
-                statusCode = 2
-            )
+            @Suppress("UnsafeCallOnNullableType")
+            licenseClassifications.licensesByCategory[categoryName]
+                ?: throw UsageError(
+                    message = "The given license category '$categoryName' was not found in " +
+                        "'${licenseClassificationsFile!!.absolutePath}'.",
+                    statusCode = 2
+                )
         }
 
         return result

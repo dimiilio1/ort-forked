@@ -23,17 +23,19 @@ plugins {
 }
 
 dependencies {
-    api(project(":plugins:commands:command-api"))
+    api(projects.plugins.commands.commandApi)
 
-    implementation(platform(project(":plugins:package-configuration-providers")))
-    implementation(platform(project(":plugins:reporters")))
+    implementation(projects.plugins.packageConfigurationProviders.packageConfigurationProviderApi)
 
-    implementation(project(":reporter"))
-    implementation(project(":model"))
-    implementation(project(":utils:common-utils"))
-    implementation(project(":utils:ort-utils"))
+    // TODO: Get rid of these hard-coded dependencies on plugins.
+    implementation(projects.plugins.packageConfigurationProviders.dirPackageConfigurationProvider)
+
+    implementation(projects.model)
+    implementation(projects.reporter)
+    implementation(projects.utils.commonUtils)
+    implementation(projects.utils.configUtils)
+    implementation(projects.utils.ortUtils)
 
     implementation(libs.clikt)
-    implementation(libs.kotlinxCoroutines)
-    implementation(libs.log4jApiKotlin)
+    implementation(libs.kotlinx.coroutines)
 }

@@ -22,7 +22,9 @@ package org.ossreviewtoolkit.downloader
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.WordSpec
 import io.kotest.engine.spec.tempdir
+import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.file.aFile
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.endWith
@@ -43,7 +45,6 @@ import org.ossreviewtoolkit.model.VcsType
 import org.ossreviewtoolkit.model.config.DownloaderConfiguration
 import org.ossreviewtoolkit.utils.common.VCS_DIRECTORIES
 import org.ossreviewtoolkit.utils.ort.normalizeVcsUrl
-import org.ossreviewtoolkit.utils.test.shouldNotBeNull
 
 class DownloaderFunTest : WordSpec({
     lateinit var outputDir: File
@@ -177,7 +178,7 @@ class DownloaderFunTest : WordSpec({
                 Downloader(DownloaderConfiguration()).download(pkg, outputDir)
             }
 
-            exception.suppressed.size shouldBe 2
+            exception.suppressed shouldHaveSize 2
             exception.suppressed[0]!!.message shouldBe "No VCS URL provided for 'Maven:junit:junit:4.12'. " +
                 "Please define the \"connection\" tag within the \"scm\" tag in the POM file, " +
                 "see: https://maven.apache.org/pom.html#SCM"
@@ -305,7 +306,7 @@ class DownloaderFunTest : WordSpec({
 
             val provenance = Downloader(DownloaderConfiguration()).download(pkg, outputDir)
 
-            outputDir.walk().onEnter { it.name != ".svn" }.count() shouldBe 302
+            outputDir.walk().onEnter { it.name !in VCS_DIRECTORIES }.count() shouldBe 302
 
             provenance.shouldBeTypeOf<RepositoryProvenance>().apply {
                 vcsInfo.type shouldBe VcsType.SUBVERSION

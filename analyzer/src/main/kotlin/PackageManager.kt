@@ -21,17 +21,12 @@ package org.ossreviewtoolkit.analyzer
 
 import java.io.File
 import java.nio.file.FileSystems
-import java.nio.file.FileVisitResult
-import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.SimpleFileVisitor
-import java.nio.file.attribute.BasicFileAttributes
 
 import kotlin.io.path.invariantSeparatorsPathString
 import kotlin.time.measureTime
 
-import org.apache.logging.log4j.kotlin.Logging
-import org.apache.maven.project.ProjectBuildingException
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.downloader.VcsHost
 import org.ossreviewtoolkit.downloader.VersionControlSystem
@@ -47,8 +42,8 @@ import org.ossreviewtoolkit.model.config.PackageManagerConfiguration
 import org.ossreviewtoolkit.model.config.RepositoryConfiguration
 import org.ossreviewtoolkit.model.createAndLogIssue
 import org.ossreviewtoolkit.utils.common.Options
-import org.ossreviewtoolkit.utils.common.Plugin
 import org.ossreviewtoolkit.utils.common.VCS_DIRECTORIES
+import org.ossreviewtoolkit.utils.common.collapseWhitespace
 import org.ossreviewtoolkit.utils.common.collectMessages
 import org.ossreviewtoolkit.utils.common.isSymbolicLink
 import org.ossreviewtoolkit.utils.ort.ORT_CONFIG_FILENAME
@@ -59,27 +54,18 @@ typealias ManagedProjectFiles = Map<PackageManagerFactory, List<File>>
 typealias ProjectResults = Map<File, List<ProjectAnalyzerResult>>
 
 /**
- * A class representing a package manager that handles software dependencies. The package manager is referred to by its
- * [managerName]. The analysis of any projects and their dependencies starts in the [analysisRoot] directory using the
+ * A class to represent a package manager of the given [managerName] that handles dependencies for the given
+ * [projectType]. The analysis of any projects and their dependencies starts in the [analysisRoot] directory using the
  * given general [analyzerConfig]. Per-repository configuration is passed in [repoConfig].
  */
 abstract class PackageManager(
     val managerName: String,
+    val projectType: String,
     val analysisRoot: File,
     val analyzerConfig: AnalyzerConfiguration,
     val repoConfig: RepositoryConfiguration
 ) {
-    companion object : Logging {
-        /**
-         * All [package manager factories][PackageManagerFactory] available in the classpath, associated by their names.
-         */
-        val ALL by lazy { Plugin.getAll<PackageManagerFactory>() }
-
-        /**
-         * The available [package manager factories][PackageManagerFactory] that are enabled by default.
-         */
-        val ENABLED_BY_DEFAULT by lazy { ALL.values.filter { it.isEnabledByDefault } }
-
+    companion object {
         private val PACKAGE_MANAGER_DIRECTORIES = setOf(
             // Ignore intermediate build system directories.
             ".gradle",
@@ -105,7 +91,7 @@ abstract class PackageManager(
          */
         fun findManagedFiles(
             directory: File,
-            packageManagers: Collection<PackageManagerFactory> = ENABLED_BY_DEFAULT,
+            packageManagers: Collection<PackageManagerFactory> = PackageManagerFactory.ENABLED_BY_DEFAULT,
             excludes: Excludes = Excludes.EMPTY
         ): ManagedProjectFiles {
             require(directory.isDirectory) {
@@ -116,63 +102,53 @@ abstract class PackageManager(
 
             val result = mutableMapOf<PackageManagerFactory, MutableList<File>>()
             val rootPath = directory.toPath()
+            val distinctPackageManagers = packageManagers.distinct()
 
-            Files.walkFileTree(
-                rootPath,
-                object : SimpleFileVisitor<Path>() {
-                    override fun preVisitDirectory(dir: Path, attributes: BasicFileAttributes): FileVisitResult {
-                        if (IGNORED_DIRECTORY_MATCHERS.any { it.matches(dir) }) {
-                            logger.info {
-                                "Not analyzing directory '$dir' as it is hard-coded to be ignored."
-                            }
+            directory.walk().onEnter { dir ->
+                val dirAsPath = dir.toPath()
 
-                            return FileVisitResult.SKIP_SUBTREE
-                        }
+                when {
+                    IGNORED_DIRECTORY_MATCHERS.any { it.matches(dirAsPath) } -> {
+                        logger.info { "Not analyzing directory '$dir' as it is hard-coded to be ignored." }
+                        false
+                    }
 
-                        if (excludes.isPathExcluded(rootPath, dir)) {
-                            logger.info {
-                                "Not analyzing directory '$dir' as it is excluded."
-                            }
+                    excludes.isPathExcluded(rootPath, dirAsPath) -> {
+                        logger.info { "Not analyzing directory '$dir' as it is excluded." }
+                        false
+                    }
 
-                            return FileVisitResult.SKIP_SUBTREE
-                        }
+                    dir.isSymbolicLink() -> {
+                        logger.info { "Not following symbolic link to directory '$dir'." }
+                        false
+                    }
 
-                        val dirAsFile = dir.toFile()
+                    else -> true
+                }
+            }.filter { it.isDirectory }.forEach { dir ->
+                val filesInCurrentDir = dir.walk().maxDepth(1).filterTo(mutableListOf()) {
+                    it.isFile && !excludes.isPathExcluded(rootPath, it.toPath())
+                }
 
-                        // Note that although FileVisitOption.FOLLOW_LINKS is not set, this would still follow junctions
-                        // on Windows, so do a better check here.
-                        if (dirAsFile.isSymbolicLink()) {
-                            logger.info { "Not following symbolic link to directory '$dir'." }
-                            return FileVisitResult.SKIP_SUBTREE
-                        }
+                distinctPackageManagers.forEach { manager ->
+                    // Create a list of lists of matching files per glob.
+                    val matchesPerGlob = manager.matchersForDefinitionFiles.mapNotNull { glob ->
+                        // Create a list of files in the current directory that match the current glob.
+                        val filesMatchingGlob = filesInCurrentDir.filter { glob.matches(it.toPath()) }
+                        filesMatchingGlob.takeIf { it.isNotEmpty() }
+                    }
 
-                        val filesInDir = dirAsFile.walk().maxDepth(1).filter {
-                            it.isFile && !excludes.isPathExcluded(rootPath, it.toPath())
-                        }.toList()
-
-                        packageManagers.distinct().forEach { manager ->
-                            // Create a list of lists of matching files per glob.
-                            val matchesPerGlob = manager.matchersForDefinitionFiles.mapNotNull { glob ->
-                                // Create a list of files in the current directory that match the current glob.
-                                val filesMatchingGlob = filesInDir.filter { glob.matches(it.toPath()) }
-                                filesMatchingGlob.takeIf { it.isNotEmpty() }
-                            }
-
-                            if (matchesPerGlob.isNotEmpty()) {
-                                // Only consider all matches for the first glob that has matches. This is because globs
-                                // are defined in order of priority, and multiple globs may just be alternative ways to
-                                // detect the exact same project.
-                                // That is, at the example of a PIP project, if a directory contains all three files
-                                // "requirements-py2.txt", "requirements-py3.txt" and "setup.py", only consider the
-                                // former two as they match the glob with the highest priority, but ignore "setup.py".
-                                result.getOrPut(manager) { mutableListOf() } += matchesPerGlob.first()
-                            }
-                        }
-
-                        return FileVisitResult.CONTINUE
+                    if (matchesPerGlob.isNotEmpty()) {
+                        // Only consider all matches for the first glob that has matches. This is because globs
+                        // are defined in order of priority, and multiple globs may just be alternative ways to
+                        // detect the exact same project.
+                        // That is, at the example of a PIP project, if a directory contains all three files
+                        // "requirements-py2.txt", "requirements-py3.txt" and "setup.py", only consider the
+                        // former two as they match the glob with the highest priority, but ignore "setup.py".
+                        result.getOrPut(manager) { mutableListOf() } += matchesPerGlob.first()
                     }
                 }
-            )
+            }
 
             return result
         }
@@ -200,7 +176,7 @@ abstract class PackageManager(
                 val mergedVcs = normalizedVcsFromPackage.merge(fallbackVcs)
                 if (mergedVcs != normalizedVcsFromPackage) {
                     // ... but if indeed metadata was enriched, overwrite the URL with the one from the fallback VCS
-                    // information to ensure we get the correct base URL if additional VCS information (like a revision
+                    // information to ensure to get the correct base URL if additional VCS information (like a revision
                     // or path) has been split from the original URL.
                     return mergedVcs.copy(url = fallbackVcs.url)
                 }
@@ -320,12 +296,7 @@ abstract class PackageManager(
                 }.onFailure {
                     it.showStackTrace()
 
-                    // In case of Maven we might be able to do better than inferring the name from the path.
-                    val id = if (it is ProjectBuildingException && it.projectId?.isEmpty() == false) {
-                        Identifier("Maven:${it.projectId}")
-                    } else {
-                        Identifier.EMPTY.copy(type = managerName, name = relativePath)
-                    }
+                    val id = Identifier.EMPTY.copy(type = managerName, name = relativePath)
 
                     val projectWithIssues = Project.EMPTY.copy(
                         id = id,
@@ -365,8 +336,7 @@ abstract class PackageManager(
 
     protected fun requireLockfile(workingDir: File, condition: () -> Boolean) {
         require(analyzerConfig.allowDynamicVersions || condition()) {
-            val relativePathString = workingDir.relativeTo(analysisRoot).invariantSeparatorsPath
-                .takeUnless { it.isEmpty() } ?: "."
+            val relativePathString = workingDir.relativeTo(analysisRoot).invariantSeparatorsPath.ifEmpty { "." }
 
             "No lockfile found in '$relativePathString'. This potentially results in unstable versions of " +
                 "dependencies. To support this, enable the 'allowDynamicVersions' option in '$ORT_CONFIG_FILENAME'."
@@ -395,14 +365,45 @@ abstract class PackageManager(
 }
 
 /**
- * Parse a string with metadata about an [author] to extract the author name. Many package managers support
- * such author information in string form that contain additional properties like an email address or a
- * homepage. These additional properties are typically separated from the author name by specific [delimiters],
- * e.g. the email address is often surrounded by angle brackets. This function assumes that the author name is the
- * first portion in the given [author] string before one of the given [delimiters] is found.
+ * Parse a string with metadata about an [author] that several package managers use and try to extract the author's
+ * name, email address, and homepage. These properties are typically surrounded by specific delimiters, e.g. the email
+ * address is often surrounded by angle brackets (see [emailDelimiters]) and the homepage is often surrounded by
+ * parentheses (see [homepageDelimiters]). Return [AuthorInfo] for these properties where unavailable ones are set to
+ * null.
  */
-fun parseAuthorString(author: String?, vararg delimiters: Char = charArrayOf('<')): String? =
-    author?.split(*delimiters, limit = 2)?.firstOrNull()?.trim()?.ifEmpty { null }
+fun parseAuthorString(
+    author: String?,
+    emailDelimiters: Pair<Char, Char> = '<' to '>',
+    homepageDelimiters: Pair<Char, Char> = '(' to ')'
+): Set<AuthorInfo> =
+    author?.split(',', '\n')?.mapTo(mutableSetOf()) { singleAuthor ->
+        var cleanedAuthor = singleAuthor
+        var email: String? = null
+        var homepage: String? = null
+
+        // Extract an email address and remove it from the original autgor string.
+        val e = emailDelimiters.toList().map { Regex.escape(it.toString()) }
+        val emailRegex = Regex("${e.first()}(.+@.+)${e.last()}")
+        cleanedAuthor = cleanedAuthor.replace(emailRegex) {
+            email = it.groupValues.last()
+            ""
+        }
+
+        // Extract a homepage URL and remove it from the original autgor string.
+        val h = homepageDelimiters.toList().map { Regex.escape(it.toString()) }
+        val homepageRegex = Regex("${h.first()}(.+(?:://|www|.).+)${h.last()}")
+        cleanedAuthor = cleanedAuthor.replace(homepageRegex) {
+            homepage = it.groupValues.last()
+            ""
+        }
+
+        AuthorInfo(cleanedAuthor.collapseWhitespace().ifEmpty { null }, email, homepage)
+    }.orEmpty()
+
+/**
+ * Information about an author, including the [name], [email] address, and [homepage] URL.
+ */
+data class AuthorInfo(val name: String?, val email: String?, val homepage: String?)
 
 private fun PackageManagerResult.addDependencyGraphIfMissing(): PackageManagerResult {
     // If the condition is true, then [CompatibilityDependencyNavigator] constructs a [DependencyGraphNavigator].

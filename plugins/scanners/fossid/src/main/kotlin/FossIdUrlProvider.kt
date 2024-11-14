@@ -22,7 +22,7 @@ package org.ossreviewtoolkit.plugins.scanners.fossid
 import java.net.Authenticator
 import java.net.PasswordAuthentication
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.utils.common.percentEncode
 import org.ossreviewtoolkit.utils.common.replaceCredentialsInUri
@@ -35,7 +35,7 @@ import org.ossreviewtoolkit.utils.ort.requestPasswordAuthentication
  * The URLs used by FossId can sometimes be different from the normal package URLs. For instance, credentials may need
  * to be added, or a different protocol may be used. This class takes care of such mappings.
  */
-internal class FossIdUrlProvider private constructor(
+class FossIdUrlProvider private constructor(
     /**
      * The URL mapping. URLs matched by a key [Regex] are replaced by the URL in the value. The replacement string can
      * refer to matched groups of the [Regex]. It can also contain the variables [VAR_USERNAME] and [VAR_PASSWORD] to
@@ -43,7 +43,7 @@ internal class FossIdUrlProvider private constructor(
      */
     private val urlMapping: Map<Regex, String>
 ) {
-    companion object : Logging {
+    companion object {
         /** The prefix of option keys that define a URL mapping. */
         internal const val PREFIX_URL_MAPPING = "urlMapping"
 
@@ -86,7 +86,7 @@ internal class FossIdUrlProvider private constructor(
          */
         private fun queryAuthenticator(repoUrl: String): PasswordAuthentication? {
             val repoUri = repoUrl.toUri().getOrElse {
-                logger.warn { "The repository URL '$repoUrl' is not valid." }
+                logger.warn { "The repository URL $repoUrl is not valid." }
                 return null
             }
 
@@ -154,7 +154,7 @@ internal class FossIdUrlProvider private constructor(
             }
         }
 
-        logger.info { "No matching URL mapping could be found for '$repoUrl'." }
+        logger.info { "No matching URL mapping could be found for $repoUrl." }
 
         return repoUrl
     }

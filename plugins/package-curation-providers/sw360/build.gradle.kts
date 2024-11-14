@@ -19,11 +19,18 @@
 
 plugins {
     // Apply precompiled plugins.
-    id("ort-library-conventions")
+    id("ort-plugin-conventions")
 }
 
 dependencies {
-    api(project(":plugins:package-curation-providers:package-curation-provider-api"))
+    api(projects.plugins.packageCurationProviders.packageCurationProviderApi)
 
-    implementation(libs.sw360Client)
+    ksp(projects.plugins.packageCurationProviders.packageCurationProviderApi)
+
+    implementation(libs.sw360Client) {
+        constraints {
+            implementation("commons-io:commons-io:2.17.0")
+                .because("commons-io 2.11.0 is vulnerable by CVE-2024-47554")
+        }
+    }
 }

@@ -19,12 +19,12 @@
 
 package org.ossreviewtoolkit.helper.commands.repoconfig
 
-import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.parameters.options.convert
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.types.file
 
+import org.ossreviewtoolkit.helper.utils.OrtHelperCommand
 import org.ossreviewtoolkit.helper.utils.findFilesRecursive
 import org.ossreviewtoolkit.helper.utils.minimize
 import org.ossreviewtoolkit.helper.utils.readOrtResult
@@ -42,7 +42,7 @@ import org.ossreviewtoolkit.model.utils.DefaultResolutionProvider
 import org.ossreviewtoolkit.model.utils.FindingCurationMatcher
 import org.ossreviewtoolkit.utils.common.expandTilde
 
-internal class RemoveEntriesCommand : CliktCommand(
+internal class RemoveEntriesCommand : OrtHelperCommand(
     help = "Removes all non-matching path and scope excludes as well as rule violation resolutions. The output is " +
         "written to the given repository configuration file."
 ) {
@@ -94,7 +94,7 @@ internal class RemoveEntriesCommand : CliktCommand(
 
         val scopeExcludes = ortResult
             .getProjects()
-            .flatMap { project -> project.scopes.map { scope -> scope.name } }
+            .flatMapTo(mutableSetOf()) { project -> project.scopes.map { scope -> scope.name } }
             .let { projectScopes -> ortResult.getExcludes().scopes.minimize(projectScopes) }
 
         val licenseFindings = ortResult.getProjectLicenseFindings()
@@ -103,7 +103,7 @@ internal class RemoveEntriesCommand : CliktCommand(
         }
 
         val ruleViolationResolutions = ortResult.getRuleViolations().let { ruleViolations ->
-            ortResult.getResolutions().ruleViolations.filter { resolution ->
+            ortResult.getRepositoryConfigResolutions().ruleViolations.filter { resolution ->
                 ruleViolations.any { resolution.matches(it) }
             }
         }
@@ -112,7 +112,8 @@ internal class RemoveEntriesCommand : CliktCommand(
         val notGloballyResolvedIssues = ortResult.getIssues().values.flatten().filterNot {
             resolutionProvider.isResolved(it)
         }
-        val issueResolutions = ortResult.getResolutions().issues.filter { resolution ->
+
+        val issueResolutions = ortResult.getRepositoryConfigResolutions().issues.filter { resolution ->
             notGloballyResolvedIssues.any { resolution.matches(it) }
         }
 

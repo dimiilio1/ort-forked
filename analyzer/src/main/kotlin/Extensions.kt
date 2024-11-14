@@ -19,7 +19,20 @@
 
 package org.ossreviewtoolkit.analyzer
 
+import org.apache.logging.log4j.kotlin.logger
+
+import org.ossreviewtoolkit.model.DependencyNode
+import org.ossreviewtoolkit.model.Identifier
+import org.ossreviewtoolkit.model.Issue
+import org.ossreviewtoolkit.model.PackageLinkage
+import org.ossreviewtoolkit.model.PackageReference
 import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
+import org.ossreviewtoolkit.utils.common.alsoIfNull
+
+private const val TYPE = "PackageManagerDependency"
+
+private fun String.encodeColon() = replace(':', '\u0000')
+private fun String.decodeColon() = replace('\u0000', ':')
 
 /**
  * Return the list of enabled [PackageManager]s based on the [AnalyzerConfiguration.enabledPackageManagers] and
@@ -27,8 +40,50 @@ import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
  * [default][PackageManagerFactory.isEnabledByDefault] of the [PackageManager]s.
  */
 fun AnalyzerConfiguration.determineEnabledPackageManagers(): Set<PackageManagerFactory> {
-    val enabled = enabledPackageManagers?.mapNotNull { PackageManager.ALL[it] } ?: PackageManager.ENABLED_BY_DEFAULT
-    val disabled = disabledPackageManagers?.mapNotNull { PackageManager.ALL[it] }.orEmpty()
+    val enabled = enabledPackageManagers?.mapNotNull { name ->
+        PackageManagerFactory.ALL[name].alsoIfNull {
+            logger.error {
+                "Package manager '$name' is configured to be enabled but is not available in the classpath. It must " +
+                    "be one of: ${PackageManagerFactory.ALL.keys.joinToString()}."
+            }
+        }
+    } ?: PackageManagerFactory.ENABLED_BY_DEFAULT
+
+    val disabled = disabledPackageManagers?.mapNotNull { name ->
+        PackageManagerFactory.ALL[name].alsoIfNull {
+            logger.warn {
+                "Package manager '$name' is configured to be disabled but is not available in the classpath."
+            }
+        }
+    }.orEmpty()
 
     return enabled.toSet() - disabled.toSet()
 }
+
+/**
+ * Encode this dependency on another package manager into a [PackageReference] with optional [issues].
+ */
+fun PackageManagerDependency.toPackageReference(issues: List<Issue> = emptyList()): PackageReference =
+    PackageReference(
+        id = Identifier(
+            type = TYPE,
+            namespace = packageManager,
+            name = definitionFile.encodeColon(),
+            version = "$linkage@$scope"
+        ),
+        issues = issues
+    )
+
+/**
+ * Decode this dependency node into a [PackageManagerDependency], or return null if this is not a package manager
+ * dependency.
+ */
+internal fun DependencyNode.toPackageManagerDependency(): PackageManagerDependency? =
+    id.type.takeIf { it == TYPE }?.let {
+        PackageManagerDependency(
+            packageManager = id.namespace,
+            definitionFile = id.name.decodeColon(),
+            scope = id.version.substringAfter('@'),
+            linkage = PackageLinkage.valueOf(id.version.substringBefore('@'))
+        )
+    }

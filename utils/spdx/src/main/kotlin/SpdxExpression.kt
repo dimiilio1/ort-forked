@@ -23,17 +23,14 @@ import com.fasterxml.jackson.annotation.JsonCreator
 import com.fasterxml.jackson.databind.annotation.JsonSerialize
 import com.fasterxml.jackson.databind.ser.std.ToStringSerializer
 
-import org.antlr.v4.runtime.CharStreams
-import org.antlr.v4.runtime.CommonTokenStream
-
 import org.ossreviewtoolkit.utils.spdx.SpdxConstants.DOCUMENT_REF_PREFIX
 import org.ossreviewtoolkit.utils.spdx.SpdxConstants.LICENSE_REF_PREFIX
-import org.ossreviewtoolkit.utils.spdx.model.SpdxLicenseChoice
+import org.ossreviewtoolkit.utils.spdx.parser.SpdxExpressionParser
 
 /**
- * An SPDX expression as defined by version 2.1 of the [SPDX specification, appendix IV][1].
+ * An SPDX expression as defined by version 2.2 of the [SPDX specification, annex D][1].
  *
- * [1]: https://spdx.dev/spdx-specification-21-web-version#h.jxpfx0ykyb60
+ * [1]: https://spdx.github.io/spdx-spec/v2.2.2/SPDX-license-expressions/
  */
 @JsonSerialize(using = ToStringSerializer::class)
 sealed class SpdxExpression {
@@ -87,21 +84,8 @@ sealed class SpdxExpression {
          * allowed ([ALLOW_DEPRECATED][Strictness.ALLOW_DEPRECATED]) or only current license identifiers are allowed
          * ([ALLOW_CURRENT][Strictness.ALLOW_CURRENT]). Throws an [SpdxException] if the string cannot be parsed.
          */
-        fun parse(expression: String, strictness: Strictness): SpdxExpression {
-            val charStream = CharStreams.fromString(expression)
-            val lexer = SpdxExpressionLexer(charStream).apply {
-                removeErrorListeners()
-                addErrorListener(SpdxErrorListener())
-            }
-
-            val tokenStream = CommonTokenStream(lexer)
-            val parser = SpdxExpressionParser(tokenStream).apply {
-                removeErrorListeners()
-                addErrorListener(SpdxErrorListener())
-            }
-
-            return SpdxExpressionDefaultVisitor(strictness).visit(parser.licenseExpression())
-        }
+        fun parse(expression: String, strictness: Strictness): SpdxExpression =
+            SpdxExpressionParser(expression, strictness).parse()
     }
 
     /**
@@ -116,22 +100,23 @@ sealed class SpdxExpression {
      * are split, omitting the operator, and exceptions to licenses are dropped. As a result, the returned strings do
      * not contain any spaces each.
      */
-    abstract fun licenses(): List<String>
+    fun licenses(): List<String> =
+        decompose().map {
+            val simpleExpression = if (it is SpdxLicenseWithExceptionExpression) it.license else it
+            simpleExpression.toString()
+        }
 
     /**
-     * Return the [disjunctive normal form][1] of this expression.
-     *
-     * [1]: https://en.wikipedia.org/wiki/Disjunctive_normal_form
-     */
-    open fun disjunctiveNormalForm(): SpdxExpression = this
-
-    /**
-     * Normalize all license IDs using a mapping containing common misspellings of license IDs. If [mapDeprecated] is
-     * `true`, also deprecated IDs are mapped to their current counterparts. The result of this function is not
-     * guaranteed to contain only valid IDs. Use [validate] to check the returned [SpdxExpression] for validity
-     * afterwards.
+     * Normalize all license IDs using [SpdxSimpleLicenseMapping]. If [mapDeprecated] is `true`, also deprecated IDs are
+     * mapped to their current counterparts. The result of this function is not guaranteed to contain only valid IDs.
+     * Use [validate] or [isValid] to check the returned [SpdxExpression] for validity afterwards.
      */
     abstract fun normalize(mapDeprecated: Boolean = true): SpdxExpression
+
+    /**
+     * Return a simplified expression that has e.g. redundancies removed.
+     */
+    open fun simplify(): SpdxExpression = this
 
     /**
      * Return this expression sorted lexicographically.
@@ -147,15 +132,9 @@ sealed class SpdxExpression {
     abstract fun validate(strictness: Strictness)
 
     /**
-     * Return all valid license choices for this SPDX expression, by converting it to the
-     * [disjunctive normal form][disjunctiveNormalForm] and collecting all disjunct expressions.
+     * Return all valid license choices for this SPDX expression by collecting all disjunct expressions.
      */
-    fun validChoices(): Set<SpdxExpression> = disjunctiveNormalForm().validChoicesForDnf()
-
-    /**
-     * Internal implementation of [validChoices], assuming that this expression is already in disjunctive normal form.
-     */
-    protected open fun validChoicesForDnf(): Set<SpdxExpression> = setOf(this)
+    open fun validChoices(): Set<SpdxExpression> = setOf(this)
 
     /**
      * Return whether this expression contains [present][SpdxConstants.isPresent] licenses, i.e. not all licenses in
@@ -177,9 +156,9 @@ sealed class SpdxExpression {
     fun isValidChoice(choice: SpdxExpression): Boolean = !choice.offersChoice() && choice in validChoices()
 
     /**
-     * Return true if [subExpression] is a valid sub-expression of [this][SpdxExpression].
+     * Return true if [subExpression] is semantically contained in [this][SpdxExpression] expression.
      */
-    open fun isSubExpression(subExpression: SpdxExpression?): Boolean = false
+    open fun isSubExpression(subExpression: SpdxExpression?): Boolean = this == subExpression
 
     /**
      * Return true if this expression offers a license choice. This can only be true if this expression contains the
@@ -188,7 +167,7 @@ sealed class SpdxExpression {
     open fun offersChoice(): Boolean = false
 
     /**
-     * Apply a license [choice], optionally limited to the given [subExpression], and return a [SpdxExpression] where
+     * Apply a license [choice], optionally limited to the given [subExpression], and return an [SpdxExpression] where
      * the choice is resolved.
      */
     open fun applyChoice(choice: SpdxExpression, subExpression: SpdxExpression = this): SpdxExpression {
@@ -215,6 +194,7 @@ sealed class SpdxExpression {
             if (it.given == null && currentExpression.isValidChoice(it.choice)) {
                 currentExpression = currentExpression.applyChoice(it.choice)
             } else if (currentExpression.isSubExpression(it.given)) {
+                @Suppress("UnsafeCallOnNullableType")
                 currentExpression = currentExpression.applyChoice(it.choice, it.given!!)
             }
         }
@@ -225,55 +205,64 @@ sealed class SpdxExpression {
     /**
      * Concatenate [this][SpdxExpression] and [other] using [SpdxOperator.AND].
      */
-    infix fun and(other: SpdxExpression) = SpdxCompoundExpression(this, SpdxOperator.AND, other)
+    infix fun and(other: SpdxExpression) =
+        takeIf { this == other } ?: SpdxCompoundExpression(SpdxOperator.AND, listOf(this, other))
 
     /**
      * Concatenate [this][SpdxExpression] and [other] using [SpdxOperator.OR].
      */
-    infix fun or(other: SpdxExpression) = SpdxCompoundExpression(this, SpdxOperator.OR, other)
+    infix fun or(other: SpdxExpression) =
+        takeIf { this == other } ?: SpdxCompoundExpression(SpdxOperator.OR, listOf(this, other))
 }
 
 /**
- * An SPDX expression compound of a [left] and a [right] expression with an [operator] as defined by version 2.1 of the
- * [SPDX specification, appendix IV][1].
+ * An SPDX composite expression using an [operator] with a list of [child][children] expressions as defined by version
+ * 2.2 of the [SPDX specification, annex D.4][1].
  *
- * [1]: https://spdx.dev/spdx-specification-21-web-version#h.jxpfx0ykyb60
+ * [1]: https://spdx.github.io/spdx-spec/v2.2.2/SPDX-license-expressions/#d4-composite-license-expressions
  */
 class SpdxCompoundExpression(
-    val left: SpdxExpression,
     val operator: SpdxOperator,
-    val right: SpdxExpression
+    val children: Collection<SpdxExpression>
 ) : SpdxExpression() {
-    override fun decompose() = left.decompose() + right.decompose()
+    /**
+     * Create a compound expression with the provided [operator] and the [left] and [right] child expressions.
+     */
+    constructor(left: SpdxExpression, operator: SpdxOperator, right: SpdxExpression) :
+        this(operator, listOf(left, right))
 
-    override fun licenses() = left.licenses() + right.licenses()
+    /**
+     * Create a compound expression with the provided [operator], the [first] and [second] child expressions, and an
+     * arbitrary number of [other] child expressions.
+     */
+    constructor(operator: SpdxOperator, first: SpdxExpression, second: SpdxExpression, vararg other: SpdxExpression) :
+        this(operator, listOf(first, second, *other))
 
-    override fun disjunctiveNormalForm(): SpdxExpression {
-        val leftDnf = left.disjunctiveNormalForm()
-        val rightDnf = right.disjunctiveNormalForm()
-
-        return when (operator) {
-            SpdxOperator.OR -> SpdxCompoundExpression(leftDnf, SpdxOperator.OR, rightDnf)
-
-            SpdxOperator.AND -> when {
-                leftDnf is SpdxCompoundExpression && leftDnf.operator == SpdxOperator.OR &&
-                    rightDnf is SpdxCompoundExpression && rightDnf.operator == SpdxOperator.OR ->
-                    ((leftDnf.left and rightDnf.left) or (leftDnf.left and rightDnf.right)) or
-                        ((leftDnf.right and rightDnf.left) or (leftDnf.right and rightDnf.right))
-
-                leftDnf is SpdxCompoundExpression && leftDnf.operator == SpdxOperator.OR ->
-                    (leftDnf.left and rightDnf) or (leftDnf.right and rightDnf)
-
-                rightDnf is SpdxCompoundExpression && rightDnf.operator == SpdxOperator.OR ->
-                    (leftDnf and rightDnf.left) or (leftDnf and rightDnf.right)
-
-                else -> SpdxCompoundExpression(leftDnf, operator, rightDnf)
-            }
+    init {
+        require(children.size > 1) {
+            "A compound expression must have at least two children, but has only ${children.size}."
         }
     }
 
+    override fun decompose(): Set<SpdxSingleLicenseExpression> = children.flatMapTo(mutableSetOf()) { it.decompose() }
+
     override fun normalize(mapDeprecated: Boolean) =
-        SpdxCompoundExpression(left.normalize(mapDeprecated), operator, right.normalize(mapDeprecated))
+        SpdxCompoundExpression(operator, children.map { it.normalize(mapDeprecated) })
+
+    override fun simplify(): SpdxExpression {
+        val flattenedChildren = children.flatMapTo(mutableSetOf()) { child ->
+            val simplifiedChild = child.simplify()
+
+            if (simplifiedChild is SpdxCompoundExpression && simplifiedChild.operator == operator) {
+                // Inline nested children of the same operator.
+                simplifiedChild.children.map { it.simplify() }
+            } else {
+                setOf(simplifiedChild)
+            }
+        }
+
+        return flattenedChildren.singleOrNull() ?: SpdxCompoundExpression(operator, flattenedChildren)
+    }
 
     override fun sorted(): SpdxExpression {
         /**
@@ -291,8 +280,7 @@ class SpdxCompoundExpression(
                 }
             }
 
-            addChildren(expression.left)
-            addChildren(expression.right)
+            expression.children.forEach { addChildren(it) }
 
             return children.sortedBy { it.toString() }
         }
@@ -306,44 +294,41 @@ class SpdxCompoundExpression(
     }
 
     override fun validate(strictness: Strictness) {
-        left.validate(strictness)
-        right.validate(strictness)
+        children.forEach { it.validate(strictness) }
     }
 
-    override fun validChoicesForDnf(): Set<SpdxExpression> =
+    override fun validChoices(): Set<SpdxExpression> =
         when (operator) {
-            SpdxOperator.AND -> setOf(decompose().reduce(SpdxExpression::and))
-
-            SpdxOperator.OR -> {
-                val validChoicesLeft = when (left) {
-                    is SpdxCompoundExpression -> left.validChoicesForDnf()
-                    else -> left.validChoices()
+            SpdxOperator.AND -> {
+                children.fold(setOf()) { acc, child ->
+                    if (acc.isEmpty()) {
+                        child.validChoices()
+                    } else {
+                        child.validChoices().flatMapTo(mutableSetOf()) { childChoice ->
+                            acc.map { it and childChoice }
+                        }
+                    }
                 }
-
-                val validChoicesRight = when (right) {
-                    is SpdxCompoundExpression -> right.validChoicesForDnf()
-                    else -> right.validChoices()
-                }
-
-                validChoicesLeft + validChoicesRight
             }
+
+            SpdxOperator.OR -> children.flatMapTo(mutableSetOf()) { it.validChoices() }
         }
 
     override fun offersChoice(): Boolean =
         when (operator) {
             SpdxOperator.OR -> true
-            SpdxOperator.AND -> left.offersChoice() || right.offersChoice()
+            SpdxOperator.AND -> children.any { it.offersChoice() }
         }
 
     override fun applyChoice(choice: SpdxExpression, subExpression: SpdxExpression): SpdxExpression {
-        if (!subExpression.validChoices().containsAll(choice.validChoices())) {
+        if (!subExpression.isSubExpression(choice)) {
             throw InvalidLicenseChoiceException(
-                "$choice is not a valid choice for $subExpression. Valid choices are: ${validChoices()}."
+                "$choice is not a valid choice for $subExpression. Valid choices are: ${subExpression.validChoices()}."
             )
         }
 
         if (!isSubExpression(subExpression)) {
-            throw InvalidSubExpressionException("$subExpression is not not a valid subExpression of $this")
+            throw InvalidSubExpressionException("$subExpression is not a valid subExpression of $this")
         }
 
         return replaceSubexpressionWithChoice(subExpression, choice)
@@ -371,10 +356,11 @@ class SpdxCompoundExpression(
     override fun isSubExpression(subExpression: SpdxExpression?): Boolean {
         if (subExpression == null) return false
 
-        val expressionString = toString()
-        val subExpressionString = subExpression.toString()
+        if (operator == SpdxOperator.AND) {
+            if (children.any { it.isSubExpression(subExpression) }) return true
+        }
 
-        return validChoices().containsAll(subExpression.validChoices()) || subExpressionString in expressionString
+        return validChoices().containsAll(subExpression.validChoices())
     }
 
     override fun equals(other: Any?): Boolean {
@@ -390,26 +376,23 @@ class SpdxCompoundExpression(
 
     override fun toString() =
         // If the operator of the left or right expression is different from the operator of this expression, put the
-        // respective expression in parentheses. Semantically this would only be required if the priority of this
+        // respective expression in parentheses. Semantically, this would only be required if the priority of this
         // operator is higher than the priority of the operator of the left or right expression, but always adding
         // parentheses makes it easier to understand the expression.
         buildString {
-            when {
-                left is SpdxCompoundExpression && operator != left.operator -> append("($left)")
-                else -> append("$left")
-            }
+            children.forEachIndexed { index, child ->
+                if (index > 0) append(" $operator ")
 
-            append(" $operator ")
-
-            when {
-                right is SpdxCompoundExpression && operator != right.operator -> append("($right)")
-                else -> append("$right")
+                when {
+                    child is SpdxCompoundExpression && operator != child.operator -> append("($child)")
+                    else -> append("$child")
+                }
             }
         }
 }
 
 /**
- * An SPDX expression that contains only a single license with an optional exception. Can be
+ * An SPDX expression that contains only a single license with an optional exception. Can be either a
  * [SpdxLicenseWithExceptionExpression] or any subtype of [SpdxSimpleExpression].
  */
 sealed class SpdxSingleLicenseExpression : SpdxExpression() {
@@ -430,7 +413,7 @@ sealed class SpdxSingleLicenseExpression : SpdxExpression() {
     abstract fun simpleLicense(): String
 
     /**
-     * Return the license exception identifier if this is a [SpdxLicenseWithExceptionExpression] or null otherwise.
+     * Return the license exception identifier if this is an [SpdxLicenseWithExceptionExpression] or null otherwise.
      */
     abstract fun exception(): String?
 
@@ -449,7 +432,10 @@ class SpdxLicenseWithExceptionExpression(
     val exception: String
 ) : SpdxSingleLicenseExpression() {
     companion object {
-        private val EXCEPTION_STRING_PATTERN = Regex("\\bexception\\b", RegexOption.IGNORE_CASE)
+        private val EXCEPTION_STRING_PATTERN = Regex(
+            "\\b(exception|additional-terms|no-patent)\\b",
+            RegexOption.IGNORE_CASE
+        )
 
         /**
          * Parse a string into an [SpdxLicenseWithExceptionExpression]. Throws an [SpdxException] if the string cannot
@@ -462,8 +448,6 @@ class SpdxLicenseWithExceptionExpression(
     }
 
     override fun decompose() = setOf(this)
-
-    override fun licenses() = license.licenses()
 
     override fun simpleLicense() = license.toString()
 
@@ -533,10 +517,10 @@ class SpdxLicenseWithExceptionExpression(
 }
 
 /**
- * A simple SPDX expression as defined by version 2.1 of the [SPDX specification, appendix IV][1]. A simple expression
- * can be either a [SpdxLicenseIdExpression] or a [SpdxLicenseReferenceExpression].
+ * An SPDX simple expression as defined by version 2.2 of the [SPDX specification, annex D.3][1]. A simple expression
+ * can be either an [SpdxLicenseIdExpression] or an [SpdxLicenseReferenceExpression].
  *
- * [1]: https://spdx.dev/spdx-specification-21-web-version#h.jxpfx0ykyb60
+ * [1]: https://spdx.github.io/spdx-spec/v2.2.2/SPDX-license-expressions/#d3-simple-license-expressions
  */
 sealed class SpdxSimpleExpression : SpdxSingleLicenseExpression() {
     /**
@@ -546,10 +530,10 @@ sealed class SpdxSimpleExpression : SpdxSingleLicenseExpression() {
 }
 
 /**
- * An SPDX expression for a license [id] as defined by version 2.1 of the [SPDX specification, appendix I][1].
+ * An SPDX expression for a license [id] as defined by version 2.2 of the [SPDX specification, annex D][1].
  * [orLaterVersion] indicates whether the license id also describes later versions of the license.
  *
- * [1]: https://spdx.dev/spdx-specification-21-web-version#h.luq9dgcle9mo
+ * [1]: https://spdx.github.io/spdx-spec/v2.2.2/SPDX-license-expressions/
  */
 class SpdxLicenseIdExpression(
     val id: String,
@@ -558,8 +542,6 @@ class SpdxLicenseIdExpression(
     private val spdxLicense by lazy { SpdxLicense.forId(id) }
 
     override fun decompose() = setOf(this)
-
-    override fun licenses() = listOf(toString())
 
     override fun simpleLicense() = toString()
 
@@ -605,17 +587,14 @@ class SpdxLicenseIdExpression(
 }
 
 /**
- * An SPDX expression for a license reference [id] as defined by version 2.1 of the
- * [SPDX specification, appendix IV][1].
+ * An SPDX expression for a license reference [id] as defined by version 2.2 of the [SPDX specification, annex D][1].
  *
- * [1]: https://spdx.dev/spdx-specification-21-web-version#h.jxpfx0ykyb60
+ * [1]: https://spdx.github.io/spdx-spec/v2.2.2/SPDX-license-expressions/
  */
 data class SpdxLicenseReferenceExpression(
     val id: String
 ) : SpdxSimpleExpression() {
     override fun decompose() = setOf(this)
-
-    override fun licenses() = listOf(id)
 
     override fun simpleLicense() = id
 
@@ -646,30 +625,4 @@ data class SpdxLicenseReferenceExpression(
     override fun toString() = id
 
     override fun getLicenseUrl(): String? = null
-}
-
-/**
- * An SPDX operator for use in compound expressions as defined by version 2.1 of the
- * [SPDX specification, appendix IV][1].
- *
- * [1]: https://spdx.dev/spdx-specification-21-web-version#h.jxpfx0ykyb60
- */
-enum class SpdxOperator(
-    /**
-     * The priority of the operator. An operator with a larger priority value binds stronger than an operator with a
-     * lower priority value. Operators with the same priority bind left-associative.
-     */
-    val priority: Int
-) {
-    /**
-     * The conjunctive binary "AND" operator to construct a new license expression if required to simultaneously comply
-     * with two or more licenses, where both the left and right operands are valid [SpdxExpressions][SpdxExpression].
-     */
-    AND(1),
-
-    /**
-     * The disjunctive binary "OR" operator to construct a new license expression if presented with a choice between
-     * two or more licenses, where both the left and right operands are valid [SpdxExpressions][SpdxExpression].
-     */
-    OR(0)
 }

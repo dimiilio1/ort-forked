@@ -24,6 +24,7 @@ import io.kotest.matchers.should
 
 import java.io.File
 
+import org.ossreviewtoolkit.downloader.DefaultWorkingTreeCache
 import org.ossreviewtoolkit.model.AnalyzerResult
 import org.ossreviewtoolkit.model.AnalyzerRun
 import org.ossreviewtoolkit.model.Identifier
@@ -44,14 +45,12 @@ import org.ossreviewtoolkit.model.toYaml
 import org.ossreviewtoolkit.scanner.PathScannerWrapper
 import org.ossreviewtoolkit.scanner.ScanContext
 import org.ossreviewtoolkit.scanner.Scanner
-import org.ossreviewtoolkit.scanner.ScannerCriteria
 import org.ossreviewtoolkit.scanner.ScannerWrapper
 import org.ossreviewtoolkit.scanner.provenance.DefaultNestedProvenanceResolver
 import org.ossreviewtoolkit.scanner.provenance.DefaultPackageProvenanceResolver
 import org.ossreviewtoolkit.scanner.provenance.DefaultProvenanceDownloader
 import org.ossreviewtoolkit.scanner.provenance.DummyNestedProvenanceStorage
 import org.ossreviewtoolkit.scanner.provenance.DummyProvenanceStorage
-import org.ossreviewtoolkit.scanner.utils.DefaultWorkingTreeCache
 import org.ossreviewtoolkit.utils.common.VCS_DIRECTORIES
 import org.ossreviewtoolkit.utils.spdx.SpdxConstants
 import org.ossreviewtoolkit.utils.test.getAssetFile
@@ -215,16 +214,18 @@ internal class DummyScanner(override val name: String = "Dummy") : PathScannerWr
     override val version = "1.0.0"
     override val configuration = ""
 
-    override val criteria = ScannerCriteria.create(details)
+    override val matcher = null
+    override val readFromStorage = false
+    override val writeToStorage = false
 
     override fun scanPath(path: File, context: ScanContext): ScanSummary {
         val relevantFiles = path.walk()
             .onEnter { it.name !in VCS_DIRECTORIES }
-            .filterTo(mutableSetOf()) { it.isFile }
+            .filter { it.isFile }
 
         val licenseFindings = relevantFiles.mapTo(mutableSetOf()) { file ->
             LicenseFinding(
-                license = SpdxConstants.NONE,
+                license = SpdxConstants.NOASSERTION,
                 location = TextLocation(file.relativeTo(path).invariantSeparatorsPath, TextLocation.UNKNOWN_LINE)
             )
         }

@@ -22,6 +22,7 @@ package org.ossreviewtoolkit.model
 import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.databind.annotation.JsonSerialize
 
+import org.ossreviewtoolkit.model.utils.requireNotEmptyNoDuplicates
 import org.ossreviewtoolkit.model.utils.toPurl
 import org.ossreviewtoolkit.utils.common.StringSortedSetConverter
 import org.ossreviewtoolkit.utils.ort.DeclaredLicenseProcessor
@@ -32,8 +33,8 @@ import org.ossreviewtoolkit.utils.spdx.SpdxOperator
 /**
  * A generic descriptor for a software package. It contains all relevant metadata about a package like the name,
  * version, and how to retrieve the package and its source code. It does not contain information about the package's
- * dependencies, however. This is because at this stage we would only be able to get the declared dependencies, whereas
- * we are interested in the resolved dependencies. Resolved dependencies might differ from declared dependencies due to
+ * dependencies, however. This is because at this stage ORT would only be able to get the declared dependencies, whereas
+ * the resolved dependencies are of interest. Resolved dependencies might differ from declared dependencies due to
  * specified version ranges, or change depending on how the package is used in a project due to the build system's
  * dependency resolution process. For example, if multiple versions of the same package are used in a project, the build
  * system might decide to align on a single version of that package.
@@ -129,7 +130,14 @@ data class Package(
      * e.g., in case of a fork of an upstream Open Source project.
      */
     @JsonInclude(JsonInclude.Include.NON_DEFAULT)
-    val isModified: Boolean = false
+    val isModified: Boolean = false,
+
+    /**
+     * The considered source code origins and their priority order to use for this package. If null, the configured
+     * default is used. If not null, this must not be empty and not contain any duplicates.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    val sourceCodeOrigins: List<SourceCodeOrigin>? = null
 ) {
     companion object {
         /**
@@ -152,6 +160,10 @@ data class Package(
         )
     }
 
+    init {
+        sourceCodeOrigins?.requireNotEmptyNoDuplicates()
+    }
+
     /**
      * Compares this package with [other] and creates a [PackageCurationData] containing the values from this package
      * which are different in [other]. All equal values are set to null. Only the fields present in
@@ -170,7 +182,8 @@ data class Package(
             sourceArtifact = sourceArtifact.takeIf { it != other.sourceArtifact },
             vcs = vcsProcessed.takeIf { it != other.vcsProcessed }?.toCuration(),
             isMetadataOnly = isMetadataOnly.takeIf { it != other.isMetadataOnly },
-            isModified = isModified.takeIf { it != other.isModified }
+            isModified = isModified.takeIf { it != other.isModified },
+            sourceCodeOrigins = sourceCodeOrigins.takeIf { it != other.sourceCodeOrigins }
         )
     }
 

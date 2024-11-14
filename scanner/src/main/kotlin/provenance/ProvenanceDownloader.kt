@@ -20,33 +20,57 @@
 package org.ossreviewtoolkit.scanner.provenance
 
 import java.io.File
+import java.nio.file.StandardCopyOption
 
 import kotlin.io.path.copyToRecursively
-
-import kotlinx.coroutines.runBlocking
+import kotlin.io.path.moveTo
 
 import org.ossreviewtoolkit.downloader.DownloadException
 import org.ossreviewtoolkit.downloader.Downloader
+import org.ossreviewtoolkit.downloader.WorkingTreeCache
 import org.ossreviewtoolkit.model.ArtifactProvenance
 import org.ossreviewtoolkit.model.KnownProvenance
 import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.RepositoryProvenance
 import org.ossreviewtoolkit.model.config.DownloaderConfiguration
-import org.ossreviewtoolkit.scanner.utils.WorkingTreeCache
 import org.ossreviewtoolkit.utils.common.safeDeleteRecursively
+import org.ossreviewtoolkit.utils.common.safeMkdirs
 import org.ossreviewtoolkit.utils.ort.createOrtTempDir
+import org.ossreviewtoolkit.utils.ort.runBlocking
 
 /**
  * An interface that provides functionality to download source code.
  */
 fun interface ProvenanceDownloader {
     /**
-     * Download the source code specified by the provided [provenance] and return the path to the directory that
-     * contains the downloaded source code.
+     * Download the source code specified by the provided [provenance] and return the path to the temporary directory
+     * that contains the downloaded source code. The caller is responsible for deleting the directory.
      *
      * Throws a [DownloadException] if the download fails.
      */
     fun download(provenance: KnownProvenance): File
+
+    /**
+     * Download the source code specified by the provided [nestedProvenance] incl. sub-repositories and return the path
+     * to the temporary directory that contains the downloaded source code. The caller is responsible for deleting the
+     * directory.
+     *
+     * Throws a [DownloadException] if the download fails.
+     */
+    fun downloadRecursively(nestedProvenance: NestedProvenance): File {
+        // Use the provenanceDownloader to download each provenance from nestedProvenance separately, because they are
+        // likely already cached if a path scanner wrapper is used.
+
+        val root = download(nestedProvenance.root)
+
+        nestedProvenance.subRepositories.forEach { (path, provenance) ->
+            val tempDir = download(provenance)
+            val targetDir = root.resolve(path).apply { parentFile.safeMkdirs() }
+            tempDir.toPath().moveTo(targetDir.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        }
+
+        return root
+    }
 }
 
 /**
@@ -78,14 +102,14 @@ class DefaultProvenanceDownloader(
 
     private suspend fun downloadFromVcs(provenance: RepositoryProvenance, downloadDir: File) {
         workingTreeCache.use(provenance.vcsInfo) { vcs, workingTree ->
-            vcs.updateWorkingTree(workingTree, provenance.resolvedRevision, recursive = false)
+            vcs.updateWorkingTree(workingTree, provenance.resolvedRevision)
 
             val root = workingTree.getRootPath()
 
             // Make sure that all nested repositories are removed. Even though we do not clone recursively above, nested
             // repositories could exist if the same working tree was previously cloned recursively.
             workingTree.getNested().forEach { (path, _) ->
-                root.resolve(path).safeDeleteRecursively(force = true)
+                root.resolve(path).safeDeleteRecursively()
             }
 
             // We need to make a copy of the working tree, because it could be used by another coroutine after this

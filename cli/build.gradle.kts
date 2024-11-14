@@ -22,30 +22,41 @@ plugins {
     id("ort-application-conventions")
 }
 
+configurations.dependencyScope("pluginClasspath")
+configurations["runtimeClasspath"].extendsFrom(configurations["pluginClasspath"])
+
 application {
     applicationName = "ort"
     mainClass = "org.ossreviewtoolkit.cli.OrtMainKt"
 }
 
 dependencies {
-    implementation(platform(project(":plugins:commands")))
-
-    implementation(project(":model"))
-    implementation(project(":plugins:commands:command-api"))
-    implementation(project(":utils:common-utils"))
-    implementation(project(":utils:ort-utils"))
+    implementation(projects.model)
+    implementation(projects.plugins.commands.commandApi)
+    implementation(projects.utils.commonUtils)
+    implementation(projects.utils.ortUtils)
 
     implementation(libs.clikt)
-    implementation(libs.log4jApiKotlin)
-    implementation(libs.logbackClassic)
+    implementation(libs.mordant)
+    implementation(libs.slf4j)
 
-    runtimeOnly(libs.log4jApiToSlf4j)
+    "pluginClasspath"(platform(projects.plugins.advisors))
+    "pluginClasspath"(platform(projects.plugins.commands))
+    "pluginClasspath"(platform(projects.plugins.packageConfigurationProviders))
+    "pluginClasspath"(platform(projects.plugins.packageCurationProviders))
+    "pluginClasspath"(platform(projects.plugins.packageManagers))
+    "pluginClasspath"(platform(projects.plugins.reporters))
+    "pluginClasspath"(platform(projects.plugins.scanners))
+    "pluginClasspath"(platform(projects.plugins.versionControlSystems))
 
-    funTestImplementation(project(":downloader"))
-    funTestImplementation(project(":evaluator"))
-    funTestImplementation(project(":notifier"))
-    funTestImplementation(project(":reporter"))
-    funTestImplementation(testFixtures(project(":analyzer")))
+    funTestImplementation(platform(projects.plugins.commands))
+    funTestImplementation(platform(projects.plugins.packageManagers))
+    funTestImplementation(platform(projects.plugins.reporters))
+    funTestImplementation(projects.downloader)
+    funTestImplementation(projects.evaluator)
+    funTestImplementation(projects.notifier)
+    funTestImplementation(projects.reporter)
+    funTestImplementation(testFixtures(projects.analyzer))
 
     funTestImplementation(libs.greenmail)
 }

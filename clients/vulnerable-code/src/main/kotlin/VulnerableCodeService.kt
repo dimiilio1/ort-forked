@@ -19,16 +19,16 @@
 
 package org.ossreviewtoolkit.clients.vulnerablecode
 
-import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
-
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNames
 import kotlinx.serialization.json.JsonNamingStrategy
 
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 
 import retrofit2.Retrofit
+import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.POST
 
@@ -84,6 +84,9 @@ interface VulnerableCodeService {
         /** The name of the scoring system. */
         val scoringSystem: String,
 
+        /** The individual scoring elements, usually a CVSS vector. */
+        val scoringElements: String? = null,
+
         /**
          * The value in this scoring system. This is a string to support scoring systems that do not use numeric
          * scores, but literals like _LOW_, _MEDIUM_, etc.
@@ -135,14 +138,16 @@ interface VulnerableCodeService {
      */
     @Serializable
     data class PackageVulnerabilities(
-        /** The PURL identifying this package. */
+        /** The purl identifying this package. */
         val purl: String,
 
         /** An optional list with vulnerabilities that have not yet been resolved. */
-        val unresolvedVulnerabilities: List<Vulnerability> = emptyList(),
+        @JsonNames("unresolved_vulnerabilities")
+        val affectedByVulnerabilities: List<Vulnerability> = emptyList(),
 
         /** An optional list with vulnerabilities that have already been resolved. */
-        val resolvedVulnerabilities: List<Vulnerability> = emptyList()
+        @JsonNames("resolved_vulnerabilities")
+        val fixingVulnerabilities: List<Vulnerability> = emptyList()
     )
 
     /**

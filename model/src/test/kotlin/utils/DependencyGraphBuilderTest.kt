@@ -40,7 +40,6 @@ import org.ossreviewtoolkit.model.PackageLinkage
 import org.ossreviewtoolkit.model.PackageReference
 import org.ossreviewtoolkit.model.RootDependencyIndex
 import org.ossreviewtoolkit.model.Scope
-import org.ossreviewtoolkit.utils.test.shouldNotBeNull
 
 class DependencyGraphBuilderTest : WordSpec({
     "DependencyGraphBuilder" should {
@@ -59,13 +58,8 @@ class DependencyGraphBuilderTest : WordSpec({
                 .build()
 
             graph.scopeRoots should beEmpty()
-            graph.nodes shouldNotBeNull {
-                this shouldHaveSize 3
-            }
-
-            graph.edges shouldNotBeNull {
-                this should beEmpty()
-            }
+            graph.nodes shouldHaveSize 3
+            graph.edges should beEmpty()
 
             val scopes = graph.createScopes()
 
@@ -136,10 +130,8 @@ class DependencyGraphBuilderTest : WordSpec({
                 .build()
             val scopes = graph.createScopes()
 
-            graph.nodes shouldNotBeNull {
-                this shouldHaveSize 5
-                all { it.fragment == 0 } shouldBe true
-            }
+            graph.nodes shouldHaveSize 5
+            graph.nodes.all { it.fragment == 0 } shouldBe true
 
             scopeDependencies(scopes, scope1) shouldBe setOf(dep1, dep3, dep5)
             scopeDependencies(scopes, scope2) shouldBe setOf(dep1, dep2, dep4)
@@ -217,9 +209,7 @@ class DependencyGraphBuilderTest : WordSpec({
 
             scopeDependencies(scopes, scope) shouldContainExactly listOf(depCyc2)
 
-            graph.nodes.shouldNotBeNull {
-                this shouldHaveSize 3
-            }
+            graph.nodes shouldHaveSize 3
         }
 
         "check for illegal references when building the graph" {
@@ -357,14 +347,15 @@ private const val NO_PACKAGE_NAMESPACE = "no-package"
 private object PackageRefDependencyHandler : DependencyHandler<PackageReference> {
     override fun identifierFor(dependency: PackageReference): Identifier = dependency.id
 
-    override fun dependenciesFor(dependency: PackageReference): Collection<PackageReference> = dependency.dependencies
+    override fun dependenciesFor(dependency: PackageReference): List<PackageReference> =
+        dependency.dependencies.toList()
 
     override fun linkageFor(dependency: PackageReference): PackageLinkage = dependency.linkage
 
-    override fun createPackage(dependency: PackageReference, issues: MutableList<Issue>): Package? =
+    override fun createPackage(dependency: PackageReference, issues: MutableCollection<Issue>): Package? =
         Package.EMPTY.copy(id = dependency.id).takeUnless { dependency.id.namespace == NO_PACKAGE_NAMESPACE }
 
-    override fun issuesForDependency(dependency: PackageReference): Collection<Issue> = dependency.issues
+    override fun issuesForDependency(dependency: PackageReference): List<Issue> = dependency.issues
 }
 
 /**

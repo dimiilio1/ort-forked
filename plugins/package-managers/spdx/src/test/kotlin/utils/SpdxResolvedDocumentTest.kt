@@ -37,6 +37,7 @@ import io.kotest.matchers.collections.beEmpty
 import io.kotest.matchers.collections.containExactly
 import io.kotest.matchers.collections.containExactlyInAnyOrder
 import io.kotest.matchers.nulls.beNull
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.contain
@@ -48,14 +49,12 @@ import java.net.URI
 import org.ossreviewtoolkit.model.Issue
 import org.ossreviewtoolkit.model.Severity
 import org.ossreviewtoolkit.utils.common.calculateHash
-import org.ossreviewtoolkit.utils.common.encodeHex
 import org.ossreviewtoolkit.utils.spdx.SpdxModelMapper
 import org.ossreviewtoolkit.utils.spdx.model.SpdxChecksum
 import org.ossreviewtoolkit.utils.spdx.model.SpdxDocument
 import org.ossreviewtoolkit.utils.spdx.model.SpdxExternalDocumentReference
 import org.ossreviewtoolkit.utils.spdx.model.SpdxPackage
 import org.ossreviewtoolkit.utils.spdx.model.SpdxRelationship
-import org.ossreviewtoolkit.utils.test.shouldNotBeNull
 
 class SpdxResolvedDocumentTest : WordSpec() {
     private lateinit var tempDir: File
@@ -660,6 +659,6 @@ private fun File.toExternalReference(index: Int): SpdxExternalDocumentReference 
     return SpdxExternalDocumentReference(
         externalDocumentId = referenceId(index),
         spdxDocument = name,
-        checksum = SpdxChecksum(SpdxChecksum.Algorithm.SHA1, hash.encodeHex())
+        checksum = SpdxChecksum(SpdxChecksum.Algorithm.SHA1, hash.toHexString())
     )
 }

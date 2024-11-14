@@ -4,6 +4,9 @@
             "pattern": "^#.*$"
         },
         {
+            "pattern": "^https://bazel.build/$"
+        },
+        {
             "pattern": "^https?://localhost.*$"
         },
         {
@@ -16,7 +19,7 @@
             "pattern": "^https://source.android.com/setup/develop/repo$"
         },
         {
-            "pattern": "^../../tutorial/intro$"
+            "pattern": "^../../tutorial/intro(#.+)?$"
         }
     ]
 }

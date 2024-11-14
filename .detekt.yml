@@ -70,6 +70,11 @@ style:
     maxDestructuringEntries: 4
   ForbiddenComment:
     active: false
+  ForbiddenMethodCall:
+    active: true
+    # Use org.ossreviewtoolkit.utils.ort.runBlocking instead in all code that can be used as a library.
+    # One exception to that are the CLI commands.
+    methods: ['kotlinx.coroutines.runBlocking']
   LoopWithTooManyJumpStatements:
     active: false
   MagicNumber:
@@ -87,14 +92,20 @@ style:
   WildcardImport:
     excludes: ''
     excludeImports:
-      - org.ossreviewtoolkit.analyzer.managers.*
       - org.ossreviewtoolkit.helper.commands.*
       - org.ossreviewtoolkit.utils.spdx.SpdxLicense.*
       - org.ossreviewtoolkit.utils.spdx.SpdxLicenseException.*
       - kotlinx.html.*
       - kotlinx.html.dom.*
 
+potential-bugs:
+  MissingPackageDeclaration:
+    active: true
+    excludes: ["**/GradleModel.kt", "**/build.gradle.kts"]
+
 ORT:
+  OrtEmptyLineAfterBlock:
+    active: true
   OrtImportOrder:
     active: true
     excludes: ["**/clients/github-graphql/build/generated/**"]

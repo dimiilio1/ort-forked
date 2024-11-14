@@ -23,10 +23,9 @@ import java.net.HttpURLConnection
 
 import okhttp3.OkHttpClient
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.clients.clearlydefined.ClearlyDefinedService
-import org.ossreviewtoolkit.clients.clearlydefined.ClearlyDefinedService.Server
 import org.ossreviewtoolkit.clients.clearlydefined.ComponentType
 import org.ossreviewtoolkit.clients.clearlydefined.Coordinates
 import org.ossreviewtoolkit.clients.clearlydefined.SourceLocation
@@ -40,61 +39,54 @@ import org.ossreviewtoolkit.model.PackageCurationData
 import org.ossreviewtoolkit.model.RemoteArtifact
 import org.ossreviewtoolkit.model.VcsInfoCurationData
 import org.ossreviewtoolkit.model.VcsType
-import org.ossreviewtoolkit.model.utils.PackageCurationProvider
 import org.ossreviewtoolkit.model.utils.toClearlyDefinedCoordinates
+import org.ossreviewtoolkit.plugins.api.OrtPlugin
+import org.ossreviewtoolkit.plugins.api.OrtPluginOption
+import org.ossreviewtoolkit.plugins.api.PluginDescriptor
+import org.ossreviewtoolkit.plugins.packagecurationproviders.api.PackageCurationProvider
 import org.ossreviewtoolkit.plugins.packagecurationproviders.api.PackageCurationProviderFactory
-import org.ossreviewtoolkit.utils.common.Options
 import org.ossreviewtoolkit.utils.common.collectMessages
-import org.ossreviewtoolkit.utils.ort.OkHttpClientHelper
+import org.ossreviewtoolkit.utils.ort.okHttpClient
+import org.ossreviewtoolkit.utils.ort.runBlocking
 import org.ossreviewtoolkit.utils.ort.showStackTrace
-import org.ossreviewtoolkit.utils.spdx.SpdxExpression
-import org.ossreviewtoolkit.utils.spdx.toSpdx
+import org.ossreviewtoolkit.utils.spdx.SpdxExpression.Strictness
+import org.ossreviewtoolkit.utils.spdx.toSpdxOrNull
 
 import retrofit2.HttpException
 
-class ClearlyDefinedPackageCurationProviderConfig(
+data class ClearlyDefinedPackageCurationProviderConfig(
     /**
      * The URL of the ClearlyDefined server to use.
      */
+    @OrtPluginOption(defaultValue = "https://api.clearlydefined.io")
     val serverUrl: String,
 
     /**
      * The minimum total score for a curation to be accepted. Must lie within 0 to 100.
      */
+    @OrtPluginOption(defaultValue = "0")
     val minTotalLicenseScore: Int
 )
-
-class ClearlyDefinedPackageCurationProviderFactory :
-    PackageCurationProviderFactory<ClearlyDefinedPackageCurationProviderConfig> {
-    override val type = "ClearlyDefined"
-
-    override fun create(config: ClearlyDefinedPackageCurationProviderConfig) =
-        ClearlyDefinedPackageCurationProvider(config)
-
-    override fun parseOptions(options: Options) =
-        ClearlyDefinedPackageCurationProviderConfig(
-            serverUrl = options["serverUrl"] ?: Server.PRODUCTION.apiUrl,
-            minTotalLicenseScore = options["minTotalLicenseScore"]?.toInt() ?: 0
-        )
-}
 
 /**
  * A provider for curated package metadata from the [ClearlyDefined](https://clearlydefined.io/) service.
  */
+@OrtPlugin(
+    displayName = "ClearlyDefined",
+    description = "Provides package curation data from the ClearlyDefined service.",
+    factory = PackageCurationProviderFactory::class
+)
 class ClearlyDefinedPackageCurationProvider(
+    override val descriptor: PluginDescriptor,
     private val config: ClearlyDefinedPackageCurationProviderConfig,
     client: OkHttpClient? = null
 ) : PackageCurationProvider {
-    private companion object : Logging
-
-    constructor(serverUrl: String, client: OkHttpClient? = null) : this(
-        ClearlyDefinedPackageCurationProviderConfig(serverUrl, minTotalLicenseScore = 0), client
+    constructor(descriptor: PluginDescriptor, config: ClearlyDefinedPackageCurationProviderConfig) : this(
+        descriptor, config, null
     )
 
-    constructor(server: Server = Server.PRODUCTION) : this(server.apiUrl)
-
     private val service by lazy {
-        ClearlyDefinedService.create(config.serverUrl, client ?: OkHttpClientHelper.buildClient())
+        ClearlyDefinedService.create(config.serverUrl, client ?: okHttpClient)
     }
 
     override fun getCurationsFor(packages: Collection<Package>): Set<PackageCuration> {
@@ -110,7 +102,7 @@ class ClearlyDefinedPackageCurationProvider(
         }
 
         val curations = runCatching {
-            service.getCurationsChunked(coordinatesToIds.keys)
+            runBlocking { service.getCurationsChunked(coordinatesToIds.keys) }
         }.onFailure { e ->
             when (e) {
                 is HttpException -> {
@@ -136,7 +128,7 @@ class ClearlyDefinedPackageCurationProvider(
         }
 
         val filteredCurations = if (config.minTotalLicenseScore > 0) {
-            val definitions = service.getDefinitionsChunked(curations.keys)
+            val definitions = runBlocking { service.getDefinitionsChunked(curations.keys) }
 
             curations.filterKeys { coordinates ->
                 val score = definitions[coordinates]?.licensed?.score?.total
@@ -151,12 +143,9 @@ class ClearlyDefinedPackageCurationProvider(
         filteredCurations.forEach inner@{ (coordinates, curation) ->
             val pkgId = coordinatesToIds[coordinates] ?: return@inner
 
-            val declaredLicenseParsed = curation.licensed?.declared?.let { declaredLicense ->
-                // Only take curations of good quality (i.e. those not using deprecated identifiers) and in
-                // particular none that contain "OTHER" as a license, also see
-                // https://github.com/clearlydefined/curated-data/issues/7836.
-                runCatching { declaredLicense.toSpdx(SpdxExpression.Strictness.ALLOW_CURRENT) }.getOrNull()
-            }
+            // Only take curations of good quality (i.e. those not using deprecated identifiers) and in particular none
+            // that contain "OTHER" as a license, also see https://github.com/clearlydefined/curated-data/issues/7836.
+            val declaredLicenseParsed = curation.licensed?.declared?.toSpdxOrNull(Strictness.ALLOW_CURRENT)
 
             val sourceLocation = curation.described?.sourceLocation?.toArtifactOrVcs()
 

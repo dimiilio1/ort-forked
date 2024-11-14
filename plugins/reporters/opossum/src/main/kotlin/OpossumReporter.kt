@@ -30,7 +30,7 @@ import java.util.UUID
 
 import kotlin.math.min
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.downloader.VcsHost
 import org.ossreviewtoolkit.model.CuratedPackage
@@ -44,13 +44,16 @@ import org.ossreviewtoolkit.model.ScanResult
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.utils.getPurlType
 import org.ossreviewtoolkit.model.utils.toPurl
+import org.ossreviewtoolkit.plugins.api.OrtPlugin
+import org.ossreviewtoolkit.plugins.api.OrtPluginOption
+import org.ossreviewtoolkit.plugins.api.PluginDescriptor
 import org.ossreviewtoolkit.reporter.Reporter
+import org.ossreviewtoolkit.reporter.ReporterFactory
 import org.ossreviewtoolkit.reporter.ReporterInput
 import org.ossreviewtoolkit.utils.common.packZip
 import org.ossreviewtoolkit.utils.ort.createOrtTempDir
 import org.ossreviewtoolkit.utils.spdx.SpdxExpression
 import org.ossreviewtoolkit.utils.spdx.SpdxLicense
-import org.ossreviewtoolkit.utils.spdx.getLicenseText
 
 private const val ISSUE_PRIORITY = 900
 
@@ -73,17 +76,26 @@ internal fun resolvePath(left: String, right: String = "", isDirectory: Boolean?
 
 internal fun resolvePath(pieces: List<String>) = pieces.reduce { right, left -> resolvePath(right, left) }
 
+data class OpossumReporterConfig(
+    /**
+     * The depth to which the full file level scanner information is added.
+     */
+    @OrtPluginOption(defaultValue = "3")
+    val maxDepth: Int
+)
+
 /**
  * A [Reporter] that generates an [OpossumInput].
- *
- * This reporter supports the following option:
- * - *scanner.maxDepth*: The depth to which the full file level scanner information is added
  */
-class OpossumReporter : Reporter {
-    companion object : Logging {
-        const val OPTION_SCANNER_MAX_DEPTH = "scanner.maxDepth"
-    }
-
+@OrtPlugin(
+    displayName = "Opossum Reporter",
+    description = "Generates a report in the Opossum format.",
+    factory = ReporterFactory::class
+)
+class OpossumReporter(
+    override val descriptor: PluginDescriptor = OpossumReporterFactory.descriptor,
+    private val config: OpossumReporterConfig
+) : Reporter {
     internal data class OpossumSignal(
         val source: String,
         val id: Identifier? = null,
@@ -210,8 +222,6 @@ class OpossumReporter : Reporter {
         val baseUrlsForSources: SortedMap<String, String> = sortedMapOf(),
         val externalAttributionSources: SortedMap<String, OpossumExternalAttributionSource> = sortedMapOf()
     ) {
-        private companion object : Logging
-
         fun toJson(): Map<*, *> =
             sortedMapOf(
                 "metadata" to sortedMapOf(
@@ -251,7 +261,7 @@ class OpossumReporter : Reporter {
             if (idFromPath in baseUrlsForSources) return
 
             if (VcsHost.GITHUB.isApplicable(vcs)) {
-                val revision = vcs.revision.takeIf { it.isNotBlank() } ?: "HEAD"
+                val revision = vcs.revision.ifBlank { "HEAD" }
                 val baseUrl = vcs.url
                     .replace("ssh://git@github.com/", "https://github.com/")
                     .replace(Regex("\\.git$"), "")
@@ -265,6 +275,7 @@ class OpossumReporter : Reporter {
             if (key !in externalAttributionSources) {
                 externalAttributionSources[key] = OpossumExternalAttributionSource(name, priority)
             }
+
             return key
         }
 
@@ -489,8 +500,6 @@ class OpossumReporter : Reporter {
         }
     }
 
-    override val type = "Opossum"
-
     private fun writeReport(outputFile: File, opossumInput: OpossumInput) {
         val jsonFile = createOrtTempDir().resolve("input.json")
         JsonMapper().setSerializationInclusion(Include.NON_NULL).writeValue(jsonFile, opossumInput.toJson())
@@ -498,25 +507,25 @@ class OpossumReporter : Reporter {
         jsonFile.delete()
     }
 
-    internal fun generateOpossumInput(ortResult: OrtResult, maxDepth: Int = Int.MAX_VALUE): OpossumInput {
+    internal fun generateOpossumInput(input: ReporterInput, maxDepth: Int = Int.MAX_VALUE): OpossumInput {
         val opossumInput = OpossumInput()
 
-        opossumInput.addBaseUrl("/", ortResult.repository.vcs)
+        opossumInput.addBaseUrl("/", input.ortResult.repository.vcs)
 
         SpdxLicense.entries.forEach {
-            val licenseText = getLicenseText(it.id)
+            val licenseText = input.licenseTextProvider.getLicenseText(it.id)
             opossumInput.frequentLicenses += OpossumFrequentLicense(it.id, it.fullName, licenseText)
         }
 
-        ortResult.getProjects().forEach { project ->
-            opossumInput.addProject(project, ortResult)
+        input.ortResult.getProjects().forEach { project ->
+            opossumInput.addProject(project, input.ortResult)
         }
 
-        if (ortResult.getExcludes().scopes.isEmpty()) {
-            opossumInput.addPackagesThatAreRootless(ortResult.getPackages())
+        if (input.ortResult.getExcludes().scopes.isEmpty()) {
+            opossumInput.addPackagesThatAreRootless(input.ortResult.getPackages())
         }
 
-        ortResult.analyzer?.result?.issues.orEmpty().forEach { (id, issues) ->
+        input.ortResult.analyzer?.result?.issues.orEmpty().forEach { (id, issues) ->
             issues.forEach { issue ->
                 val source = opossumInput.addExternalAttributionSource(
                     key = "ORT-Analyzer-Issues",
@@ -528,21 +537,23 @@ class OpossumReporter : Reporter {
             }
         }
 
-        ortResult.getScanResults().forEach { (id, results) ->
+        input.ortResult.getScanResults().forEach { (id, results) ->
             opossumInput.addScannerResults(id, results, maxDepth)
         }
 
         return opossumInput
     }
 
-    override fun generateReport(input: ReporterInput, outputDir: File, options: Map<String, String>): List<File> {
-        val maxDepth = options.getOrDefault(OPTION_SCANNER_MAX_DEPTH, "3").toInt()
-        val opossumInput = generateOpossumInput(input.ortResult, maxDepth)
-        val outputFile = outputDir.resolve("report.opossum")
+    override fun generateReport(input: ReporterInput, outputDir: File): List<Result<File>> {
+        val reportFileResult = runCatching {
+            val opossumInput = generateOpossumInput(input, config.maxDepth)
 
-        writeReport(outputFile, opossumInput)
+            outputDir.resolve("report.opossum").also {
+                writeReport(it, opossumInput)
+            }
+        }
 
-        return listOf(outputFile)
+        return listOf(reportFileResult)
     }
 }
 

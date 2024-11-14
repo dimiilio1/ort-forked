@@ -31,6 +31,15 @@ List of all the provenances with their files and snippets.
 
 [#if scanResult.scanner.name != "FossId"] [#continue] [/#if]
 
+[#assign snippetsLimitIssue = helper.getSnippetsLimitIssue()]
+
+[#if snippetsLimitIssue?has_content]
+[WARNING]
+====
+${snippetsLimitIssue}
+====
+[/#if]
+
 [#if scanResult.provenance.vcsInfo??]
     [#assign url = scanResult.provenance.vcsInfo.url]
 [#else]
@@ -76,24 +85,64 @@ License(s):
 |===
 | Source Location | pURL | License | File | URL | Score | Release Date
 
-.${snippetCount}+|
+.${snippetCount*2}+|
 [#if helper.isFullFileLocation(sourceLocation)]
 Full match
 [#else]
 Partial match +
-${sourceLocation.startLine}-${sourceLocation.endLine}
+${sourceLocation.startLine?c}-${sourceLocation.endLine?c}
 [/#if]
 
 [#list snippetFinding.snippets as snippet ]
 [#assign matchType = snippet.additionalData["matchType"]]
 [#assign snippetFilePath = snippet.location.path!""]
-[#if matchType == "PARTIAL" && snippetFilePath?has_content]
+[#if matchType == "PARTIAL" && snippetFilePath?has_content && snippet.additionalData['matchedLinesSnipped']?has_content]
     [#assign snippetFilePath = "${snippetFilePath}#${snippet.additionalData['matchedLinesSnippet']}"]
 [/#if]
 
 | ${snippet.purl!""}
 | ${snippet.licenses!""} | ${snippetFilePath} | ${snippet.provenance.sourceArtifact.url!""}[URL]
 | ${snippet.score!""} | ${snippet.additionalData["releaseDate"]}
+6+a|
+.Create a snippet choice for this snippet or mark it as false positive
+[%collapsible]
+====
+Add the following lines to the *.ort.yml* file.
+
+To **choose** this snippet:
+[source,yaml]
+--
+snippet_choices:
+- provenance:
+    url: "${scanResult.provenance.vcsInfo.url}"
+  choices:
+  - given:
+      source_location:
+        path: "${filePath}"
+        start_line: ${snippetFinding.sourceLocation.startLine?c}
+        end_line: ${snippetFinding.sourceLocation.endLine?c}
+    choice:
+      purl: "${snippet.purl!""}"
+      reason: "ORIGINAL_FINDING"
+      comment: "Explain why this snippet choice was made"
+--
+Or to mark this location has having ONLY **false positives snippets**:
+[source,yaml]
+--
+snippet_choices:
+- provenance:
+    url: "${scanResult.provenance.vcsInfo.url}"
+  choices:
+  - given:
+      source_location:
+        path: "${filePath}"
+        start_line: ${snippetFinding.sourceLocation.startLine?c}
+        end_line: ${snippetFinding.sourceLocation.endLine?c}
+    choice:
+      reason: "NO_RELEVANT_FINDING"
+      comment: "Explain why this location has only false positives snippets"
+--
+====
 [/#list]
 |===
 [/#list]

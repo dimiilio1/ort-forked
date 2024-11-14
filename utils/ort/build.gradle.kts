@@ -23,13 +23,15 @@ plugins {
 }
 
 dependencies {
-    api(project(":utils:common-utils"))
-    api(project(":utils:spdx-utils"))
+    api(projects.utils.commonUtils)
+    api(projects.utils.spdxUtils)
 
+    api(libs.kotlinx.coroutines)
     api(libs.okhttp)
 
+    implementation(libs.awsS3)
     implementation(libs.commonsCompress)
-    implementation(libs.kotlinxCoroutines)
+    implementation(libs.discoClient)
 
     testImplementation(libs.mockk)
 }

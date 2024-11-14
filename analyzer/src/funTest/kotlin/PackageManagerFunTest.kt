@@ -27,8 +27,8 @@ import io.kotest.matchers.collections.containExactly
 import io.kotest.matchers.collections.containExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.maps.beEmpty
+import io.kotest.matchers.maps.shouldHaveSize
 import io.kotest.matchers.should
-import io.kotest.matchers.shouldBe
 
 import java.io.File
 
@@ -38,6 +38,7 @@ import org.ossreviewtoolkit.model.config.PathExcludeReason
 
 class PackageManagerFunTest : WordSpec({
     val definitionFiles = listOf(
+        "bazel/MODULE.bazel",
         "bower/bower.json",
         "bundler/Gemfile",
         "cargo/Cargo.toml",
@@ -47,9 +48,6 @@ class PackageManagerFunTest : WordSpec({
         "conan-py/conanfile.py",
         "conan-txt/conanfile.txt",
         "dotnet/test.csproj",
-        "glide/glide.yaml",
-        "godep/Gopkg.toml",
-        "godeps/Godeps.json",
         "gomod/go.mod",
         "gradle-groovy/build.gradle",
         "gradle-kotlin/build.gradle.kts",
@@ -85,14 +83,15 @@ class PackageManagerFunTest : WordSpec({
 
             // The test project contains at least one file per package manager, so the result should also contain an
             // entry for each package manager.
-            val unmanagedPackageManagerFactory = PackageManager.ALL["Unmanaged"]
-            managedFiles.keys shouldContainExactlyInAnyOrder PackageManager.ENABLED_BY_DEFAULT.filterNot {
+            val unmanagedPackageManagerFactory = PackageManagerFactory.ALL.getValue("Unmanaged")
+            managedFiles.keys shouldContainExactlyInAnyOrder PackageManagerFactory.ENABLED_BY_DEFAULT.filterNot {
                 it == unmanagedPackageManagerFactory
             }
 
             val managedFilesByName = managedFiles.groupByName(projectDir)
 
             assertSoftly {
+                managedFilesByName["Bazel"] should containExactly("bazel/MODULE.bazel")
                 managedFilesByName["Bower"] should containExactly("bower/bower.json")
                 managedFilesByName["Bundler"] should containExactly("bundler/Gemfile")
                 managedFilesByName["Cargo"] should containExactly("cargo/Cargo.toml")
@@ -103,12 +102,8 @@ class PackageManagerFunTest : WordSpec({
                     "conan-py/conanfile.py",
                     "conan-txt/conanfile.txt"
                 )
-                managedFilesByName["GoDep"] should containExactlyInAnyOrder(
-                    "glide/glide.yaml",
-                    "godep/Gopkg.toml", "godeps/Godeps.json"
-                )
                 managedFilesByName["GoMod"] should containExactly("gomod/go.mod")
-                managedFilesByName["Gradle"] should containExactlyInAnyOrder(
+                managedFilesByName["GradleInspector"] should containExactlyInAnyOrder(
                     "gradle-groovy/build.gradle",
                     "gradle-kotlin/build.gradle.kts"
                 )
@@ -131,7 +126,7 @@ class PackageManagerFunTest : WordSpec({
                     "spdx-package/package.spdx.yml",
                     "spdx-project/project.spdx.yml"
                 )
-                managedFilesByName["SPM"] should containExactlyInAnyOrder(
+                managedFilesByName["SwiftPM"] should containExactlyInAnyOrder(
                     "spm-app/Package.resolved",
                     "spm-lib/Package.swift"
                 )
@@ -144,17 +139,17 @@ class PackageManagerFunTest : WordSpec({
             val managedFiles = PackageManager.findManagedFiles(
                 projectDir,
                 setOf(
-                    PackageManager.ALL.getValue("Gradle"),
-                    PackageManager.ALL.getValue("Pip"),
-                    PackageManager.ALL.getValue("Sbt")
+                    PackageManagerFactory.ALL.getValue("GradleInspector"),
+                    PackageManagerFactory.ALL.getValue("Pip"),
+                    PackageManagerFactory.ALL.getValue("Sbt")
                 )
             )
 
-            managedFiles.size shouldBe 3
+            managedFiles shouldHaveSize 3
 
             val managedFilesByName = managedFiles.groupByName(projectDir)
 
-            managedFilesByName["Gradle"] should containExactlyInAnyOrder(
+            managedFilesByName["GradleInspector"] should containExactlyInAnyOrder(
                 "gradle-groovy/build.gradle",
                 "gradle-kotlin/build.gradle.kts"
             )
@@ -183,7 +178,7 @@ class PackageManagerFunTest : WordSpec({
 
             val managedFilesByName = PackageManager.findManagedFiles(rootDir, excludes = excludes).groupByName(rootDir)
 
-            managedFilesByName["Gradle"] should containExactlyInAnyOrder(
+            managedFilesByName["GradleInspector"] should containExactlyInAnyOrder(
                 "gradle-groovy/build.gradle",
                 "gradle-kotlin/build.gradle.kts"
             )
@@ -198,7 +193,7 @@ class PackageManagerFunTest : WordSpec({
             val managedFiles = PackageManager.findManagedFiles(projectDir, excludes = excludes)
             val managedFilesByName = managedFiles.groupByName(projectDir)
 
-            managedFilesByName["Gradle"] should containExactly(
+            managedFilesByName["GradleInspector"] should containExactly(
                 "gradle-kotlin/build.gradle.kts"
             )
         }

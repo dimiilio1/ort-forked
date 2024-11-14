@@ -21,18 +21,38 @@ package org.ossreviewtoolkit.plugins.packagemanagers.composer
 
 import io.kotest.core.spec.style.StringSpec
 import io.kotest.matchers.collections.beEmpty
+import io.kotest.matchers.collections.containExactly
+import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.haveSubstring
 
-import org.ossreviewtoolkit.analyzer.managers.create
-import org.ossreviewtoolkit.analyzer.managers.resolveSingleProject
+import java.io.File
+
+import org.ossreviewtoolkit.analyzer.create
+import org.ossreviewtoolkit.analyzer.resolveSingleProject
 import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.toYaml
 import org.ossreviewtoolkit.utils.test.getAssetFile
 import org.ossreviewtoolkit.utils.test.matchExpectedResult
 
 class ComposerFunTest : StringSpec({
+    "Project files from vendor directories are ignored" {
+        val projectFiles = create("Composer").mapDefinitionFiles(
+            listOf(
+                "projectA/composer.json",
+                "projectA/vendor/dependency1/composer.json",
+                "projectB/composer.json",
+                "projectB/vendor/dependency2/composer.json"
+            ).map { File(it) }
+        )
+
+        projectFiles.map { it.path } should containExactly(
+            "projectA/composer.json",
+            "projectB/composer.json"
+        )
+    }
+
     "Project dependencies are detected correctly" {
         val definitionFile = getAssetFile("projects/synthetic/lockfile/composer.json")
         val expectedResultFile = getAssetFile("projects/synthetic/composer-expected-output.yml")
@@ -53,7 +73,7 @@ class ComposerFunTest : StringSpec({
             project.definitionFilePath shouldBe "plugins/package-managers/composer/src/funTest/assets/projects/" +
                 "synthetic/no-lockfile/composer.json"
             packages should beEmpty()
-            issues.size shouldBe 1
+            issues shouldHaveSize 1
             issues.first().message should haveSubstring("IllegalArgumentException: No lockfile found in")
         }
     }

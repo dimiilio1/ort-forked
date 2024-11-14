@@ -24,9 +24,9 @@ import java.io.File
 import org.ossreviewtoolkit.model.Issue
 import org.ossreviewtoolkit.model.OrtResult
 import org.ossreviewtoolkit.model.RuleViolation
-import org.ossreviewtoolkit.model.Vulnerability
 import org.ossreviewtoolkit.model.config.Resolutions
 import org.ossreviewtoolkit.model.readValue
+import org.ossreviewtoolkit.model.vulnerabilities.Vulnerability
 
 /**
  * A [ResolutionProvider] that provides the given [resolutions].
@@ -34,21 +34,22 @@ import org.ossreviewtoolkit.model.readValue
 class DefaultResolutionProvider(private val resolutions: Resolutions = Resolutions()) : ResolutionProvider {
     companion object {
         /**
-         * Create a [DefaultResolutionProvider] and add the resolutions from the [ortResult] and the [resolutionsFile].
+         * Create a [DefaultResolutionProvider] and add the resolutions from the repository configuration of
+         * [ortResult] and the [resolutionsFile].
          */
         fun create(ortResult: OrtResult? = null, resolutionsFile: File? = null): DefaultResolutionProvider {
-            val resolutionsFromOrtResult = ortResult?.getResolutions() ?: Resolutions()
+            val resolutionsFromOrtResult = ortResult?.getRepositoryConfigResolutions() ?: Resolutions()
             val resolutionsFromFile = resolutionsFile?.takeIf { it.isFile }?.readValue() ?: Resolutions()
 
             return DefaultResolutionProvider(resolutionsFromOrtResult.merge(resolutionsFromFile))
         }
     }
 
-    override fun getIssueResolutionsFor(issue: Issue) = resolutions.issues.filter { it.matches(issue) }
+    override fun getResolutionsFor(issue: Issue) = resolutions.issues.filter { it.matches(issue) }
 
-    override fun getRuleViolationResolutionsFor(violation: RuleViolation) =
+    override fun getResolutionsFor(violation: RuleViolation) =
         resolutions.ruleViolations.filter { it.matches(violation) }
 
-    override fun getVulnerabilityResolutionsFor(vulnerability: Vulnerability) =
+    override fun getResolutionsFor(vulnerability: Vulnerability) =
         resolutions.vulnerabilities.filter { it.matches(vulnerability) }
 }

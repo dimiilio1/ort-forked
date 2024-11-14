@@ -19,12 +19,12 @@
 
 package org.ossreviewtoolkit.model
 
-import com.fasterxml.jackson.annotation.JsonAlias
 import com.fasterxml.jackson.annotation.JsonInclude
 
 import org.ossreviewtoolkit.utils.common.zip
 import org.ossreviewtoolkit.utils.ort.DeclaredLicenseProcessor
 import org.ossreviewtoolkit.utils.spdx.SpdxExpression
+import org.ossreviewtoolkit.utils.spdx.SpdxExpression.Strictness.ALLOW_LICENSEREF_EXCEPTIONS
 
 /**
  * This class contains curation data for a package. It is used to amend the automatically detected metadata for a
@@ -88,7 +88,6 @@ data class PackageCurationData(
     /**
      * Whether the package is metadata only.
      */
-    @JsonAlias("is_meta_data_only")
     val isMetadataOnly: Boolean? = null,
 
     /**
@@ -101,8 +100,23 @@ data class PackageCurationData(
      * applied by [DeclaredLicenseProcessor.process].
      */
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
-    val declaredLicenseMapping: Map<String, SpdxExpression> = emptyMap()
+    val declaredLicenseMapping: Map<String, SpdxExpression> = emptyMap(),
+
+    /**
+     * The considered source code origins in order of priority. If not null, this must not be empty and not contain any
+     * duplicates.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    val sourceCodeOrigins: List<SourceCodeOrigin>? = null
 ) {
+    init {
+        declaredLicenseMapping.forEach { (key, value) ->
+            require(value.isValid(ALLOW_LICENSEREF_EXCEPTIONS)) {
+                "The declared license '$key' is configured to map to '$value' which is not a valid SPDX expression."
+            }
+        }
+    }
+
     /**
      * Apply this [PackageCuration] to [targetPackage] by overriding all values of [targetPackage] with non-null values
      * of this [PackageCurationData], and return the resulting [CuratedPackage].
@@ -141,7 +155,8 @@ data class PackageCurationData(
             vcs = original.vcs,
             vcsProcessed = vcsProcessed,
             isMetadataOnly = isMetadataOnly ?: original.isMetadataOnly,
-            isModified = isModified ?: original.isModified
+            isModified = isModified ?: original.isModified,
+            sourceCodeOrigins = sourceCodeOrigins ?: original.sourceCodeOrigins
         )
 
         val declaredLicenseMappingDiff = buildMap {
@@ -179,7 +194,9 @@ data class PackageCurationData(
             isMetadataOnly = isMetadataOnly ?: other.isMetadataOnly,
             isModified = isModified ?: other.isModified,
             declaredLicenseMapping = declaredLicenseMapping.zip(other.declaredLicenseMapping) { value, otherValue ->
+                @Suppress("UnsafeCallOnNullableType")
                 (value ?: otherValue)!!
-            }
+            },
+            sourceCodeOrigins = sourceCodeOrigins ?: other.sourceCodeOrigins
         )
 }

@@ -50,6 +50,11 @@ const val ORT_DATA_DIR_ENV_NAME = "ORT_DATA_DIR"
 const val ORT_CONFIG_FILENAME = "config.yml"
 
 /**
+ * The filename of the reference configuration file.
+ */
+const val ORT_REFERENCE_CONFIG_FILENAME = "reference.yml"
+
+/**
  * The name of the ORT copyright garbage configuration file.
  */
 const val ORT_COPYRIGHT_GARBAGE_FILENAME = "copyright-garbage.yml"
@@ -108,3 +113,9 @@ const val ORT_EVALUATOR_RULES_FILENAME = "evaluator.rules.kts"
  * The name of the ORT notifier script.
  */
 const val ORT_NOTIFIER_SCRIPT_FILENAME = "notifier.notifications.kts"
+
+/**
+ * The minimum status code ORT CLI commands return on exit for failures (like rule violations), not errors (like
+ * existing output files).
+ */
+const val ORT_FAILURE_STATUS_CODE = 2

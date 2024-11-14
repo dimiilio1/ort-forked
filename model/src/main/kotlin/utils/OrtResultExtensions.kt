@@ -27,57 +27,15 @@ import org.ossreviewtoolkit.model.licenses.DefaultLicenseInfoProvider
 import org.ossreviewtoolkit.model.licenses.LicenseInfoResolver
 
 /**
- * Add all package configurations from [packageConfigurationProvider] that match any scan result in this [OrtResult] to
- * [OrtResult.resolvedConfiguration], overwriting any previously contained package configurations.
- */
-fun OrtResult.addPackageConfigurations(packageConfigurationProvider: PackageConfigurationProvider): OrtResult {
-    val packageConfigurations = ConfigurationResolver.resolvePackageConfigurations(
-        identifiers = getUncuratedPackages().mapTo(mutableSetOf()) { it.id },
-        scanResultProvider = { id -> getScanResultsForId(id) },
-        packageConfigurationProvider = packageConfigurationProvider
-    )
-
-    return copy(resolvedConfiguration = resolvedConfiguration.copy(packageConfigurations = packageConfigurations))
-}
-
-/**
- * Add all package curations from [packageCurationProviders] that match any packages in this [OrtResult] to
- * [OrtResult.resolvedConfiguration], overwriting any previously contained package curations. The
- * [packageCurationProviders] must be ordered highest-priority-first.
- */
-fun OrtResult.addPackageCurations(packageCurationProviders: List<Pair<String, PackageCurationProvider>>): OrtResult {
-    val packageCurations =
-        ConfigurationResolver.resolvePackageCurations(getUncuratedPackages(), packageCurationProviders)
-
-    return copy(resolvedConfiguration = resolvedConfiguration.copy(packageCurations = packageCurations))
-}
-
-/**
- * Add all resolutions from [resolutionProvider] that match the content of this [OrtResult] to
- * [OrtResult.resolvedConfiguration], overwriting any previously contained resolutions.
- */
-fun OrtResult.addResolutions(resolutionProvider: ResolutionProvider): OrtResult {
-    val resolutions = ConfigurationResolver.resolveResolutions(
-        issues = getIssues().values.flatten(),
-        ruleViolations = getRuleViolations(),
-        vulnerabilities = getVulnerabilities().values.flatten(),
-        resolutionProvider = resolutionProvider
-    )
-
-    return copy(resolvedConfiguration = resolvedConfiguration.copy(resolutions = resolutions))
-}
-
-/**
  * Create a [LicenseInfoResolver] for [this] [OrtResult]. If the resolver is used multiple times it should be stored
  * instead of calling this function multiple times for better performance.
  */
 fun OrtResult.createLicenseInfoResolver(
-    packageConfigurationProvider: PackageConfigurationProvider = PackageConfigurationProvider.EMPTY,
     copyrightGarbage: CopyrightGarbage = CopyrightGarbage(),
     addAuthorsToCopyrights: Boolean = false,
     archiver: FileArchiver? = null
 ) = LicenseInfoResolver(
-    DefaultLicenseInfoProvider(this, packageConfigurationProvider),
+    DefaultLicenseInfoProvider(this),
     copyrightGarbage,
     addAuthorsToCopyrights,
     archiver,

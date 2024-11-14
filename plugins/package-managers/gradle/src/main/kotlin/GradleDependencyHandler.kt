@@ -21,15 +21,12 @@ package org.ossreviewtoolkit.plugins.packagemanagers.gradle
 
 import OrtDependency
 
-import org.apache.logging.log4j.kotlin.Logging
 import org.apache.maven.project.ProjectBuildingException
 
 import org.eclipse.aether.RepositoryException
 import org.eclipse.aether.artifact.DefaultArtifact
 import org.eclipse.aether.repository.RemoteRepository
 
-import org.ossreviewtoolkit.analyzer.managers.utils.MavenSupport
-import org.ossreviewtoolkit.analyzer.managers.utils.identifier
 import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.Issue
 import org.ossreviewtoolkit.model.Package
@@ -37,6 +34,10 @@ import org.ossreviewtoolkit.model.PackageLinkage
 import org.ossreviewtoolkit.model.Severity
 import org.ossreviewtoolkit.model.createAndLogIssue
 import org.ossreviewtoolkit.model.utils.DependencyHandler
+import org.ossreviewtoolkit.plugins.packagemanagers.gradlemodel.dependencyType
+import org.ossreviewtoolkit.plugins.packagemanagers.gradlemodel.isProjectDependency
+import org.ossreviewtoolkit.plugins.packagemanagers.maven.utils.MavenSupport
+import org.ossreviewtoolkit.plugins.packagemanagers.maven.utils.identifier
 import org.ossreviewtoolkit.utils.common.collectMessages
 import org.ossreviewtoolkit.utils.ort.showStackTrace
 
@@ -45,13 +46,11 @@ import org.ossreviewtoolkit.utils.ort.showStackTrace
  */
 internal class GradleDependencyHandler(
     /** The name of the associated package manager. */
-    val managerName: String,
+    private val managerName: String,
 
     /** The helper object to resolve packages via Maven. */
     private val maven: MavenSupport
 ) : DependencyHandler<OrtDependency> {
-    private companion object : Logging
-
     /**
      * A list with repositories to use when resolving packages. This list must be set before using this handler for
      * constructing the dependency graph of a project. As different projects may use different repositories, this
@@ -61,15 +60,15 @@ internal class GradleDependencyHandler(
 
     override fun identifierFor(dependency: OrtDependency): Identifier =
         Identifier(
-            type = dependency.dependencyType(),
+            type = dependency.dependencyType,
             namespace = dependency.groupId,
             name = dependency.artifactId,
             version = dependency.version
         )
 
-    override fun dependenciesFor(dependency: OrtDependency): Collection<OrtDependency> = dependency.dependencies
+    override fun dependenciesFor(dependency: OrtDependency): List<OrtDependency> = dependency.dependencies
 
-    override fun issuesForDependency(dependency: OrtDependency): Collection<Issue> =
+    override fun issuesForDependency(dependency: OrtDependency): List<Issue> =
         listOfNotNull(
             dependency.error?.let {
                 createAndLogIssue(
@@ -89,11 +88,11 @@ internal class GradleDependencyHandler(
         )
 
     override fun linkageFor(dependency: OrtDependency): PackageLinkage =
-        if (dependency.isProjectDependency()) PackageLinkage.PROJECT_DYNAMIC else PackageLinkage.DYNAMIC
+        if (dependency.isProjectDependency) PackageLinkage.PROJECT_DYNAMIC else PackageLinkage.DYNAMIC
 
-    override fun createPackage(dependency: OrtDependency, issues: MutableList<Issue>): Package? {
+    override fun createPackage(dependency: OrtDependency, issues: MutableCollection<Issue>): Package? {
         // Only look for a package if there was no error resolving the dependency and it is no project dependency.
-        if (dependency.error != null || dependency.isProjectDependency()) return null
+        if (dependency.error != null || dependency.isProjectDependency) return null
 
         val artifact = DefaultArtifact(
             dependency.groupId, dependency.artifactId, dependency.classifier,
@@ -120,21 +119,4 @@ internal class GradleDependencyHandler(
             }
         }
     }
-
-    /**
-     * Determine the type of this dependency. This manager implementation uses Maven to resolve packages, so
-     * the type of dependencies to packages is typically _Maven_ unless no pom is available. Only for module
-     * dependencies, the type of this manager is used.
-     */
-    private fun OrtDependency.dependencyType(): String =
-        if (isProjectDependency()) {
-            managerName
-        } else {
-            pomFile?.let { "Maven" } ?: "Unknown"
-        }
 }
-
-/**
- * Return a flag whether this dependency references another project in the current build.
- */
-private fun OrtDependency.isProjectDependency() = localPath != null

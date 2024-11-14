@@ -19,18 +19,10 @@
 
 package org.ossreviewtoolkit.plugins.packagemanagers.cocoapods
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties
-import com.fasterxml.jackson.core.JsonParser
-import com.fasterxml.jackson.databind.DeserializationContext
-import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize
-import com.fasterxml.jackson.databind.deser.std.StdDeserializer
-import com.fasterxml.jackson.databind.node.ObjectNode
-
 import java.io.File
 import java.io.IOException
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.analyzer.AbstractPackageManagerFactory
 import org.ossreviewtoolkit.analyzer.PackageManager
@@ -46,18 +38,16 @@ import org.ossreviewtoolkit.model.RemoteArtifact
 import org.ossreviewtoolkit.model.Scope
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
+import org.ossreviewtoolkit.model.collectDependencies
 import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
 import org.ossreviewtoolkit.model.config.RepositoryConfiguration
 import org.ossreviewtoolkit.model.createAndLogIssue
 import org.ossreviewtoolkit.model.orEmpty
-import org.ossreviewtoolkit.model.readValue
 import org.ossreviewtoolkit.model.utils.toPurl
-import org.ossreviewtoolkit.model.yamlMapper
 import org.ossreviewtoolkit.utils.common.CommandLineTool
 import org.ossreviewtoolkit.utils.common.Os
 import org.ossreviewtoolkit.utils.common.collectMessages
 import org.ossreviewtoolkit.utils.common.stashDirectories
-import org.ossreviewtoolkit.utils.common.textValueOrEmpty
 
 import org.semver4j.RangesList
 import org.semver4j.RangesListFactory
@@ -67,7 +57,7 @@ import org.semver4j.RangesListFactory
  *
  * As pre-condition for the analysis each respective definition file must have a sibling lockfile named 'Podfile.lock'.
  * The dependency tree is constructed solely based on parsing that lockfile. So, the dependency tree can be constructed
- * on any platform. Note that obtaining the dependency tree from the 'pod' command without a lock file has Xcode
+ * on any platform. Note that obtaining the dependency tree from the 'pod' command without a lockfile has Xcode
  * dependencies and is not supported by this class.
  *
  * The only interactions with the 'pod' command happen in order to obtain metadata for dependencies. Therefore,
@@ -78,9 +68,7 @@ class CocoaPods(
     analysisRoot: File,
     analyzerConfig: AnalyzerConfiguration,
     repoConfig: RepositoryConfiguration
-) : PackageManager(name, analysisRoot, analyzerConfig, repoConfig), CommandLineTool {
-    private companion object : Logging
-
+) : PackageManager(name, "CocoaPods", analysisRoot, analyzerConfig, repoConfig), CommandLineTool {
     class Factory : AbstractPackageManagerFactory<CocoaPods>("CocoaPods") {
         override val globsForDefinitionFiles = listOf("Podfile")
 
@@ -101,8 +89,8 @@ class CocoaPods(
 
     override fun beforeResolution(definitionFiles: List<File>) = checkVersion()
 
-    override fun resolveDependencies(definitionFile: File, labels: Map<String, String>): List<ProjectAnalyzerResult> {
-        return stashDirectories(Os.userHomeDirectory.resolve(".cocoapods/repos")).use {
+    override fun resolveDependencies(definitionFile: File, labels: Map<String, String>): List<ProjectAnalyzerResult> =
+        stashDirectories(Os.userHomeDirectory.resolve(".cocoapods/repos")).use {
             // Ensure to use the CDN instead of the monolithic specs repo.
             run("repo", "add-cdn", "trunk", "https://cdn.cocoapods.org", "--allow-root")
 
@@ -116,7 +104,6 @@ class CocoaPods(
                 podspecCache.clear()
             }
         }
-    }
 
     private fun resolveDependenciesInternal(definitionFile: File): List<ProjectAnalyzerResult> {
         val workingDir = definitionFile.parentFile
@@ -130,8 +117,8 @@ class CocoaPods(
             val lockfileData = parseLockfile(lockfile)
 
             scopes += Scope(SCOPE_NAME, lockfileData.dependencies)
-            packages += scopes.flatMap { it.collectDependencies() }.map {
-                lockfileData.externalSources[it] ?: getPackage(it, workingDir)
+            packages += scopes.collectDependencies().map {
+                lockfileData.packagesFromCheckoutOptionsForId[it] ?: getPackage(it, workingDir)
             }
         } else {
             issues += createAndLogIssue(
@@ -168,22 +155,22 @@ class CocoaPods(
     private fun getPackage(id: Identifier, workingDir: File): Package {
         val podspec = getPodspec(id, workingDir) ?: return Package.EMPTY.copy(id = id, purl = id.toPurl())
 
-        val vcs = podspec.source["git"]?.let { url ->
+        val vcs = podspec.source?.git?.let { url ->
             VcsInfo(
                 type = VcsType.GIT,
                 url = url,
-                revision = podspec.source["tag"].orEmpty()
+                revision = podspec.source.tag.orEmpty()
             )
         }.orEmpty()
 
         return Package(
             id = id,
             authors = emptySet(),
-            declaredLicenses = podspec.license.takeUnless { it.isEmpty() }?.let { setOf(it) } ?: emptySet(),
+            declaredLicenses = setOfNotNull(podspec.license.takeUnless { it.isEmpty() }),
             description = podspec.summary,
             homepageUrl = podspec.homepage,
             binaryArtifact = RemoteArtifact.EMPTY,
-            sourceArtifact = podspec.source["http"]?.let { RemoteArtifact(it, Hash.NONE) }.orEmpty(),
+            sourceArtifact = podspec.source?.http?.let { RemoteArtifact(it, Hash.NONE) }.orEmpty(),
             vcs = vcs,
             vcsProcessed = processPackageVcs(vcs, podspec.homepage)
         )
@@ -220,8 +207,9 @@ class CocoaPods(
         }
 
         val podspecFile = File(podspecCommand.stdout.trim())
+        val podspec = podspecFile.readText().parsePodspec()
 
-        podspecFile.readValue<Podspec>().withSubspecs().associateByTo(podspecCache) { it.name }
+        podspec.withSubspecs().associateByTo(podspecCache) { it.name }
 
         return podspecCache.getValue(id.name)
     }
@@ -231,61 +219,42 @@ private const val LOCKFILE_FILENAME = "Podfile.lock"
 
 private const val SCOPE_NAME = "dependencies"
 
-private fun parseNameAndVersion(entry: String): Pair<String, String?> {
-    val info = entry.split(' ', limit = 2)
-    val name = info[0]
-
-    // A version entry could look something like "(6.3.0)", "(= 2021.06.28.00-v2)", "(~> 8.15.0)", etc. Also see
-    // https://guides.cocoapods.org/syntax/podfile.html#pod.
-    val version = info.getOrNull(1)?.removeSurrounding("(", ")")
-
-    return name to version
-}
-
 private data class LockfileData(
     val dependencies: Set<PackageReference>,
-    val externalSources: Map<Identifier, Package>
+    val packagesFromCheckoutOptionsForId: Map<Identifier, Package>
 )
 
 private fun parseLockfile(podfileLock: File): LockfileData {
+    val lockfile = podfileLock.readText().parseLockfile()
     val resolvedVersions = mutableMapOf<String, String>()
     val dependencyConstraints = mutableMapOf<String, MutableSet<String>>()
-    val root = yamlMapper.readTree(podfileLock)
 
     // The "PODS" section lists the resolved dependencies and, nested by one level, any version constraints of their
     // direct dependencies. That is, the nesting never goes deeper than two levels.
-    root.get("PODS").forEach { node ->
-        when (node) {
-            is ObjectNode -> {
-                val (name, version) = parseNameAndVersion(node.fieldNames().asSequence().single())
-                resolvedVersions[name] = checkNotNull(version)
-                dependencyConstraints[name] = node.single().mapTo(mutableSetOf()) {
-                    // Discard the version (which is only a constraint in this case) and just take the name.
-                    parseNameAndVersion(it.textValue()).first
-                }
-            }
+    lockfile.pods.map { pod ->
+        resolvedVersions[pod.name] = checkNotNull(pod.version)
 
-            else -> {
-                val (name, version) = parseNameAndVersion(node.textValue())
-                resolvedVersions[name] = checkNotNull(version)
+        if (pod.dependencies.isNotEmpty()) {
+            dependencyConstraints[pod.name] = pod.dependencies.mapTo(mutableSetOf()) {
+                // Discard the version (which is only a constraint in this case) and just take the name.
+                it.name
             }
         }
     }
 
-    val externalSources = root.get("CHECKOUT OPTIONS")?.fields()?.asSequence()?.mapNotNull {
-        val checkout = it.value as ObjectNode
-        val url = checkout[":git"]?.textValue() ?: return@mapNotNull null
-        val revision = checkout[":commit"].textValueOrEmpty()
+    val packagesFromCheckoutOptionsForId = lockfile.checkoutOptions.mapNotNull { (name, checkoutOption) ->
+        val url = checkoutOption.git ?: return@mapNotNull null
+        val revision = checkoutOption.commit.orEmpty()
 
         // The version written to the lockfile matches the version specified in the project's ".podspec" file at the
         // given revision, so the same version might be used in different revisions. To still get a unique identifier,
         // append the revision to the version.
-        val versionFromPodspec = checkNotNull(resolvedVersions[it.key])
+        val versionFromPodspec = checkNotNull(resolvedVersions[name])
         val uniqueVersion = "$versionFromPodspec-$revision"
-        val id = Identifier("Pod", "", it.key, uniqueVersion)
+        val id = Identifier("Pod", "", name, uniqueVersion)
 
         // Write the unique version back for correctly associating dependencies below.
-        resolvedVersions[it.key] = uniqueVersion
+        resolvedVersions[name] = uniqueVersion
 
         id to Package(
             id = id,
@@ -296,7 +265,7 @@ private fun parseLockfile(podfileLock: File): LockfileData {
             sourceArtifact = RemoteArtifact.EMPTY,
             vcs = VcsInfo(VcsType.GIT, url, revision)
         )
-    }?.toMap()
+    }.toMap()
 
     fun createPackageReference(name: String): PackageReference =
         PackageReference(
@@ -311,55 +280,10 @@ private fun parseLockfile(podfileLock: File): LockfileData {
 
     // The "DEPENDENCIES" section lists direct dependencies, but only along with version constraints, not with their
     // resolved versions, and eventually additional information about the source.
-    val dependencies = root.get("DEPENDENCIES").mapTo(mutableSetOf()) { node ->
-        // Discard the version (which is only a constraint in this case) and just take the name.
-        val (name, _) = parseNameAndVersion(node.textValue())
-        createPackageReference(name)
+    val dependencies = lockfile.dependencies.mapTo(mutableSetOf()) { dependency ->
+        // Ignore the version (which is only a constraint in this case) and just take the name.
+        createPackageReference(dependency.name)
     }
 
-    return LockfileData(dependencies, externalSources.orEmpty())
-}
-
-@JsonIgnoreProperties(ignoreUnknown = true)
-private data class Podspec(
-    val name: String = "",
-    val version: String = "",
-    @JsonDeserialize(using = LicenseDeserializer::class)
-    val license: String = "",
-    val summary: String = "",
-    val homepage: String = "",
-    val source: Map<String, String> = emptyMap(),
-    private val subspecs: List<Podspec> = emptyList()
-) {
-    fun withSubspecs(): List<Podspec> {
-        val result = mutableListOf<Podspec>()
-
-        fun add(spec: Podspec, namePrefix: String) {
-            val name = "$namePrefix${spec.name}"
-            result += copy(name = "$namePrefix${spec.name}")
-            spec.subspecs.forEach { add(it, "$name/") }
-        }
-
-        add(this, "")
-
-        return result
-    }
-}
-
-/**
- * Handle deserialization of the following two possible representations:
- *
- * 1. https://github.com/CocoaPods/Specs/blob/f75c24e7e9df1dac6ffa410a6fb30f01e026d4d6/Specs/8/5/e/SocketIOKit/2.0.1/SocketIOKit.podspec.json#L6-L9
- * 2. https://github.com/CocoaPods/Specs/blob/f75c24e7e9df1dac6ffa410a6fb30f01e026d4d6/Specs/8/5/e/FirebaseObjects/0.0.1/FirebaseObjects.podspec.json#L6
- */
-private class LicenseDeserializer : StdDeserializer<String>(String::class.java) {
-    override fun deserialize(parser: JsonParser, context: DeserializationContext): String {
-        val node = parser.codec.readTree<JsonNode>(parser)
-
-        return if (node.isTextual) {
-            node.textValue()
-        } else {
-            node["type"].textValueOrEmpty()
-        }
-    }
+    return LockfileData(dependencies, packagesFromCheckoutOptionsForId)
 }

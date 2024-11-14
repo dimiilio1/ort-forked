@@ -51,8 +51,8 @@ internal fun PythonInspector.Result.toOrtProject(
     return Project(
         id = id,
         definitionFilePath = VersionControlSystem.getPathInfo(definitionFile).path,
-        authors = projectData?.parties?.toAuthors() ?: emptySet(),
-        declaredLicenses = projectData?.declaredLicense?.getDeclaredLicenses() ?: emptySet(),
+        authors = projectData?.parties?.toAuthors().orEmpty(),
+        declaredLicenses = projectData?.declaredLicense?.getDeclaredLicenses().orEmpty(),
         vcs = VcsInfo.EMPTY,
         vcsProcessed = PackageManager.processProjectVcs(definitionFile.parentFile, VcsInfo.EMPTY, homepageUrl),
         homepageUrl = homepageUrl,
@@ -100,7 +100,7 @@ private fun PythonInspector.Result.resolveIdentifier(
         else -> PackageManager.getFallbackProjectName(analysisRoot, definitionFile)
     }
 
-    val projectVersion = setupVersion.takeIf { it.isNotEmpty() } ?: requirementsVersion
+    val projectVersion = setupVersion.ifEmpty { requirementsVersion }
 
     return Identifier(
         type = managerName,
@@ -123,10 +123,11 @@ internal fun List<PythonInspector.Package>.toOrtPackages(): Set<Package> =
         // artifact. So take all metadata from the first package except for the artifacts.
         val pkg = packages.first()
 
+        @Suppress("UseOrEmpty")
         fun PythonInspector.Package.getHash(): Hash = Hash.create(sha512 ?: sha256 ?: sha1 ?: md5 ?: "")
 
-        fun getArtifact(fileExtension: String) =
-            packages.find { it.downloadUrl.endsWith(fileExtension) }?.let {
+        fun getArtifact(vararg fileExtensions: String) =
+            packages.find { pkg -> fileExtensions.any { pkg.downloadUrl.endsWith(it) } }?.let {
                 RemoteArtifact(
                     url = it.downloadUrl,
                     hash = it.getHash()
@@ -134,7 +135,7 @@ internal fun List<PythonInspector.Package>.toOrtPackages(): Set<Package> =
             } ?: RemoteArtifact.EMPTY
 
         val id = Identifier(type = TYPE, namespace = "", name = pkg.name, version = pkg.version)
-        val declaredLicenses = pkg.declaredLicense?.getDeclaredLicenses() ?: emptySet()
+        val declaredLicenses = pkg.declaredLicense?.getDeclaredLicenses().orEmpty()
         val declaredLicensesProcessed = processDeclaredLicenses(id, declaredLicenses)
 
         Package(
@@ -146,11 +147,11 @@ internal fun List<PythonInspector.Package>.toOrtPackages(): Set<Package> =
             declaredLicenses = declaredLicenses,
             declaredLicensesProcessed = declaredLicensesProcessed,
             // Only use the first line of the description because the descriptions provided by python-inspector are
-            // currently far too long, see: https://github.com/nexB/python-inspector/issues/74
+            // currently far too long, see: https://github.com/aboutcode-org/python-inspector/issues/74
             description = pkg.description.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty(),
             homepageUrl = pkg.homepageUrl.orEmpty(),
             binaryArtifact = getArtifact(".whl"),
-            sourceArtifact = getArtifact(".tar.gz"),
+            sourceArtifact = getArtifact(".tar.gz", ".zip"),
             vcs = VcsInfo.EMPTY.copy(url = pkg.vcsUrl.orEmpty()),
             vcsProcessed = PackageManager.processPackageVcs(
                 VcsInfo(VcsType.UNKNOWN, pkg.vcsUrl.orEmpty(), revision = ""),
@@ -172,7 +173,7 @@ private fun List<PythonInspector.Party>.toAuthors(): Set<String> =
         }.takeIf { it.isNotBlank() }
     }
 
-private fun List<PythonInspector.ResolvedDependency>.toPackageReferences(): Set<PackageReference> =
+internal fun List<PythonInspector.ResolvedDependency>.toPackageReferences(): Set<PackageReference> =
     mapTo(mutableSetOf()) { it.toPackageReference() }
 
 private fun PythonInspector.ResolvedDependency.toPackageReference() =

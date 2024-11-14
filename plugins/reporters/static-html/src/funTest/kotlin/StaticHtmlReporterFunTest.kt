@@ -27,7 +27,6 @@ import io.kotest.matchers.shouldBe
 import javax.xml.transform.TransformerFactory
 
 import org.ossreviewtoolkit.model.OrtResult
-import org.ossreviewtoolkit.model.utils.DefaultResolutionProvider
 import org.ossreviewtoolkit.reporter.HowToFixTextProvider
 import org.ossreviewtoolkit.reporter.ReporterInput
 import org.ossreviewtoolkit.utils.ort.Environment
@@ -55,7 +54,7 @@ class StaticHtmlReporterFunTest : WordSpec({
         "successfully export to a static HTML page" {
             val timeStampPattern = Regex("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z")
             val ortResult = readOrtResult("src/funTest/assets/reporter-test-input.yml")
-            val actualReport = generateReport(ortResult).replace(timeStampPattern, "<REPLACE_TIMESTAMP>")
+            val actualReport = generateReport(ortResult).replaceFirst(timeStampPattern, "<REPLACE_TIMESTAMP>")
 
             val expectedReport = matchExpectedResult(
                 getAssetFile("static-html-reporter-test-expected-output.html"),
@@ -70,11 +69,10 @@ class StaticHtmlReporterFunTest : WordSpec({
 private fun TestConfiguration.generateReport(ortResult: OrtResult): String {
     val input = ReporterInput(
         ortResult = ortResult,
-        resolutionProvider = DefaultResolutionProvider.create(ortResult),
         howToFixTextProvider = HOW_TO_FIX_TEXT_PROVIDER
     )
 
     val outputDir = tempdir()
 
-    return StaticHtmlReporter().generateReport(input, outputDir).single().readText()
+    return StaticHtmlReporter().generateReport(input, outputDir).single().getOrThrow().readText()
 }

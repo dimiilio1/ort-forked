@@ -17,18 +17,21 @@
  * License-Filename: LICENSE
  */
 
+// Enable type-safe project accessors, see:
+// https://docs.gradle.org/current/userguide/declaring_dependencies.html#sec:type-safe-project-accessors
+enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
+
 rootProject.name = "oss-review-toolkit"
 
 include(":advisor")
 include(":analyzer")
 include(":cli")
+include(":clients:bazel-module-registry")
 include(":clients:clearly-defined")
+include(":clients:dos")
 include(":clients:fossid-webapp")
-include(":clients:github-graphql")
-include(":clients:nexus-iq")
 include(":clients:oss-index")
 include(":clients:osv")
-include(":clients:scanoss")
 include(":clients:vulnerable-code")
 include(":detekt-rules")
 include(":downloader")
@@ -39,21 +42,22 @@ include(":notifier")
 include(":reporter")
 include(":scanner")
 include(":utils:common")
+include(":utils:config")
 include(":utils:ort")
 include(":utils:scripting")
 include(":utils:spdx")
 include(":utils:test")
 
+project(":clients:bazel-module-registry").name = "bazel-module-registry-client"
 project(":clients:clearly-defined").name = "clearly-defined-client"
+project(":clients:dos").name = "dos-client"
 project(":clients:fossid-webapp").name = "fossid-webapp-client"
-project(":clients:github-graphql").name = "github-graphql-client"
-project(":clients:nexus-iq").name = "nexus-iq-client"
 project(":clients:oss-index").name = "oss-index-client"
 project(":clients:osv").name = "osv-client"
-project(":clients:scanoss").name = "scanoss-client"
 project(":clients:vulnerable-code").name = "vulnerable-code-client"
 
 project(":utils:common").name = "common-utils"
+project(":utils:config").name = "config-utils"
 project(":utils:ort").name = "ort-utils"
 project(":utils:scripting").name = "scripting-utils"
 project(":utils:spdx").name = "spdx-utils"
@@ -91,5 +95,5 @@ pluginManagement {
 
 plugins {
     // Gradle cannot access the version catalog from here, so hard-code the dependency.
-    id("org.gradle.toolchains.foojay-resolver-convention").version("0.7.0")
+    id("org.gradle.toolchains.foojay-resolver-convention").version("0.8.0")
 }

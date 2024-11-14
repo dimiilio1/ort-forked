@@ -23,18 +23,36 @@ import java.util.ServiceLoader
 
 import org.ossreviewtoolkit.utils.common.Options
 import org.ossreviewtoolkit.utils.common.Plugin
+import org.ossreviewtoolkit.utils.common.TypedConfigurablePluginFactory
 
 /**
  * A common abstract class for use with [ServiceLoader] that all [ScannerWrapperFactory] classes need to implement.
  */
-abstract class ScannerWrapperFactory<out T : ScannerWrapper>(override val type: String) : Plugin {
-    /**
-     * Create a [ScannerWrapper] using the provided [options].
-     */
-    abstract fun create(options: Options): T
+abstract class ScannerWrapperFactory<CONFIG>(override val type: String) :
+    TypedConfigurablePluginFactory<CONFIG, ScannerWrapper> {
+    companion object {
+        /**
+         * All [scanner wrapper factories][ScannerWrapperFactory] available in the classpath, associated by their names.
+         */
+        val ALL by lazy { Plugin.getAll<ScannerWrapperFactory<*>>() }
+    }
+
+    override fun create(options: Options, secrets: Options): ScannerWrapper {
+        val (wrapperConfig, filteredOptions) = ScannerWrapperConfig.create(options)
+        return create(parseConfig(filteredOptions, secrets), wrapperConfig)
+    }
+
+    final override fun create(config: CONFIG): ScannerWrapper {
+        throw UnsupportedOperationException("Use 'create(CONFIG, ScannerMatcherConfig)' instead.")
+    }
 
     /**
-     * Return the scanner wrapper's name here to allow Clikt to display something meaningful when listing the scanners
+     * Create a [ScannerWrapper] from the provided [config] and [wrapperConfig].
+     */
+    abstract fun create(config: CONFIG, wrapperConfig: ScannerWrapperConfig): ScannerWrapper
+
+    /**
+     * Return the scanner wrapper's name here to allow Clikt to display something meaningful when listing the scanner
      * wrapper factories which are enabled by default.
      */
     override fun toString() = type

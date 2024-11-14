@@ -27,18 +27,23 @@ import kotlin.math.min
 import org.ossreviewtoolkit.model.CopyrightFinding
 import org.ossreviewtoolkit.model.LicenseFinding
 import org.ossreviewtoolkit.model.TextLocation
+import org.ossreviewtoolkit.utils.spdx.SpdxCompoundExpression
 import org.ossreviewtoolkit.utils.spdx.SpdxConstants
+import org.ossreviewtoolkit.utils.spdx.SpdxExpression
 import org.ossreviewtoolkit.utils.spdx.SpdxLicenseException
+import org.ossreviewtoolkit.utils.spdx.SpdxLicenseIdExpression
 import org.ossreviewtoolkit.utils.spdx.SpdxLicenseWithExceptionExpression
+import org.ossreviewtoolkit.utils.spdx.SpdxOperator
+import org.ossreviewtoolkit.utils.spdx.SpdxSimpleExpression
 import org.ossreviewtoolkit.utils.spdx.toSpdx
 
 /**
  * A class for matching copyright findings to license findings. Copyright statements may be matched either to license
  * findings located nearby in the same file or to a license found in a license file whereas the given
- * [rootLicenseMatcher] determines whether a file is a license file.
+ * [pathLicenseMatcher] determines whether a file is a license file.
  */
 class FindingsMatcher(
-    private val rootLicenseMatcher: RootLicenseMatcher = RootLicenseMatcher(),
+    private val pathLicenseMatcher: PathLicenseMatcher = PathLicenseMatcher(),
     private val toleranceLines: Int = DEFAULT_TOLERANCE_LINES,
     private val expandToleranceLines: Int = DEFAULT_EXPAND_TOLERANCE_LINES
 ) {
@@ -132,7 +137,7 @@ class FindingsMatcher(
      * Associate the [copyrightFindings] to the [licenseFindings]. Copyright findings are matched to license findings
      * located nearby in the same file. Copyright findings that are not located close to a license finding are
      * associated to the root licenses instead. The root licenses are the licenses found in any of the license files
-     * defined by [rootLicenseMatcher].
+     * defined by [pathLicenseMatcher].
      */
     fun match(licenseFindings: Set<LicenseFinding>, copyrightFindings: Set<CopyrightFinding>): FindingsMatcherResult {
         val licenseFindingsByPath = licenseFindings.groupBy { it.location.path }
@@ -167,7 +172,7 @@ class FindingsMatcher(
         licenseFindings: Set<LicenseFinding>,
         copyrightFindings: Set<CopyrightFinding>
     ): Map<LicenseFinding, Set<CopyrightFinding>> {
-        val rootLicensesForDirectories = rootLicenseMatcher.getApplicableRootLicenseFindingsForDirectories(
+        val rootLicensesForDirectories = pathLicenseMatcher.getApplicableLicenseFindingsForDirectories(
             licenseFindings = licenseFindings,
             directories = copyrightFindings.map { it.location.directory() }
         )
@@ -255,7 +260,7 @@ fun associateLicensesWithExceptions(
         if (associatedLicenseFinding != null) {
             // Add the fixed-up license with the exception.
             fixedLicenses += associatedLicenseFinding.copy(
-                license = "${associatedLicenseFinding.license} WITH ${exception.license}".toSpdx(),
+                license = "${associatedLicenseFinding.license} ${SpdxExpression.WITH} ${exception.license}".toSpdx(),
                 location = associatedLicenseFinding.location.copy(
                     startLine = min(associatedLicenseFinding.location.startLine, exception.location.startLine),
                     endLine = max(associatedLicenseFinding.location.endLine, exception.location.endLine)
@@ -271,8 +276,76 @@ fun associateLicensesWithExceptions(
     // Associate remaining "orphan" exceptions with "NOASSERTION" to turn them into valid SPDX expressions and at the
     // same time "marking" them for review as "NOASSERTION" is not a real license.
     remainingExceptions.mapTo(fixedLicenses) { exception ->
-        exception.copy(license = "${SpdxConstants.NOASSERTION} WITH ${exception.license}".toSpdx())
+        exception.copy(license = "${SpdxConstants.NOASSERTION} ${SpdxExpression.WITH} ${exception.license}".toSpdx())
     }
 
-    return fixedLicenses
+    return fixedLicenses.mapTo(mutableSetOf()) { it.copy(license = associateLicensesWithExceptions(it.license)) }
+}
+
+/**
+ * Process [license] for stand-alone license exceptions as part of AND-expressions and associate them with applicable
+ * licenses. Orphan license exceptions will get associated by [SpdxConstants.NOASSERTION]. Return a new expression that
+ * does not contain stand-alone license exceptions anymore.
+ */
+fun associateLicensesWithExceptions(license: SpdxExpression): SpdxExpression {
+    // If this is not a compound expression, there can be no stand-alone license exceptions with belonging licenses.
+    if (license !is SpdxCompoundExpression) return license
+
+    // Only search for stand-alone exceptions as part of AND-expressions.
+    if (license.operator == SpdxOperator.OR) {
+        return SpdxCompoundExpression(SpdxOperator.OR, license.children.map { associateLicensesWithExceptions(it) })
+    }
+
+    val (standAloneExceptions, licenses) = license.children.partition {
+        it is SpdxSimpleExpression && SpdxLicenseException.forId(it.toString()) != null
+    }
+
+    val standAloneExceptionIds = standAloneExceptions.mapTo(mutableSetOf()) { it.toString() }
+    val handledExceptions = mutableSetOf<String>()
+
+    val associatedLicenses = licenses.toSet().mapTo(mutableSetOf()) { childLicense ->
+        when (childLicense) {
+            is SpdxCompoundExpression -> associateLicensesWithExceptions(childLicense)
+
+            is SpdxSimpleExpression -> {
+                val licenseId = childLicense.toString()
+
+                val validLicenseExceptionCombinations = standAloneExceptionIds.mapNotNull { exceptionId ->
+                    val applicableLicenseIds = SpdxLicenseException.mapping[exceptionId].orEmpty().map { it.id }
+
+                    if (licenseId in applicableLicenseIds) {
+                        SpdxLicenseWithExceptionExpression(childLicense, exceptionId)
+                    } else {
+                        null
+                    }
+                }
+
+                handledExceptions += validLicenseExceptionCombinations.map { it.exception }
+
+                when (validLicenseExceptionCombinations.size) {
+                    0 -> childLicense
+                    1 -> validLicenseExceptionCombinations.first()
+                    else -> SpdxCompoundExpression(SpdxOperator.AND, validLicenseExceptionCombinations)
+                }
+            }
+
+            else -> childLicense
+        }
+    }
+
+    // Associate remaining "orphan" exceptions with "NOASSERTION" to turn them into valid SPDX expressions.
+    val orphanExceptions = standAloneExceptionIds - handledExceptions
+
+    orphanExceptions.mapTo(associatedLicenses) { exceptionId ->
+        SpdxLicenseWithExceptionExpression(SpdxLicenseIdExpression(SpdxConstants.NOASSERTION), exceptionId)
+    }
+
+    // Recreate the compound AND-expression from the associated licenses.
+    check(associatedLicenses.isNotEmpty())
+
+    return if (associatedLicenses.size == 1) {
+        associatedLicenses.first()
+    } else {
+        SpdxCompoundExpression(SpdxOperator.AND, associatedLicenses)
+    }
 }

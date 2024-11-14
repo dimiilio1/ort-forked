@@ -9,93 +9,69 @@ on:
       - main
 
 env:
-  GRADLE_OPTS: -Dorg.gradle.daemon=false
-  ASKALONO_VERSION: 0.4.6
-  BOYTERLC_VERSION: 1.3.1
-  LICENSEE_VERSION: 9.15.3
-  SCANCODE_VERSION: 31.2.4
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dkotest.assertions.multi-line-diff=unified -Dkotest.tags=!ExpensiveTag
+  REGISTRY: ghcr.io
+  TEST_IMAGE_TAG: ort:test
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v4
-    - name: Setup Java
-      uses: actions/setup-java@v3
-      with:
-        distribution: temurin
-        java-version: 17
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@473878a77f1b98e2b5ac4af93489d1656a80a5ed # v4
     - name: Build all classes
-      uses: gradle/gradle-build-action@v2
-      with:
-        gradle-home-cache-cleanup: true
-        arguments: --scan classes -x :plugins:reporters:web-app-template:yarnBuild
-  build-web-app-reporter:
-    needs: build
-    runs-on: ubuntu-22.04
-    steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
-    - name: Setup Java
-      uses: actions/setup-java@v3
-      with:
-        distribution: temurin
-        java-version: 17
-    - name: Build the web-app-reporter
-      uses: gradle/gradle-build-action@v2
-      with:
-        gradle-home-cache-cleanup: true
-        arguments: --scan :plugins:reporters:web-app-template:yarnBuild
+      run: ./gradlew classes
   codeql-analysis:
     needs: build
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     permissions:
+      # Needed for SARIF scanning upload.
       security-events: write
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@v2
+      uses: github/codeql-action/init@396bb3e45325a47dd9ef434068033c6d5bb0d11a # v3
       with:
         languages: java
-        tools: latest
-    - name: Setup Java
-      uses: actions/setup-java@v3
-      with:
-        distribution: temurin
-        java-version: 17
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@473878a77f1b98e2b5ac4af93489d1656a80a5ed # v4
     - name: Build all classes
-      uses: gradle/gradle-build-action@v2
-      with:
-        gradle-home-cache-cleanup: true
-        arguments: -Dorg.gradle.jvmargs=-Xmx1g classes -x :plugins:reporters:web-app-template:yarnBuild
+      run: ./gradlew -Dorg.gradle.jvmargs=-Xmx1g --no-build-cache classes
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v2
+      uses: github/codeql-action/analyze@396bb3e45325a47dd9ef434068033c6d5bb0d11a # v3
   test:
     needs: build
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v4
-    - name: Setup Java
-      uses: actions/setup-java@v3
-      with:
-        distribution: temurin
-        java-version: 17
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@473878a77f1b98e2b5ac4af93489d1656a80a5ed # v4
     - name: Run unit tests
-      uses: gradle/gradle-build-action@v2
+      run: ./gradlew --scan test jacocoTestReport
+    - name: Create Test Summary
+      uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2
       with:
-        gradle-home-cache-cleanup: true
-        arguments: --scan test jacocoTestReport -x :plugins:reporters:web-app-template:yarnBuild
+        paths: "**/test-results/**/TEST-*.xml"
+      if: always()
     - name: Upload code coverage data
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
       with:
+        token: ${{ secrets.CODECOV_TOKEN }}
         flags: test
   funTest-non-docker:
-    needs: build-web-app-reporter
-    runs-on: ubuntu-22.04
+    needs: build
+    runs-on: ubuntu-24.04
     steps:
+    - name: Checkout Repository
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      with:
+        submodules: recursive
+    - name: Set tool version environment variables
+      run: sed "s/^ARG //" docker/versions.dockerfile >> $GITHUB_ENV
     - name: Install required tools
       run: |
           # Uninstall mono-devel because it contains the "lc" command which conflicts with BoyterLc.
@@ -120,52 +96,63 @@ jobs:
 
           # Install ScanCode for license texts.
           curl -Os https://raw.githubusercontent.com/nexB/scancode-toolkit/v$SCANCODE_VERSION/requirements.txt
-          pip install --no-cache-dir --constraint requirements.txt scancode-toolkit==$SCANCODE_VERSION
-    - name: Checkout Repository
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-    - name: Setup Java
-      uses: actions/setup-java@v3
-      with:
-        distribution: temurin
-        java-version: 17
+          pipx install --pip-args="--no-cache-dir --constraint requirements.txt" scancode-toolkit==$SCANCODE_VERSION
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@473878a77f1b98e2b5ac4af93489d1656a80a5ed # v4
     - name: Run functional tests that do not require external tools
-      uses: gradle/gradle-build-action@v2
+      run: ./gradlew --scan -Ptests.exclude=org.ossreviewtoolkit.plugins.packagemanagers.* funTest jacocoFunTestReport
+    - name: Create Test Summary
+      uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2
       with:
-        gradle-home-cache-cleanup: true
-        arguments: --scan -Ptests.exclude=org.ossreviewtoolkit.cli.*,org.ossreviewtoolkit.analyzer.*,org.ossreviewtoolkit.plugins.packagemanagers.* funTest jacocoFunTestReport
+        paths: "**/test-results/**/TEST-*.xml"
+      if: always()
     - name: Upload code coverage data
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
       with:
+        token: ${{ secrets.CODECOV_TOKEN }}
         flags: funTest-non-docker
   funTest-docker:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       with:
         submodules: recursive
-    - name: Setup Java
-      uses: actions/setup-java@v3
+    - name: Free Disk Space
+      uses: ./.github/actions/free-disk-space
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3
+    - name: Build ORT Docker Image
+      uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75 # v6
       with:
-        distribution: temurin
-        java-version: 17
+        context: .
+        load: true
+        tags: ${{ env.TEST_IMAGE_TAG }}
+        target: all-tools
+        cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ github.repository_owner }}/ort:cache
     - name: Setup Gradle
-      uses: gradle/gradle-build-action@v2
-      with:
-        gradle-home-cache-cleanup: true
-    - name: Validate Batect wrapper scripts
-      uses: batect/batect-wrapper-validation-action@v0
+      uses: gradle/actions/setup-gradle@473878a77f1b98e2b5ac4af93489d1656a80a5ed # v4
     - name: Run functional tests that do require external tools
       run: |
-          echo "Running as $(id)."
-          BATECT_QUIET_DOWNLOAD=true ./batect --enable-buildkit \
-              --config-var docker_build_user_id=1001 \
-              --config-var gradle_build_scan=true \
-              --config-var gradle_console=plain \
-              runFunTest
-    - name: Upload code coverage data
-      uses: codecov/codecov-action@v3
+        # Run the functional tests in the Docker container.
+        docker run \
+          -u $(id -u):$(id -g) \
+          -v /etc/group:/etc/group:ro \
+          -v /etc/passwd:/etc/passwd:ro \
+          -v /home/runner:/home/runner \
+          -v ${{ github.workspace }}:/workspace \
+          -w /workspace \
+          -e HOME=/home/runner \
+          -e GRADLE_OPTS="$GRADLE_OPTS" \
+          ${{ env.TEST_IMAGE_TAG }} \
+          -c "./gradlew --scan -Ptests.include=org.ossreviewtoolkit.plugins.packagemanagers.* funTest jacocoFunTestReport"
+    - name: Create Test Summary
+      uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2
       with:
+        paths: "**/test-results/**/TEST-*.xml"
+      if: always()
+    - name: Upload code coverage data
+      uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
         flags: funTest-docker

@@ -28,7 +28,7 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 
 import io.mockk.clearAllMocks
-import io.mockk.every
+import io.mockk.coEvery
 import io.mockk.mockkObject
 
 private const val PROJECT_CODE = "semver4j"
@@ -52,7 +52,7 @@ class FossId2023dot1Test : StringSpec({
         server.start()
 
         mockkObject(FossIdServiceWithVersion.Companion)
-        every { FossIdServiceWithVersion.Companion.instance(any()) } answers {
+        coEvery { FossIdServiceWithVersion.Companion.create(any()) } answers {
             VersionedFossIdService2021dot2(firstArg(), "2023.2.0")
         }
 
@@ -74,9 +74,10 @@ class FossId2023dot1Test : StringSpec({
     }
 
     "Delete scan response can be parsed (2023.1)" {
-        // because the service caches the version, we must recreate it
-        service = FossIdServiceWithVersion.instance(service)
-        service.deleteScan("", "", SCAN_CODE_2021_2).shouldNotBeNull().run {
+        // Recreate the version as the service caches it.
+        service = FossIdServiceWithVersion.create(service)
+
+        service.deleteScan("", "", SCAN_CODE_2021_2).shouldNotBeNull {
             checkResponse("delete scan")
 
             data.shouldNotBeNull().value shouldBe 522415

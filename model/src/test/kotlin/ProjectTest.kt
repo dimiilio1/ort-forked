@@ -34,7 +34,7 @@ import io.mockk.mockk
 import java.io.File
 
 private fun readAnalyzerResult(analyzerResultFilename: String): Project =
-    File("../analyzer/src/funTest/assets/projects/synthetic")
+    File("src/test/assets")
         .resolve(analyzerResultFilename)
         .readValue<ProjectAnalyzerResult>().project
 
@@ -59,10 +59,10 @@ private fun createDependencyGraph(qualified: Boolean = false): DependencyGraph {
         exampleId
     )
     val langRef = DependencyReference(0)
-    val textRef = DependencyReference(1, dependencies = sortedSetOf(langRef))
+    val textRef = DependencyReference(1, dependencies = setOf(langRef))
     val strutsRef = DependencyReference(2)
-    val csvRef = DependencyReference(3, dependencies = sortedSetOf(langRef))
-    val exampleRef = DependencyReference(4, dependencies = sortedSetOf(textRef, strutsRef))
+    val csvRef = DependencyReference(3, dependencies = setOf(langRef))
+    val exampleRef = DependencyReference(4, dependencies = setOf(textRef, strutsRef))
 
     val plainScopeMapping = mapOf(
         "default" to listOf(RootDependencyIndex(4)),

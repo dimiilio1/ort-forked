@@ -25,12 +25,14 @@ import com.github.ajalt.clikt.core.terminal
 import com.github.ajalt.clikt.parameters.options.associate
 import com.github.ajalt.clikt.parameters.options.convert
 import com.github.ajalt.clikt.parameters.options.default
+import com.github.ajalt.clikt.parameters.options.deprecated
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.options.split
 import com.github.ajalt.clikt.parameters.types.enum
 import com.github.ajalt.clikt.parameters.types.file
+import com.github.ajalt.mordant.rendering.Theme
 
 import java.time.Duration
 
@@ -38,8 +40,7 @@ import kotlin.time.toKotlinDuration
 
 import kotlinx.coroutines.runBlocking
 
-import org.apache.logging.log4j.kotlin.Logging
-
+import org.ossreviewtoolkit.advisor.AdviceProviderFactory
 import org.ossreviewtoolkit.advisor.Advisor
 import org.ossreviewtoolkit.model.FileFormat
 import org.ossreviewtoolkit.model.utils.DefaultResolutionProvider
@@ -52,6 +53,7 @@ import org.ossreviewtoolkit.plugins.commands.api.utils.readOrtResult
 import org.ossreviewtoolkit.plugins.commands.api.utils.writeOrtResult
 import org.ossreviewtoolkit.utils.common.expandTilde
 import org.ossreviewtoolkit.utils.common.safeMkdirs
+import org.ossreviewtoolkit.utils.ort.ORT_FAILURE_STATUS_CODE
 import org.ossreviewtoolkit.utils.ort.ORT_RESOLUTIONS_FILENAME
 import org.ossreviewtoolkit.utils.ort.ortConfigDirectory
 
@@ -59,8 +61,6 @@ class AdvisorCommand : OrtCommand(
     name = "advise",
     help = "Check dependencies for security vulnerabilities."
 ) {
-    private companion object : Logging
-
     private val ortFile by option(
         "--ort-file", "-i",
         help = "An ORT result file with an analyzer result to use."
@@ -100,15 +100,16 @@ class AdvisorCommand : OrtCommand(
 
     private val providerFactories by option(
         "--advisors", "-a",
-        help = "The comma-separated advisors to use, any of ${Advisor.ALL.keys}."
+        help = "The comma-separated advisors to use, any of ${AdviceProviderFactory.ALL.keys}."
     ).convert { name ->
-        Advisor.ALL[name] ?: throw BadParameterValue("Advisor '$name' is not one of ${Advisor.ALL.keys}.")
+        AdviceProviderFactory.ALL[name]
+            ?: throw BadParameterValue("Advisor '$name' is not one of ${AdviceProviderFactory.ALL.keys}.")
     }.split(",").required()
 
     private val skipExcluded by option(
         "--skip-excluded",
         help = "Do not check excluded projects or packages."
-    ).flag()
+    ).flag().deprecated("Use the global option 'ort -P ort.advisor.skipExcluded=... advise' instead.")
 
     override fun run() {
         val outputFiles = outputFormats.mapTo(mutableSetOf()) { format ->
@@ -124,8 +125,10 @@ class AdvisorCommand : OrtCommand(
         val advisor = Advisor(distinctProviders, ortConfig.advisor)
 
         val ortResultInput = readOrtResult(ortFile)
+
+        @Suppress("ForbiddenMethodCall")
         val ortResultOutput = runBlocking {
-            advisor.advise(ortResultInput, skipExcluded).mergeLabels(labels)
+            advisor.advise(ortResultInput, skipExcluded || ortConfig.advisor.skipExcluded).mergeLabels(labels)
         }
 
         outputDir.safeMkdirs()
@@ -133,19 +136,20 @@ class AdvisorCommand : OrtCommand(
 
         val advisorRun = ortResultOutput.advisor
         if (advisorRun == null) {
-            echo("No advisor run was created.")
+            echo(Theme.Default.danger("No advisor run was created."))
             throw ProgramResult(1)
         }
 
         val duration = with(advisorRun) { Duration.between(startTime, endTime).toKotlinDuration() }
         echo("The advice took $duration.")
 
-        with(advisorRun.results.getVulnerabilities()) {
+        with(advisorRun.getVulnerabilities()) {
             val includedPackages = ortResultOutput.getPackages(omitExcluded = true).map { it.metadata.id }
             val totalPackageCount = includedPackages.size
             val vulnerablePackageCount = count { (id, vulnerabilities) ->
                 id in includedPackages && vulnerabilities.isNotEmpty()
             }
+
             val vulnerabilityCount = filterKeys { it in includedPackages }.values.sumOf { it.size }
 
             echo(
@@ -155,8 +159,8 @@ class AdvisorCommand : OrtCommand(
         }
 
         val resolutionProvider = DefaultResolutionProvider.create(ortResultOutput, resolutionsFile)
-        val issues = advisorRun.results.getIssues().flatMap { it.value }
+        val issues = advisorRun.getIssues().flatMap { it.value }
         SeverityStatsPrinter(terminal, resolutionProvider).stats(issues)
-            .print().conclude(ortConfig.severeIssueThreshold, 2)
+            .print().conclude(ortConfig.severeIssueThreshold, ORT_FAILURE_STATUS_CODE)
     }
 }

@@ -19,20 +19,22 @@
 
 plugins {
     // Apply precompiled plugins.
-    id("ort-library-conventions")
+    id("ort-plugin-conventions")
 }
 
 dependencies {
-    api(project(":reporter"))
+    api(projects.reporter)
 
-    implementation(project(":model"))
-    implementation(project(":plugins:reporters:freemarker-reporter"))
-    implementation(project(":utils:common-utils"))
-    implementation(project(":utils:ort-utils"))
+    ksp(projects.reporter)
+
+    implementation(projects.model)
+    implementation(projects.plugins.reporters.freemarkerReporter)
+    implementation(projects.utils.commonUtils)
+    implementation(projects.utils.ortUtils)
 
     implementation(libs.asciidoctorj)
 
-    runtimeOnly(libs.asciidoctorjPdf)
+    runtimeOnly(libs.asciidoctorj.pdf)
 
-    funTestImplementation(testFixtures(project(":reporter")))
+    funTestImplementation(testFixtures(projects.reporter))
 }

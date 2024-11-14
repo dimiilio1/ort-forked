@@ -34,7 +34,6 @@ import com.fasterxml.jackson.databind.deser.ContextualDeserializer
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer
 import com.fasterxml.jackson.module.kotlin.jsonMapper
 import com.fasterxml.jackson.module.kotlin.kotlinModule
-import com.fasterxml.jackson.module.kotlin.readValue
 
 import java.util.concurrent.TimeUnit
 
@@ -42,7 +41,7 @@ import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.ResponseBody
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.clients.fossid.model.Project
 import org.ossreviewtoolkit.clients.fossid.model.Scan
@@ -68,7 +67,7 @@ import retrofit2.http.POST
 private const val READ_TIMEOUT_HEADER = "READ_TIMEOUT"
 
 interface FossIdRestService {
-    companion object : Logging {
+    companion object {
         /**
          * The mapper for JSON (de-)serialization used by this service.
          */
@@ -98,6 +97,7 @@ interface FossIdRestService {
                 requireNotNull(boundType) {
                     "The PolymorphicListDeserializer needs a type to deserialize values!"
                 }
+
                 return when (p.currentToken) {
                     JsonToken.VALUE_FALSE -> PolymorphicList()
                     JsonToken.START_ARRAY -> {
@@ -105,6 +105,7 @@ interface FossIdRestService {
                         val array = JSON_MAPPER.readValue<Array<Any>>(p, arrayType)
                         PolymorphicList(array.toList())
                     }
+
                     JsonToken.START_OBJECT -> {
                         val mapType = JSON_MAPPER.typeFactory.constructMapType(
                             LinkedHashMap::class.java,
@@ -112,11 +113,13 @@ interface FossIdRestService {
                             boundType.rawClass
                         )
                         val map = JSON_MAPPER.readValue<Map<Any, Any>>(p, mapType)
-                        // we keep only the values of the map: when the FossID functions which return a PolymorphicList
-                        // return a map, this is always the list of elements grouped by id. Since the ids are also
-                        // present in the elements themselves, we don't lose any information by discarding the keys.
+
+                        // Only keep the map's values: If the FossID functions which return a PolymorphicList return a
+                        // map, it always is the list of elements grouped by id. Since the ids are also present in the
+                        // elements themselves, no information is lost by discarding the keys.
                         PolymorphicList(map.values.toList())
                     }
+
                     else -> error("FossID returned a type not handled by this deserializer!")
                 }
             }
@@ -148,15 +151,18 @@ interface FossIdRestService {
                         val value = JSON_MAPPER.readValue(p, String::class.java)
                         PolymorphicInt(value.toInt())
                     }
+
                     JsonToken.VALUE_NUMBER_INT -> {
                         val value = JSON_MAPPER.readValue(p, Int::class.java)
                         PolymorphicInt(value)
                     }
+
                     JsonToken.START_ARRAY -> {
                         val array = JSON_MAPPER.readValue(p, IntArray::class.java)
                         val value = if (array.isEmpty()) null else array.first()
                         PolymorphicInt(value)
                     }
+
                     JsonToken.START_OBJECT -> {
                         val mapType = JSON_MAPPER.typeFactory.constructMapType(
                             LinkedHashMap::class.java,
@@ -167,8 +173,10 @@ interface FossIdRestService {
                         if (map.size != 1) {
                             error("A map representing a polymorphic integer should have one value!")
                         }
+
                         PolymorphicInt(map.values.first().toString().toInt())
                     }
+
                     else -> error("FossID returned a type not handled by this deserializer!")
                 }
             }
@@ -178,7 +186,7 @@ interface FossIdRestService {
          * Create the [FossIdServiceWithVersion] to interact with the FossID instance running at the given [url],
          * optionally using a pre-built OkHttp [client].
          */
-        fun create(url: String, client: OkHttpClient? = null): FossIdServiceWithVersion {
+        suspend fun create(url: String, client: OkHttpClient? = null): FossIdServiceWithVersion {
             logger.info { "The FossID server URL is $url." }
 
             val retrofit = Retrofit.Builder()
@@ -189,7 +197,7 @@ interface FossIdRestService {
 
             val service = retrofit.create(FossIdRestService::class.java)
 
-            return FossIdServiceWithVersion.instance(service).also {
+            return FossIdServiceWithVersion.create(service).also {
                 if (it.version.isEmpty()) {
                     logger.warn { "The FossID server is running an unknown version." }
                 } else {
@@ -255,6 +263,7 @@ interface FossIdRestService {
     suspend fun listSnippets(@Body body: PostRequestBody): PolymorphicResponseBody<Snippet>
 
     @POST("api.php")
+    @Headers("$READ_TIMEOUT_HEADER:${5 * 60 * 1000}")
     suspend fun listMatchedLines(@Body body: PostRequestBody): EntityResponseBody<MatchedLines>
 
     @POST("api.php")
@@ -289,6 +298,9 @@ interface FossIdRestService {
 
     @POST("api.php")
     suspend fun addLicenseIdentification(@Body body: PostRequestBody): EntityResponseBody<Nothing>
+
+    @POST("api.php")
+    suspend fun addComponentIdentification(@Body body: PostRequestBody): EntityResponseBody<Nothing>
 
     @POST("api.php")
     suspend fun addFileComment(@Body body: PostRequestBody): EntityResponseBody<Nothing>

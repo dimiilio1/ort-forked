@@ -20,13 +20,15 @@
 package org.ossreviewtoolkit.plugins.reporters.cyclonedx
 
 import java.io.File
-import java.util.Base64
 import java.util.Date
 import java.util.SortedSet
 import java.util.UUID
 
-import org.cyclonedx.BomGeneratorFactory
-import org.cyclonedx.CycloneDxSchema
+import org.apache.logging.log4j.kotlin.logger
+
+import org.cyclonedx.Format
+import org.cyclonedx.Version
+import org.cyclonedx.generators.BomGeneratorFactory
 import org.cyclonedx.model.AttachmentText
 import org.cyclonedx.model.Bom
 import org.cyclonedx.model.Component
@@ -36,53 +38,87 @@ import org.cyclonedx.model.Hash
 import org.cyclonedx.model.License
 import org.cyclonedx.model.LicenseChoice
 import org.cyclonedx.model.Metadata
-import org.cyclonedx.model.Tool
+import org.cyclonedx.model.license.Expression
+import org.cyclonedx.model.metadata.ToolInformation
 
-import org.ossreviewtoolkit.model.FileFormat
+import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.LicenseSource
 import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.Project
 import org.ossreviewtoolkit.model.licenses.ResolvedLicenseInfo
 import org.ossreviewtoolkit.model.utils.toPurl
+import org.ossreviewtoolkit.model.vulnerabilities.Vulnerability
+import org.ossreviewtoolkit.plugins.api.OrtPlugin
+import org.ossreviewtoolkit.plugins.api.OrtPluginOption
+import org.ossreviewtoolkit.plugins.api.PluginDescriptor
 import org.ossreviewtoolkit.reporter.Reporter
+import org.ossreviewtoolkit.reporter.ReporterFactory
 import org.ossreviewtoolkit.reporter.ReporterInput
-import org.ossreviewtoolkit.utils.common.isFalse
+import org.ossreviewtoolkit.utils.common.alsoIfNull
 import org.ossreviewtoolkit.utils.ort.Environment
 import org.ossreviewtoolkit.utils.ort.ORT_FULL_NAME
 import org.ossreviewtoolkit.utils.ort.ORT_NAME
 import org.ossreviewtoolkit.utils.spdx.SpdxLicense
 
+internal const val DEFAULT_SCHEMA_VERSION_NAME = "1.5" // Version.VERSION_15.versionString
+internal val DEFAULT_SCHEMA_VERSION = Version.entries.single { it.versionString == DEFAULT_SCHEMA_VERSION_NAME }
+
+data class CycloneDxReporterConfig(
+    /**
+     * The CycloneDX schema version to use. Defaults to "1.5".
+     */
+    @OrtPluginOption(
+        defaultValue = DEFAULT_SCHEMA_VERSION_NAME,
+        aliases = ["schema.version"]
+    )
+    val schemaVersion: String,
+
+    /**
+     * The license for the data contained in the report. Defaults to "CC0-1.0".
+     */
+    @OrtPluginOption(
+        defaultValue = "CC0-1.0",
+        aliases = ["data.license"]
+    )
+    val dataLicense: String,
+
+    /**
+     * If true (the default), a single SBOM for all projects is created; if set to false, separate SBOMs are created for
+     * each project.
+     */
+    @OrtPluginOption(
+        defaultValue = "true",
+        aliases = ["single.bom"]
+    )
+    val singleBom: Boolean,
+
+    /**
+     * A comma-separated list of (case-insensitive) output formats to export to. Supported are XML and JSON.
+     */
+    @OrtPluginOption(
+        defaultValue = "XML",
+        aliases = ["output.file.formats"]
+    )
+    val outputFileFormats: List<String>
+)
+
 /**
  * A [Reporter] that creates software bills of materials (SBOM) in the [CycloneDX](https://cyclonedx.org) format. For
  * each [Project] contained in the ORT result a separate SBOM is created.
- *
- * This reporter supports the following options:
- * - *data.license*: The license for the data contained in the report. Defaults to [DEFAULT_DATA_LICENSE].
- * - *schema.version*: The CycloneDX schema version to use. Defaults to [DEFAULT_SCHEMA_VERSION].
- * - *single.bom*: If true (the default), a single SBOM for all projects is created; if set to false, separate SBOMs are
- *                 created for each project.
- * - *output.file.formats*: A comma-separated list of (case-insensitive) output formats to export to. Supported are XML
- *                          and JSON.
  */
-class CycloneDxReporter : Reporter {
+@OrtPlugin(
+    id = "CycloneDX",
+    displayName = "CycloneDX Reporter",
+    description = "Creates software bills of materials (SBOM) in the CycloneDX format.",
+    factory = ReporterFactory::class
+)
+class CycloneDxReporter(
+    override val descriptor: PluginDescriptor = CycloneDxReporterFactory.descriptor,
+    private val config: CycloneDxReporterConfig
+) : Reporter {
     companion object {
-        val DEFAULT_SCHEMA_VERSION = CycloneDxSchema.Version.VERSION_14
-        val DEFAULT_DATA_LICENSE = SpdxLicense.CC0_1_0
-
         const val REPORT_BASE_FILENAME = "bom.cyclonedx"
-
-        const val OPTION_SCHEMA_VERSION = "schema.version"
-        const val OPTION_DATA_LICENSE = "data.license"
-        const val OPTION_SINGLE_BOM = "single.bom"
-        const val OPTION_OUTPUT_FILE_FORMATS = "output.file.formats"
     }
-
-    override val type = "CycloneDx"
-
-    private val base64Encoder = Base64.getEncoder()
-
-    // Ensure that JSON comes last due to a work-around in writeBom() below.
-    private val supportedOutputFileFormats = listOf(FileFormat.XML, FileFormat.JSON)
 
     private fun Bom.addExternalReference(type: ExternalReference.Type, url: String, comment: String? = null) {
         if (url.isBlank()) return
@@ -127,44 +163,50 @@ class CycloneDxReporter : Reporter {
                     setLicenseText(
                         AttachmentText().apply {
                             contentType = "plain/text"
-                            encoding = "base64"
-                            text = base64Encoder.encodeToString(licenseText.toByteArray())
+                            text = licenseText
                         }
                     )
                 }
             }
         }
 
-    override fun generateReport(input: ReporterInput, outputDir: File, options: Map<String, String>): List<File> {
-        val outputFiles = mutableListOf<File>()
+    override fun generateReport(input: ReporterInput, outputDir: File): List<Result<File>> {
+        val reportFileResults = mutableListOf<Result<File>>()
 
         val projects = input.ortResult.getProjects(omitExcluded = true).sortedBy { it.id }
         val packages = input.ortResult.getPackages(omitExcluded = true).sortedBy { it.metadata.id }
 
-        val schemaVersion = CycloneDxSchema.Version.entries.find {
-            it.versionString == options[OPTION_SCHEMA_VERSION]
-        } ?: DEFAULT_SCHEMA_VERSION
+        val schemaVersion = Version.entries.find {
+            it.versionString == config.schemaVersion
+        } ?: throw IllegalArgumentException("Unsupported CycloneDX schema version '${config.schemaVersion}'.")
 
-        val dataLicense = options[OPTION_DATA_LICENSE] ?: DEFAULT_DATA_LICENSE.id
-        val createSingleBom = !options[OPTION_SINGLE_BOM].isFalse()
+        val outputFileExtensions = config.outputFileFormats.mapNotNullTo(mutableSetOf()) {
+            val extension = it.trim().lowercase()
+            extension.toFormat().alsoIfNull {
+                logger.warn { "No CycloneDX format supports the '$extension' extension." }
+            }
+        }
 
-        val outputFileFormats = options[OPTION_OUTPUT_FILE_FORMATS]
-            ?.split(",")
-            ?.mapTo(mutableSetOf()) { FileFormat.valueOf(it.uppercase()) }
-            ?: setOf(FileFormat.XML)
+        require(outputFileExtensions.isNotEmpty()) {
+            "No valid CycloneDX output formats specified."
+        }
 
         val metadata = Metadata().apply {
             timestamp = Date()
-            tools = listOf(
-                Tool().apply {
-                    name = ORT_FULL_NAME
-                    version = Environment.ORT_VERSION
-                }
-            )
-            licenseChoice = LicenseChoice().apply { expression = dataLicense }
+            toolChoice = ToolInformation().apply {
+                components = listOf(
+                    Component().apply {
+                        type = Component.Type.APPLICATION
+                        name = ORT_FULL_NAME
+                        version = Environment.ORT_VERSION
+                    }
+                )
+            }
+
+            licenses = LicenseChoice().apply { expression = Expression(config.dataLicense) }
         }
 
-        if (createSingleBom) {
+        if (config.singleBom) {
             val bom = Bom().apply {
                 serialNumber = "urn:uuid:${UUID.randomUUID()}"
                 this.metadata = metadata
@@ -199,7 +241,9 @@ class CycloneDxReporter : Reporter {
                 addPackageToBom(input, pkg, bom, dependencyType)
             }
 
-            outputFiles += writeBom(bom, schemaVersion, outputDir, REPORT_BASE_FILENAME, outputFileFormats)
+            addVulnerabilitiesToBom(input.ortResult.getVulnerabilities(), bom)
+
+            reportFileResults += writeBom(bom, schemaVersion, outputDir, REPORT_BASE_FILENAME, outputFileExtensions)
         } else {
             projects.forEach { project ->
                 val bom = Bom().apply {
@@ -241,12 +285,48 @@ class CycloneDxReporter : Reporter {
                     addPackageToBom(input, pkg, bom, dependencyType)
                 }
 
+                addVulnerabilitiesToBom(input.ortResult.getVulnerabilities(), bom)
+
                 val reportName = "$REPORT_BASE_FILENAME-${project.id.toPath("-")}"
-                outputFiles += writeBom(bom, schemaVersion, outputDir, reportName, outputFileFormats)
+                reportFileResults += writeBom(bom, schemaVersion, outputDir, reportName, outputFileExtensions)
             }
         }
 
-        return outputFiles
+        return reportFileResults
+    }
+
+    private fun addVulnerabilitiesToBom(advisorVulnerabilities: Map<Identifier, List<Vulnerability>>, bom: Bom) {
+        val vulnerabilities = mutableListOf<org.cyclonedx.model.vulnerability.Vulnerability>()
+        advisorVulnerabilities.forEach {
+            val vulnerabilityBomRef = it.key.toCoordinates()
+            it.value.forEach {
+                val vulnerability = org.cyclonedx.model.vulnerability.Vulnerability().apply {
+                    id = it.id
+                    description = it.description
+                    detail = it.summary
+                    ratings = it.references.map { reference ->
+                        org.cyclonedx.model.vulnerability.Vulnerability.Rating().apply {
+                            source = org.cyclonedx.model.vulnerability.Vulnerability.Source()
+                                .apply { url = reference.url.toString() }
+                            severity = org.cyclonedx.model.vulnerability.Vulnerability.Rating.Severity
+                                .fromString(reference.severity?.lowercase())
+                            score = reference.score?.toDouble()
+                            method = org.cyclonedx.model.vulnerability.Vulnerability.Rating.Method
+                                .fromString(reference.scoringSystem)
+                        }
+                    }
+
+                    affects = mutableListOf(
+                        org.cyclonedx.model.vulnerability.Vulnerability.Affect()
+                            .apply { ref = vulnerabilityBomRef }
+                    )
+                }
+
+                vulnerabilities.add(vulnerability)
+            }
+
+            bom.vulnerabilities = vulnerabilities
+        }
     }
 
     private fun addPackageToBom(input: ReporterInput, pkg: Package, bom: Bom, dependencyType: String) {
@@ -277,6 +357,7 @@ class CycloneDxReporter : Reporter {
             name = pkg.id.name
             version = pkg.id.version
             description = pkg.description
+            bomRef = pkg.id.toCoordinates()
 
             // TODO: Map package-manager-specific OPTIONAL scopes.
             scope = if (input.ortResult.isExcluded(pkg.id)) {
@@ -287,8 +368,7 @@ class CycloneDxReporter : Reporter {
 
             hashes = listOfNotNull(hash)
 
-            // TODO: Support license expressions once we have fully converted to them.
-            licenseChoice = LicenseChoice().apply { licenses = licenseObjects }
+            if (licenseObjects.isNotEmpty()) licenses = LicenseChoice().apply { licenses = licenseObjects }
 
             // TODO: Find a way to associate copyrights to the license they belong to, see
             //       https://github.com/CycloneDX/cyclonedx-core-java/issues/58
@@ -310,56 +390,61 @@ class CycloneDxReporter : Reporter {
 
     private fun writeBom(
         bom: Bom,
-        schemaVersion: CycloneDxSchema.Version,
+        schemaVersion: Version,
         outputDir: File,
         outputName: String,
-        requestedOutputFileFormats: Set<FileFormat>
-    ): List<File> {
-        val writtenFiles = mutableListOf<File>()
-        val outputFileFormats = supportedOutputFileFormats.filter { it in requestedOutputFileFormats }
+        outputFormats: Set<Format>
+    ): List<Result<File>> =
+        outputFormats.map { format ->
+            runCatching {
+                val bomString = generateBom(bom, schemaVersion, format)
 
-        outputFileFormats.forEach { fileFormat ->
-            val outputFile = outputDir.resolve("$outputName.${fileFormat.fileExtension}")
-
-            val bomGenerator = when (fileFormat) {
-                // Note that the BomXmlGenerator and BomJsonGenerator interfaces do not share a common base interface.
-                FileFormat.XML -> BomGeneratorFactory.createXml(schemaVersion, bom) as Any
-                FileFormat.JSON -> {
-                    // JSON output cannot handle extensible types (see [1]), so simply remove them. As JSON output is
-                    // guaranteed to be the last format serialized, it is okay to modify the BOM here without doing a
-                    // deep copy first.
-                    //
-                    // [1] https://github.com/CycloneDX/cyclonedx-core-java/issues/99.
-                    val bomWithoutExtensibleTypes = bom.apply {
-                        components.forEach { component ->
-                            // Clear the "dependencyType".
-                            component.extensibleTypes = null
-
-                            component.licenseChoice.licenses.forEach { license ->
-                                // Clear the "origin".
-                                license.extensibleTypes = null
-                            }
-
-                            // Remove duplicates that may occur due to clearing the distinguishing extensive type.
-                            component.licenseChoice.licenses = component.licenseChoice.licenses.distinct()
-                        }
-                    }
-
-                    BomGeneratorFactory.createJson(schemaVersion, bomWithoutExtensibleTypes) as Any
+                outputDir.resolve("$outputName.${format.extension}").apply {
+                    bufferedWriter().use { it.write(bomString) }
                 }
-                else -> throw IllegalArgumentException("Unsupported CycloneDX file format '$fileFormat'.")
             }
-
-            outputFile.bufferedWriter().use { it.write(bomGenerator.toString()) }
-            writtenFiles += outputFile
         }
-
-        return writtenFiles
-    }
 }
+
+/**
+ * Return the CycloneDX [Format] for the given extension as a [String], or null if there is no match.
+ */
+private fun String.toFormat(): Format? = Format.entries.find { this == it.extension }
 
 /**
  * Return the license names of all licenses that have any of the given [sources] disregarding the excluded state.
  */
 private fun ResolvedLicenseInfo.getLicenseNames(vararg sources: LicenseSource): SortedSet<String> =
     licenses.filter { license -> sources.any { it in license.sources } }.mapTo(sortedSetOf()) { it.license.toString() }
+
+/**
+ * Return the string representation for the given [bom], [schemaVersion] and [format].
+ */
+private fun generateBom(bom: Bom, schemaVersion: Version, format: Format): String =
+    when (format) {
+        Format.XML -> BomGeneratorFactory.createXml(schemaVersion, bom).toXmlString()
+        Format.JSON -> {
+            // JSON output cannot handle extensible types (see [1]), so simply remove them. As JSON output is guaranteed
+            // to be the last format serialized, it is okay to modify the BOM here without doing a deep copy first.
+            //
+            // [1] https://github.com/CycloneDX/cyclonedx-core-java/issues/99.
+            val bomWithoutExtensibleTypes = bom.apply {
+                components.forEach { component ->
+                    // Clear the "dependencyType".
+                    component.extensibleTypes = null
+
+                    if (component.licenses?.licenses != null) {
+                        component.licenses.licenses.forEach { license ->
+                            // Clear the "origin".
+                            license.extensibleTypes = null
+                        }
+
+                        // Remove duplicates that may occur due to clearing the distinguishing extensive type.
+                        component.licenses.licenses = component.licenses.licenses.distinct()
+                    }
+                }
+            }
+
+            BomGeneratorFactory.createJson(schemaVersion, bomWithoutExtensibleTypes).toJsonString()
+        }
+    }

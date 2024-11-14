@@ -23,16 +23,14 @@ plugins {
 }
 
 dependencies {
-    api(project(":plugins:commands:command-api"))
+    api(projects.plugins.commands.commandApi)
 
-    implementation(platform(project(":plugins:package-curation-providers")))
-    implementation(platform(project(":plugins:package-managers")))
+    implementation(projects.plugins.packageCurationProviders.packageCurationProviderApi)
 
-    implementation(project(":analyzer"))
-    implementation(project(":model"))
-    implementation(project(":utils:common-utils"))
-    implementation(project(":utils:ort-utils"))
+    implementation(projects.analyzer)
+    implementation(projects.model)
+    implementation(projects.utils.commonUtils)
+    implementation(projects.utils.ortUtils)
 
     implementation(libs.clikt)
-    implementation(libs.log4jApiKotlin)
 }

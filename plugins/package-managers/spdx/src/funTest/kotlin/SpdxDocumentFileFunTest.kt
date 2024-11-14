@@ -23,13 +23,16 @@ import io.kotest.core.spec.style.WordSpec
 import io.kotest.matchers.collections.containExactly
 import io.kotest.matchers.collections.containExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
+import io.kotest.matchers.collections.shouldHaveSingleElement
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.maps.haveSize
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 
-import org.ossreviewtoolkit.analyzer.managers.create
-import org.ossreviewtoolkit.analyzer.managers.resolveSingleProject
+import org.ossreviewtoolkit.analyzer.analyze
+import org.ossreviewtoolkit.analyzer.create
+import org.ossreviewtoolkit.analyzer.resolveSingleProject
 import org.ossreviewtoolkit.downloader.VersionControlSystem
 import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.Project
@@ -41,7 +44,6 @@ import org.ossreviewtoolkit.model.toYaml
 import org.ossreviewtoolkit.utils.ort.normalizeVcsUrl
 import org.ossreviewtoolkit.utils.test.getAssetFile
 import org.ossreviewtoolkit.utils.test.matchExpectedResult
-import org.ossreviewtoolkit.utils.test.shouldNotBeNull
 
 class SpdxDocumentFileFunTest : WordSpec({
     "resolveDependencies()" should {
@@ -173,6 +175,49 @@ class SpdxDocumentFileFunTest : WordSpec({
                 }
             }
         }
+
+        "retrieve nested DEPENDS_ON dependencies" {
+            val idCurl = Identifier("SpdxDocumentFile::curl:7.70.0")
+            val idOpenSsl = Identifier("SpdxDocumentFile:OpenSSL Development Team:openssl:1.1.1g")
+            val idZlib = Identifier("SpdxDocumentFile::zlib:1.2.11")
+
+            val projectFile = projectDir.resolve("DEPENDS_ON-packages/project-xyz.spdx.yml")
+            val definitionFiles = listOf(projectFile)
+
+            val result = create("SpdxDocumentFile").resolveDependencies(definitionFiles, emptyMap())
+
+            result.projectResults[projectFile] shouldNotBeNull {
+                with(single()) {
+                    val resolvedProject = project.withResolvedScopes(result.dependencyGraph)
+                    resolvedProject.scopes.map { it.name } should containExactlyInAnyOrder("default")
+                    packages.map { it.id } should containExactlyInAnyOrder(idZlib, idCurl, idOpenSsl)
+                }
+            }
+        }
+
+        "resolve dependencies from the Conan package manager" {
+            val definitionFile = projectDir.resolve("subproject-conan/project-xyz.spdx.yml")
+            val expectedResultFile = getAssetFile(
+                "projects/synthetic/spdx-project-xyz-expected-output-subproject-conan.yml"
+            )
+
+            val ortResult = analyze(definitionFile.parentFile, allowDynamicVersions = true)
+
+            ortResult.analyzer shouldNotBeNull {
+                result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
+            }
+        }
+
+        "handle cycles in dependencies gracefully" {
+            val definitionFile = projectDir.resolve("cyclic-references/project-cyclic.spdx.yml")
+            val expectedResultFile = getAssetFile(
+                "projects/synthetic/spdx-project-cyclic-expected-output.yml"
+            )
+
+            val actualResult = create("SpdxDocumentFile").resolveSingleProject(definitionFile).toYaml()
+
+            actualResult should matchExpectedResult(expectedResultFile, definitionFile)
+        }
     }
 
     "mapDefinitionFiles()" should {
@@ -221,6 +266,29 @@ class SpdxDocumentFileFunTest : WordSpec({
                 Identifier("SpdxDocumentFile::my-lib:8.88.8"),
                 Identifier("SpdxDocumentFile:OpenSSL Development Team:openssl:1.1.1g")
             )
+        }
+
+        "collect issues for subprojects using illegal SPDX identifiers" {
+            val projectFile = projectDir.resolve("illegal-chars-external-refs/project-xyz.spdx.yml")
+            val subProjectFile = projectDir.resolve("illegal-chars-external-refs/illegal_chars/package.spdx.yml")
+            val definitionFiles = listOf(projectFile, subProjectFile)
+
+            val result = create("SpdxDocumentFile").resolveDependencies(definitionFiles, emptyMap())
+
+            val rootProject = result.projectResults[projectFile.absoluteFile]?.first()
+
+            rootProject shouldNotBeNull {
+                issues shouldHaveSize 1
+                issues.shouldHaveSingleElement {
+                    val expectedMessage = Regex(
+                        """
+                            .*SPDX ID 'SPDXRef-Package-illegal_chars' is only allowed to contain letters, numbers, '\.', and '-'.*
+                        """.trimIndent()
+                    )
+
+                    expectedMessage.containsMatchIn(it.message)
+                }
+            }
         }
     }
 })

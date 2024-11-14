@@ -19,16 +19,14 @@
 
 package org.ossreviewtoolkit.plugins.reporters.fossid
 
-import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.WordSpec
-import io.kotest.matchers.collections.shouldContainExactly
-import io.kotest.matchers.throwable.shouldHaveMessage
+import io.kotest.matchers.collections.shouldBeSingleton
+import io.kotest.matchers.result.shouldBeSuccess
 
 import io.mockk.clearAllMocks
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.coVerifyAll
-import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.mockkStatic
@@ -54,16 +52,20 @@ import org.ossreviewtoolkit.model.config.Excludes
 import org.ossreviewtoolkit.model.config.RepositoryConfiguration
 import org.ossreviewtoolkit.model.config.ScopeExclude
 import org.ossreviewtoolkit.model.config.ScopeExcludeReason
+import org.ossreviewtoolkit.plugins.api.Secret
 import org.ossreviewtoolkit.reporter.ReporterInput
 import org.ossreviewtoolkit.utils.test.scannerRunOf
 
 private const val SERVER_URL_SAMPLE = "https://fossid.example.com/instance/"
 private const val API_KEY_SAMPLE = "XYZ"
 private const val USER_KEY_SAMPLE = "user"
-private val DEFAULT_OPTIONS = mapOf(
-    FossIdReporter.SERVER_URL_PROPERTY to SERVER_URL_SAMPLE,
-    FossIdReporter.API_KEY_PROPERTY to API_KEY_SAMPLE,
-    FossIdReporter.USER_PROPERTY to USER_KEY_SAMPLE
+
+private val DEFAULT_CONFIG = FossIdReporterConfig(
+    serverUrl = SERVER_URL_SAMPLE,
+    apiKey = Secret(API_KEY_SAMPLE),
+    user = Secret(USER_KEY_SAMPLE),
+    reportType = "HTML_DYNAMIC",
+    selectionType = "INCLUDE_ALL_LICENSES"
 )
 
 private const val SCANCODE_1 = "scancode1"
@@ -81,50 +83,11 @@ class FossIdReporterTest : WordSpec({
     }
 
     "generateReport of FossIdReport " should {
-        "check if a server URL was given" {
-            val reporter = FossIdReporter()
-            val exception = shouldThrow<IllegalArgumentException> {
-                val input = createReporterInput()
-                reporter.generateReport(
-                    input,
-                    DIRECTORY_SAMPLE,
-                    DEFAULT_OPTIONS.filterNot { it.key == FossIdReporter.SERVER_URL_PROPERTY }
-                )
-            }
-            exception shouldHaveMessage "No FossID server URL configuration found."
-        }
-
-        "check if an API key was given" {
-            val reporter = FossIdReporter()
-            val exception = shouldThrow<IllegalArgumentException> {
-                val input = createReporterInput()
-                reporter.generateReport(
-                    input,
-                    DIRECTORY_SAMPLE,
-                    DEFAULT_OPTIONS.filterNot { it.key == FossIdReporter.API_KEY_PROPERTY }
-                )
-            }
-            exception shouldHaveMessage "No FossID API Key configuration found."
-        }
-
-        "check if a user was given" {
-            val reporter = FossIdReporter()
-            val exception = shouldThrow<IllegalArgumentException> {
-                val input = createReporterInput()
-                reporter.generateReport(
-                    input,
-                    DIRECTORY_SAMPLE,
-                    DEFAULT_OPTIONS.filterNot { it.key == FossIdReporter.USER_PROPERTY }
-                )
-            }
-            exception shouldHaveMessage "No FossID User configuration found."
-        }
-
         "do nothing if no scancode is passed" {
             val (serviceMock, reporterMock) = createReporterMock()
             val input = createReporterInput()
 
-            reporterMock.generateReport(input, DIRECTORY_SAMPLE, DEFAULT_OPTIONS)
+            reporterMock.generateReport(input)
 
             coVerify(exactly = 0) {
                 serviceMock.generateReport(any(), any(), any(), any(), any(), any())
@@ -135,7 +98,7 @@ class FossIdReporterTest : WordSpec({
             val (serviceMock, reporterMock) = createReporterMock()
             val input = createReporterInput(SCANCODE_1)
 
-            reporterMock.generateReport(input, DIRECTORY_SAMPLE, DEFAULT_OPTIONS)
+            reporterMock.generateReport(input)
 
             coVerify(exactly = 1) {
                 serviceMock.generateReport(
@@ -150,13 +113,10 @@ class FossIdReporterTest : WordSpec({
         }
 
         "allow to specify a report type" {
-            val (serviceMock, reporterMock) = createReporterMock()
+            val (serviceMock, reporterMock) = createReporterMock(DEFAULT_CONFIG.copy(reportType = "XLSX"))
             val input = createReporterInput(SCANCODE_1)
 
-            reporterMock.generateReport(
-                input, DIRECTORY_SAMPLE,
-                DEFAULT_OPTIONS + (FossIdReporter.REPORT_TYPE_PROPERTY to ReportType.XLSX.name)
-            )
+            reporterMock.generateReport(input)
 
             coVerify(exactly = 1) {
                 serviceMock.generateReport(
@@ -174,7 +134,7 @@ class FossIdReporterTest : WordSpec({
             val (serviceMock, reporterMock) = createReporterMock()
             val input = createReporterInput(SCANCODE_1)
 
-            reporterMock.generateReport(input, DIRECTORY_SAMPLE, DEFAULT_OPTIONS)
+            reporterMock.generateReport(input)
 
             coVerify(exactly = 1) {
                 serviceMock.generateReport(
@@ -189,13 +149,12 @@ class FossIdReporterTest : WordSpec({
         }
 
         "allow to specify a selection type" {
-            val (serviceMock, reporterMock) = createReporterMock()
+            val (serviceMock, reporterMock) = createReporterMock(
+                DEFAULT_CONFIG.copy(selectionType = "INCLUDE_COPYLEFT")
+            )
             val input = createReporterInput(SCANCODE_1)
 
-            reporterMock.generateReport(
-                input, DIRECTORY_SAMPLE,
-                DEFAULT_OPTIONS + (FossIdReporter.SELECTION_TYPE_PROPERTY to SelectionType.INCLUDE_COPYLEFT.name)
-            )
+            reporterMock.generateReport(input)
 
             coVerify(exactly = 1) {
                 serviceMock.generateReport(
@@ -213,7 +172,7 @@ class FossIdReporterTest : WordSpec({
             val (serviceMock, reporterMock) = createReporterMock()
             val input = createReporterInput(SCANCODE_1, SCANCODE_2)
 
-            reporterMock.generateReport(input, DIRECTORY_SAMPLE, DEFAULT_OPTIONS)
+            reporterMock.generateReport(input)
 
             coVerifyAll {
                 serviceMock.generateReport(USER_KEY_SAMPLE, API_KEY_SAMPLE, SCANCODE_1, any(), any(), any())
@@ -225,7 +184,7 @@ class FossIdReporterTest : WordSpec({
             val (serviceMock, reporterMock) = createReporterMock()
             val input = createReporterInput("$SCANCODE_1,$SCANCODE_2")
 
-            reporterMock.generateReport(input, DIRECTORY_SAMPLE, DEFAULT_OPTIONS)
+            reporterMock.generateReport(input)
 
             coVerifyAll {
                 serviceMock.generateReport(USER_KEY_SAMPLE, API_KEY_SAMPLE, SCANCODE_1, any(), any(), any())
@@ -237,19 +196,34 @@ class FossIdReporterTest : WordSpec({
             val (_, reporterMock) = createReporterMock()
             val input = createReporterInput(SCANCODE_1)
 
-            val result = reporterMock.generateReport(input, DIRECTORY_SAMPLE, DEFAULT_OPTIONS)
+            val reportFileResults = reporterMock.generateReport(input)
 
-            result shouldContainExactly listOf(FILE_SAMPLE)
+            reportFileResults.shouldBeSingleton {
+                it shouldBeSuccess FILE_SAMPLE
+            }
+        }
+
+        "ignore scan results without a scancode" {
+            val (serviceMock, reporterMock) = createReporterMock()
+            val input = createReporterInput(SCANCODE_1)
+
+            reporterMock.generateReport(input)
+
+            coVerify(exactly = 1) {
+                serviceMock.generateReport(any(), any(), any(), any(), any(), any())
+            }
         }
     }
 })
 
-private fun createReporterMock(): Pair<FossIdRestService, FossIdReporter> {
+private fun FossIdReporter.generateReport(input: ReporterInput) = generateReport(input, DIRECTORY_SAMPLE)
+
+private fun createReporterMock(config: FossIdReporterConfig = DEFAULT_CONFIG): Pair<FossIdRestService, FossIdReporter> {
     mockkObject(FossIdRestService)
 
     val serviceMock = mockk<FossIdServiceWithVersion>()
-    val reporterMock = spyk<FossIdReporter>()
-    every { FossIdRestService.create(any()) } returns serviceMock
+    val reporterMock = spyk(FossIdReporter(config = config))
+    coEvery { FossIdRestService.create(any()) } returns serviceMock
 
     coEvery {
         serviceMock.generateReport(any(), any(), any(), any(), any(), any())
@@ -268,7 +242,14 @@ private fun createReporterInput(vararg scanCodes: String): ReporterInput {
     val results = scanCodes.associateByTo(
         destination = sortedMapOf(),
         keySelector = { Identifier.EMPTY.copy(name = it) },
-        valueTransform = { listOf(createScanResult(it)) }
+        valueTransform = { code ->
+            val unmatchedScanResult = ScanResult(
+                provenance = UnknownProvenance,
+                scanner = ScannerDetails.EMPTY.copy(name = "otherScanner"),
+                summary = ScanSummary.EMPTY
+            )
+            listOf(createScanResult(code), unmatchedScanResult)
+        }
     )
 
     return ReporterInput(

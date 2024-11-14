@@ -19,31 +19,51 @@
 
 import com.cloudbees.groovy.cps.NonCPS
 
+import groovy.transform.Field
+
 import java.io.IOException
 
 import org.jenkinsci.plugins.pipeline.modeldefinition.Utils
 
-final DOCKER_BUILD_ARGS = '--build-arg http_proxy=$http_proxy --build-arg https_proxy=$https_proxy --build-arg ORT_VERSION='
-
 // Disable the entry point to work around https://issues.jenkins-ci.org/browse/JENKINS-51307.
 final DOCKER_RUN_ARGS = '-e http_proxy -e https_proxy --entrypoint=""'
 
-// The status code ORT commands return for failures (like rule violations), not errors (like existing output files).
+// The minimum status code ORT CLI commands return on exit for failures (like rule violations), not errors (like
+// existing output files).
 final ORT_FAILURE_STATUS_CODE = 2
+
+def projectVcsCredentials = []
+def ortConfigVcsCredentials = []
+
+@Field
+def ortVersion = 'JENKINS-SNAPSHOT'
+
+@NonCPS
+def getDockerBuildArgs() {
+    def defaultArgs = ['http_proxy=$http_proxy', 'https_proxy=$https_proxy', "ORT_VERSION=$ortVersion"]
+    def customArgs = params.CUSTOM_DOCKER_BUILD_ARGS.tokenize(',')
+    return (defaultArgs + customArgs).collect { "--build-arg ${it.trim()}" }.join(' ')
+}
 
 @NonCPS
 static sortProjectsByPathDepth(projects) {
     return projects.toSorted { it.definition_file_path.count("/") }
 }
 
-def projectVcsCredentials = []
-def ortConfigVcsCredentials = []
-def ortVersion = 'JENKINS-SNAPSHOT'
-
 pipeline {
     agent none
 
     parameters {
+        /*
+         * Parameters about the project to run ORT on.
+         */
+
+        string(
+            name: 'CUSTOM_DOCKER_BUILD_ARGS',
+            description: 'A comma-separated list of arguments to pass to the Docker build, e.g. "JAVA_VERSION=17,SCANCODE_VERSION=32.0.8".',
+            defaultValue: ''
+        )
+
         /*
          * Parameters about the project to run ORT on.
          */
@@ -62,7 +82,8 @@ pipeline {
 
         credentials(
             name: 'PROJECT_VCS_CREDENTIALS',
-            description: 'Optional Jenkins credentials to use for the VCS checkout.',
+            credentialType: 'com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl',
+            description: 'Optional HTTP credentials to use for the VCS checkout.',
             defaultValue: ''
         )
 
@@ -82,9 +103,40 @@ pipeline {
             defaultValue: ''
         )
 
+        string(
+            name: 'ORT_CONFIG_VCS_PATH',
+            description: 'Optional VCS path of the ORT configuration.',
+            defaultValue: ''
+        )
+
         credentials(
             name: 'ORT_CONFIG_VCS_CREDENTIALS',
-            description: 'Optional Jenkins credentials to use for the VCS checkout.',
+            credentialType: 'com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl',
+            description: 'Optional HTTP credentials to use for the VCS checkout.',
+            defaultValue: ''
+        )
+
+        booleanParam(
+            name: 'SKIP_EXCLUDED',
+            description: 'Enable to skip scopes and paths that have been configured to be excluded, where supported.',
+            defaultValue: true
+        )
+
+        string(
+            name: 'PLUGIN_JOB_NAME',
+            description: 'The name of the job to copy plugins from. The distribution must be at "build/distributions/*.tar".',
+            defaultValue: ''
+        )
+
+        buildSelector(
+            name: 'PLUGIN_BUILD_SELECTOR',
+            description: 'The selector for the build of the plugin job to copy plugins from.',
+            defaultSelector: lastSuccessful()
+        )
+
+        string(
+            name: 'ENVIRONMENT_VARIABLES',
+            description: 'Optional list of comma-separated key=value pairs of environment variables to set.',
             defaultValue: ''
         )
 
@@ -104,9 +156,20 @@ pipeline {
          * ORT analyzer tool parameters.
          */
 
+        stashedFile(
+            name: 'ANALYZER_RESULT',
+            description: 'An optional existing analyzer result file to use instead of running the analyzer.'
+        )
+
+        string(
+            name: 'ANALYZER_INPUT_PATH',
+            description: 'The path to analyze, relative to the repository root. May point to a definition file if only a single package manager is enabled.',
+            defaultValue: ''
+        )
+
         booleanParam(
             name: 'ALLOW_DYNAMIC_VERSIONS',
-            description: 'Allow dynamic versions of dependencies (support projects without lock files).',
+            description: 'Allow dynamic versions of dependencies (support projects without lockfiles).',
             defaultValue: false
         )
 
@@ -152,14 +215,26 @@ pipeline {
 
         choice(
             name: 'PROJECT_SCANNER',
-            description: 'The scanner to use for project source code.',
-            choices: ['ScanCode', 'Askalono', 'BoyterLc', 'Licensee', 'ScanOSS', '<NONE>']
+            description: 'The built-in scanner to use for project source code.',
+            choices: ['ScanCode', 'DOS', 'Askalono', 'BoyterLc', 'Licensee', 'ScanOSS', '<NONE>']
+        )
+
+        string(
+            name: 'PROJECT_SCANNER_PLUGIN',
+            description: 'The scanner plugin to use for project source code. Overrides any built-in scanner.',
+            defaultValue: ''
         )
 
         choice(
             name: 'PACKAGE_SCANNER',
             description: 'The scanner to use for package source code.',
-            choices: ['ScanCode', 'Askalono', 'BoyterLc', 'Licensee', 'ScanOSS', '<NONE>']
+            choices: ['ScanCode', 'DOS', 'Askalono', 'BoyterLc', 'Licensee', 'ScanOSS', '<NONE>']
+        )
+
+        string(
+            name: 'PACKAGE_SCANNER_PLUGIN',
+            description: 'The scanner plugin to use for package source code. Overrides any built-in scanner.',
+            defaultValue: ''
         )
 
         booleanParam(
@@ -174,14 +249,14 @@ pipeline {
 
         booleanParam(
             name: 'RUN_ADVISOR',
-            description: 'Run the advisor tool. The OSV provider (https://osv.dev/) is enabled by default.',
+            description: 'Run the advisor tool.',
             defaultValue: true
         )
 
         string(
-            name: 'VULNERABLE_CODE_API_KEY',
-            description: 'Optional API key to enable VulnerableCode (see https://public.vulnerablecode.io/account/request_api_key/).',
-            defaultValue: ''
+            name: 'ADVISORS',
+            description: 'A comma-separated list of advisors to use.',
+            defaultValue: 'OSV,VulnerableCode'
         )
 
         /*
@@ -194,6 +269,18 @@ pipeline {
             defaultValue: true
         )
 
+        booleanParam(
+            name: 'USE_OSADL_RULES',
+            description: 'Use built-in rules based on the OSADL license compliance matrix.',
+            defaultValue: true
+        )
+
+        booleanParam(
+            name: 'USE_CONFIG_RULES',
+            description: 'Use rules from the ORT configuration, if present.',
+            defaultValue: true
+        )
+
         /*
          * ORT reporter tool parameters.
          */
@@ -202,6 +289,18 @@ pipeline {
             name: 'RUN_REPORTER',
             description: 'Run the reporter tool.',
             defaultValue: true
+        )
+
+        string(
+            name: 'REPORT_FORMATS',
+            description: 'A comma-separated list of report formats to generate.',
+            defaultValue: 'CycloneDX,SpdxDocument,PdfTemplate,PlainTextTemplate,StaticHTML,WebApp'
+        )
+
+        string(
+            name: 'REPORT_FORMATS_OPTIONS',
+            description: 'A comma-separated list of report-format-specific options, e.g. "PlainTextTemplate=template.id=NOTICE_SUMMARY".',
+            defaultValue: ''
         )
     }
 
@@ -221,6 +320,32 @@ pipeline {
 
                     ortVersion = env.GIT_COMMIT.take(10)
                 }
+
+                sh '''
+                rm -fr cli/src/main/dist/plugin
+                '''.stripIndent().trim()
+            }
+        }
+
+        stage('Install plugins') {
+            agent any
+
+            when {
+                beforeAgent true
+
+                expression {
+                    !params.PLUGIN_JOB_NAME.allWhitespace
+                }
+            }
+
+            steps {
+                script {
+                    copyArtifacts(projectName: params.PLUGIN_JOB_NAME, selector: buildParameter(params.PLUGIN_BUILD_SELECTOR), filter: 'build/distributions/*.tar')
+                }
+
+                sh '''
+                tar -C cli/src/main/dist/plugin --strip-components=1 -xf build/distributions/*.tar && rm build/distributions/*.tar
+                '''.stripIndent().trim()
             }
         }
 
@@ -231,14 +356,15 @@ pipeline {
         stage('Build ORT Docker image') {
             agent {
                 dockerfile {
-                    filename 'Dockerfile-legacy'
-                    additionalBuildArgs DOCKER_BUILD_ARGS + ortVersion
+                    filename 'Dockerfile'
+                    additionalBuildArgs getDockerBuildArgs()
                     args DOCKER_RUN_ARGS
                 }
             }
 
             environment {
                 HOME = "${env.WORKSPACE}@tmp"
+                JAVA_OPTS = "-Duser.home=${env.HOME}"
             }
 
             steps {
@@ -249,7 +375,7 @@ pipeline {
                     ORT_OPTIONS="$ORT_OPTIONS --stacktrace"
                 fi
 
-                /opt/ort/bin/ort $ORT_OPTIONS --version
+                /opt/ort/bin/ort $ORT_OPTIONS requirements --list plugins
                 '''.stripIndent().trim()
             }
         }
@@ -257,21 +383,22 @@ pipeline {
         stage('Clone project') {
             agent {
                 dockerfile {
-                    filename 'Dockerfile-legacy'
-                    additionalBuildArgs DOCKER_BUILD_ARGS + ortVersion
+                    filename 'Dockerfile'
+                    additionalBuildArgs getDockerBuildArgs()
                     args DOCKER_RUN_ARGS
                 }
             }
 
             environment {
                 HOME = "${env.WORKSPACE}@tmp"
+                JAVA_OPTS = "-Duser.home=${env.HOME}"
                 PROJECT_DIR = "${env.HOME}/project"
             }
 
             steps {
                 withCredentials(projectVcsCredentials) {
                     sh '''
-                    ORT_OPTIONS="$LOG_LEVEL"
+                    ORT_OPTIONS="$LOG_LEVEL -P ort.downloader.skipExcluded=$SKIP_EXCLUDED"
 
                     if [ "$STACKTRACE" = "true" ]; then
                         ORT_OPTIONS="$ORT_OPTIONS --stacktrace"
@@ -281,12 +408,12 @@ pipeline {
                         VCS_REVISION_OPTION="--vcs-revision $PROJECT_VCS_REVISION"
                     fi
 
-                    echo "default login $LOGIN password $PASSWORD" > $HOME/.netrc
+                    echo "default login $LOGIN password $PASSWORD" > "$HOME/.netrc"
 
                     rm -fr "$PROJECT_DIR"
                     /opt/ort/bin/ort $ORT_OPTIONS download --project-url $PROJECT_VCS_URL $VCS_REVISION_OPTION -o "$PROJECT_DIR/source"
 
-                    rm -f $HOME/.netrc
+                    rm -f "$HOME/.netrc"
                     '''.stripIndent().trim()
                 }
             }
@@ -295,8 +422,8 @@ pipeline {
         stage('Clone ORT configuration') {
             agent {
                 dockerfile {
-                    filename 'Dockerfile-legacy'
-                    additionalBuildArgs DOCKER_BUILD_ARGS + ortVersion
+                    filename 'Dockerfile'
+                    additionalBuildArgs getDockerBuildArgs()
                     args DOCKER_RUN_ARGS
                 }
             }
@@ -311,6 +438,7 @@ pipeline {
 
             environment {
                 HOME = "${env.WORKSPACE}@tmp"
+                JAVA_OPTS = "-Duser.home=${env.HOME}"
                 ORT_DATA_DIR = "${env.HOME}/.ort"
             }
 
@@ -327,51 +455,110 @@ pipeline {
                         VCS_REVISION_OPTION="--vcs-revision $ORT_CONFIG_VCS_REVISION"
                     fi
 
-                    echo "default login $LOGIN password $PASSWORD" > $HOME/.netrc
+                    echo "default login $LOGIN password $PASSWORD" > "$HOME/.netrc"
 
-                    rm -fr $ORT_DATA_DIR/config
-                    /opt/ort/bin/ort $ORT_OPTIONS download --project-url $ORT_CONFIG_VCS_URL $VCS_REVISION_OPTION -o $ORT_DATA_DIR/config
+                    rm -fr "$ORT_DATA_DIR/config"
+                    /opt/ort/bin/ort $ORT_OPTIONS download --project-url $ORT_CONFIG_VCS_URL $VCS_REVISION_OPTION -o "$ORT_DATA_DIR/config"
 
-                    if [ -f "$ORT_DATA_DIR/config/config.yml" ]; then
-                        echo "Not creating '$ORT_DATA_DIR/config/config.yml' as it already exists."
-                    else
-                        echo "Creating '$ORT_DATA_DIR/config/config.yml' template for job parameters."
-                        cat >$ORT_DATA_DIR/config/config.yml <<EOF
-                    ort:
-                      packageCurationProviders:
-                        - name: DefaultFile
-                        - name: DefaultDir
-                        - name: OrtConfig
-                          enabled: ${USE_ORT_CONFIG_CURATIONS}
-                        - name: ClearlyDefined
-                          enabled: ${USE_CLEARLY_DEFINED_CURATIONS}
-                    EOF
-                    fi
-
-                    rm -f $HOME/.netrc
+                    rm -f "$HOME/.netrc"
                     '''.stripIndent().trim()
                 }
+
+                script {
+                    env.ORT_CONFIG_DIR = "${env.ORT_DATA_DIR}/config/${env.ORT_CONFIG_VCS_PATH}"
+                }
+
+                sh '''
+                if [ -f "$ORT_CONFIG_DIR/config.yml" ]; then
+                    echo "Not creating '$ORT_CONFIG_DIR/config.yml' as it already exists."
+                else
+                    echo "Creating '$ORT_CONFIG_DIR/config.yml' template for job parameters."
+                    cat >"$ORT_CONFIG_DIR/config.yml" <<EOF
+                ort:
+                  packageCurationProviders:
+                    - type: DefaultFile
+                    - type: DefaultDir
+                    - type: OrtConfig
+                      enabled: ${USE_ORT_CONFIG_CURATIONS}
+                    - type: ClearlyDefined
+                      enabled: ${USE_CLEARLY_DEFINED_CURATIONS}
+                EOF
+                fi
+
+                ORT_OPTIONS="$LOG_LEVEL"
+
+                if [ "$STACKTRACE" = "true" ]; then
+                    ORT_OPTIONS="$ORT_OPTIONS --stacktrace"
+                fi
+
+                /opt/ort/bin/ort $ORT_OPTIONS config --show-active
+                '''.stripIndent().trim()
+            }
+        }
+
+        stage('Unstash ORT analyzer result') {
+            agent {
+                dockerfile {
+                    filename 'Dockerfile'
+                    additionalBuildArgs getDockerBuildArgs()
+                    args DOCKER_RUN_ARGS
+                }
+            }
+
+            when {
+                beforeAgent true
+
+                expression {
+                    env.ANALYZER_RESULT_FILENAME
+                }
+            }
+
+            steps {
+                // Note: This unstashes the named file parameter to a file named after the parameter. In particular,
+                // the original file name is not maintained automatically.
+                unstash('ANALYZER_RESULT')
+
+                sh '''
+                mkdir -p out/results
+                ln -frs ANALYZER_RESULT out/results/current-result.yml
+                '''.stripIndent().trim()
             }
         }
 
         stage('Run ORT analyzer') {
             agent {
                 dockerfile {
-                    filename 'Dockerfile-legacy'
-                    additionalBuildArgs DOCKER_BUILD_ARGS + ortVersion
+                    filename 'Dockerfile'
+                    additionalBuildArgs getDockerBuildArgs()
                     args DOCKER_RUN_ARGS
+                }
+            }
+
+            when {
+                beforeAgent true
+
+                expression {
+                    !env.ANALYZER_RESULT_FILENAME
                 }
             }
 
             environment {
                 HOME = "${env.WORKSPACE}@tmp"
+                JAVA_OPTS = "-Duser.home=${env.HOME}"
                 PROJECT_DIR = "${env.HOME}/project"
             }
 
             steps {
                 script {
+                    params.ENVIRONMENT_VARIABLES.tokenize(',').each {
+                        def (key, value) = it.split('=', limit = 2)
+                        env."${key.trim()}" = value.trim()
+                    }
+                }
+
+                script {
                     def status = sh returnStatus: true, script: '''
-                    ORT_OPTIONS="$LOG_LEVEL -P ort.analyzer.allowDynamicVersions=$ALLOW_DYNAMIC_VERSIONS"
+                    ORT_OPTIONS="$LOG_LEVEL -P ort.analyzer.allowDynamicVersions=$ALLOW_DYNAMIC_VERSIONS -P ort.analyzer.skipExcluded=$SKIP_EXCLUDED"
 
                     if [ -n "$ENABLED_PACKAGE_MANAGERS" ]; then
                         ORT_OPTIONS="$ORT_OPTIONS -P ort.analyzer.enabledPackageManagers=$ENABLED_PACKAGE_MANAGERS"
@@ -387,8 +574,8 @@ pipeline {
 
                     /opt/ort/bin/set_gradle_proxy.sh
 
-                    rm -fr out/results
-                    /opt/ort/bin/ort $ORT_OPTIONS analyze -i "$PROJECT_DIR/source" -o out/results/analyzer
+                    rm -fr out/results/analyzer
+                    /opt/ort/bin/ort $ORT_OPTIONS analyze -i "$PROJECT_DIR/source/$ANALYZER_INPUT_PATH" -o out/results/analyzer -l JENKINS_BUILD_URL=$BUILD_URL
                     '''.stripIndent().trim()
 
                     if (status >= ORT_FAILURE_STATUS_CODE) unstable('Analyzer issues found.')
@@ -411,7 +598,7 @@ pipeline {
 
                             currentBuild.displayName += ": $rootProjectId"
                         }
-                    } catch (IOException e) {
+                    } catch (IOException ignored) {
                         // Ignore and just skip setting a custom display name.
                     }
                 }
@@ -438,23 +625,31 @@ pipeline {
 
             agent {
                 dockerfile {
-                    filename 'Dockerfile-legacy'
-                    additionalBuildArgs DOCKER_BUILD_ARGS + ortVersion
+                    filename 'Dockerfile'
+                    additionalBuildArgs getDockerBuildArgs()
                     args DOCKER_RUN_ARGS
                 }
             }
 
             environment {
                 HOME = "${env.WORKSPACE}@tmp"
+                JAVA_OPTS = "-Duser.home=${env.HOME}"
             }
 
             steps {
+                script {
+                    params.ENVIRONMENT_VARIABLES.tokenize(',').each {
+                        def (key, value) = it.split('=', limit = 2)
+                        env."${key.trim()}" = value.trim()
+                    }
+                }
+
                 withCredentials(projectVcsCredentials) {
                     script {
                         def status = sh returnStatus: true, script: '''
                         #!/usr/bin/env bash
 
-                        ORT_OPTIONS="$LOG_LEVEL -P ort.scanner.skipConcluded=$SKIP_CONCLUDED"
+                        ORT_OPTIONS="$LOG_LEVEL -P ort.scanner.skipExcluded=$SKIP_EXCLUDED -P ort.scanner.skipConcluded=$SKIP_CONCLUDED"
 
                         if [ "$USE_CLEARLY_DEFINED_SCAN_STORAGE" = "true" ]; then
                             # Configure the default local file storage explicitly to be able to refer to it.
@@ -474,10 +669,18 @@ pipeline {
 
                         PACKAGE_TYPES=(project package)
 
+                        if [ -n "$PROJECT_SCANNER_PLUGIN" ]; then
+                            PROJECT_SCANNER="$PROJECT_SCANNER_PLUGIN"
+                        fi
+
                         if [ "$PROJECT_SCANNER" = "<NONE>" ]; then
                             PACKAGE_TYPES=(${PACKAGE_TYPES[@]/project})
                         else
                             PROJECT_SCANNERS_OPTION="--project-scanners $PROJECT_SCANNER"
+                        fi
+
+                        if [ -n "$PACKAGE_SCANNER_PLUGIN" ]; then
+                            PACKAGE_SCANNER="$PACKAGE_SCANNER_PLUGIN"
                         fi
 
                         if [ "$PACKAGE_SCANNER" = "<NONE>" ]; then
@@ -491,8 +694,9 @@ pipeline {
                             PACKAGE_TYPES_OPTION=${PACKAGE_TYPES_OPTION// /,}
                             PACKAGE_TYPES_OPTION="--package-types $PACKAGE_TYPES_OPTION"
 
-                            echo "default login $LOGIN password $PASSWORD" > $HOME/.netrc
+                            echo "default login $LOGIN password $PASSWORD" > "$HOME/.netrc"
 
+                            rm -fr out/results/scanner
                             /opt/ort/bin/ort $ORT_OPTIONS scan \
                                 -i out/results/current-result.yml \
                                 -o out/results/scanner \
@@ -500,7 +704,7 @@ pipeline {
                                 $PROJECT_SCANNERS_OPTION \
                                 $SCANNERS_OPTION
 
-                            rm -f $HOME/.netrc
+                            rm -f "$HOME/.netrc"
                         fi
                         '''.stripIndent().trim()
 
@@ -551,33 +755,39 @@ pipeline {
 
             agent {
                 dockerfile {
-                    filename 'Dockerfile-legacy'
-                    additionalBuildArgs DOCKER_BUILD_ARGS + ortVersion
+                    filename 'Dockerfile'
+                    additionalBuildArgs getDockerBuildArgs()
                     args DOCKER_RUN_ARGS
                 }
             }
 
             environment {
                 HOME = "${env.WORKSPACE}@tmp"
+                JAVA_OPTS = "-Duser.home=${env.HOME}"
             }
 
             steps {
+                script {
+                    params.ENVIRONMENT_VARIABLES.tokenize(',').each {
+                        def (key, value) = it.split('=', limit = 2)
+                        env."${key.trim()}" = value.trim()
+                    }
+                }
+
                 withCredentials(projectVcsCredentials) {
                     script {
                         def status = sh returnStatus: true, script: '''
-                        ORT_OPTIONS="$LOG_LEVEL"
+                        ORT_OPTIONS="$LOG_LEVEL -P ort.advisor.skipExcluded=$SKIP_EXCLUDED"
 
                         if [ "$STACKTRACE" = "true" ]; then
                             ORT_OPTIONS="$ORT_OPTIONS --stacktrace"
                         fi
 
-                        ADVISOR_OPTIONS="-a OSV"
-
-                        if [ -n "$VULNERABLE_CODE_API_KEY" ]; then
-                            ORT_OPTIONS="$ORT_OPTIONS -P ort.advisor.vulnerableCode.apiKey=$VULNERABLE_CODE_API_KEY"
-                            ADVISOR_OPTIONS="$ADVISOR_OPTIONS,VulnerableCode"
+                        if [ -n "$ADVISORS" ]; then
+                            ADVISOR_OPTIONS="-a $ADVISORS"
                         fi
 
+                        rm -fr out/results/advisor
                         /opt/ort/bin/ort $ORT_OPTIONS advise $ADVISOR_OPTIONS -i out/results/current-result.yml -o out/results/advisor
                         '''.stripIndent().trim()
 
@@ -604,23 +814,31 @@ pipeline {
                 beforeAgent true
 
                 expression {
-                    params.RUN_EVALUATOR
+                    params.RUN_EVALUATOR && (params.USE_OSADL_RULES || params.USE_CONFIG_RULES)
                 }
             }
 
             agent {
                 dockerfile {
-                    filename 'Dockerfile-legacy'
-                    additionalBuildArgs DOCKER_BUILD_ARGS + ortVersion
+                    filename 'Dockerfile'
+                    additionalBuildArgs getDockerBuildArgs()
                     args DOCKER_RUN_ARGS
                 }
             }
 
             environment {
                 HOME = "${env.WORKSPACE}@tmp"
+                JAVA_OPTS = "-Duser.home=${env.HOME}"
             }
 
             steps {
+                script {
+                    params.ENVIRONMENT_VARIABLES.tokenize(',').each {
+                        def (key, value) = it.split('=', limit = 2)
+                        env."${key.trim()}" = value.trim()
+                    }
+                }
+
                 withCredentials(projectVcsCredentials) {
                     script {
                         def status = sh returnStatus: true, script: '''
@@ -630,7 +848,18 @@ pipeline {
                             ORT_OPTIONS="$ORT_OPTIONS --stacktrace"
                         fi
 
-                        /opt/ort/bin/ort $ORT_OPTIONS evaluate -i out/results/current-result.yml --rules-resource /rules/osadl.rules.kts -o out/results/evaluator
+                        RULES_OPTIONS=""
+
+                        if [ "$USE_OSADL_RULES" = "true" ]; then
+                            RULES_OPTIONS="$RULES_OPTIONS --rules-resource /rules/osadl.rules.kts"
+                        fi
+
+                        if [ "$USE_CONFIG_RULES" = "true" -a -f "$ORT_CONFIG_DIR/evaluator.rules.kts" ]; then
+                            RULES_OPTIONS="$RULES_OPTIONS --rules-file $ORT_CONFIG_DIR/evaluator.rules.kts"
+                        fi
+
+                        rm -fr out/results/evaluator
+                        /opt/ort/bin/ort $ORT_OPTIONS evaluate -i out/results/current-result.yml $RULES_OPTIONS -o out/results/evaluator
                         '''.stripIndent().trim()
 
                         if (status >= ORT_FAILURE_STATUS_CODE) unstable('Rule violations found.')
@@ -662,17 +891,25 @@ pipeline {
 
             agent {
                 dockerfile {
-                    filename 'Dockerfile-legacy'
-                    additionalBuildArgs DOCKER_BUILD_ARGS + ortVersion
+                    filename 'Dockerfile'
+                    additionalBuildArgs getDockerBuildArgs()
                     args DOCKER_RUN_ARGS
                 }
             }
 
             environment {
                 HOME = "${env.WORKSPACE}@tmp"
+                JAVA_OPTS = "-Duser.home=${env.HOME}"
             }
 
             steps {
+                script {
+                    params.ENVIRONMENT_VARIABLES.tokenize(',').each {
+                        def (key, value) = it.split('=', limit = 2)
+                        env."${key.trim()}" = value.trim()
+                    }
+                }
+
                 sh '''
                 ORT_OPTIONS="$LOG_LEVEL"
 
@@ -680,10 +917,20 @@ pipeline {
                     ORT_OPTIONS="$ORT_OPTIONS --stacktrace"
                 fi
 
+                if [ -n "$REPORT_FORMATS" ]; then
+                    REPORT_FORMATS_OPTION="-f $REPORT_FORMATS"
+                fi
+
+                if [ -n "$REPORT_FORMATS_OPTIONS" ]; then
+                    REPORT_FORMATS_OPTIONS_OPTION="-O $REPORT_FORMATS_OPTIONS"
+                fi
+
+                rm -fr out/results/reporter
                 /opt/ort/bin/ort $ORT_OPTIONS report \
-                    -f CycloneDX,SpdxDocument,PdfTemplate,PlainTextTemplate,StaticHTML,WebApp \
                     -i out/results/current-result.yml \
-                    -o out/results/reporter
+                    -o out/results/reporter \
+                    $REPORT_FORMATS_OPTION \
+                    $REPORT_FORMATS_OPTIONS_OPTION
                 '''.stripIndent().trim()
             }
 

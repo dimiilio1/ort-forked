@@ -19,7 +19,7 @@
 
 package org.ossreviewtoolkit.plugins.scanners.fossid
 
-import org.apache.logging.log4j.kotlin.Logging
+import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.model.config.ScannerConfiguration
 import org.ossreviewtoolkit.utils.common.Options
@@ -29,27 +29,28 @@ import org.ossreviewtoolkit.utils.common.Options
  * created from the [Options] contained in a [ScannerConfiguration] object under the key _FossId_. It offers the
  * following configuration options:
  *
- * * **"serverUrl":** The URL of the FossID server.
- * * **"user":** The user to connect to the FossID server.
- * * **"apiKey":** The API key of the user which connects to the FossID server.
- * * **"waitForResult":** When set to false, ORT does not wait for repositories to be downloaded nor scans to be
+ * * **"options.serverUrl":** The URL of the FossID server.
+ * * **"secrets.user":** The user to connect to the FossID server.
+ * * **"secrets.apiKey":** The API key of the user which connects to the FossID server.
+ * * **"options.waitForResult":** When set to false, ORT does not wait for repositories to be downloaded nor scans to be
  *   completed. As a consequence, scan results won't be available in ORT result.
- * * **"deltaScans":** If set, ORT will create delta scans. When only changes in a repository need to be scanned,
- *   delta scans reuse the identifications of the latest scan on this repository to reduce the amount of findings. If
- *   *deltaScans* is set and no scan exist yet, an initial scan called "origin" scan will be created.
- * * **"deltaScanLimit":** This setting can be used to limit the number of delta scans to keep for a given repository.
- *   So if another delta scan is created, older delta scans are deleted until this number is reached. If unspecified, no
- *   limit is enforced on the number of delta scans to keep. This property is evaluated only if *deltaScans* is enabled.
- * * **"detectLicenseDeclaration":** When set, the FossID scan is configured to automatically detect file license
- *   declarations.
- * * **"detectCopyrightStatements":** When set, the FossID scan is configured to automatically detect copyright
+ * * **"options.deltaScans":** If set, ORT will create delta scans. When only changes in a repository need to be
+ *   scanned, delta scans reuse the identifications of the latest scan on this repository to reduce the amount of
+ *   findings. If *deltaScans* is set and no scan exist yet, an initial scan called "origin" scan will be created.
+ * * **"options.deltaScanLimit":** This setting can be used to limit the number of delta scans to keep for a given
+ *   repository. So if another delta scan is created, older delta scans are deleted until this number is reached. If
+ *   unspecified, no limit is enforced on the number of delta scans to keep. This property is evaluated only if
+ *   *deltaScans* is enabled.
+ * * **"options.detectLicenseDeclaration":** When set, the FossID scan is configured to automatically detect file
+ *   license declarations.
+ * * **"options.detectCopyrightStatements":** When set, the FossID scan is configured to automatically detect copyright
  *   statements.
  *
  * Naming conventions options. If they are not set, default naming conventions are used.
- * * **"namingProjectPattern":** A pattern for project names when projects are created on the FossID instance. Contains
- *   variables prefixed by "$" e.g. "$Var1_$Var2". Variables are also passed as options and are prefixed by
+ * * **"options.namingProjectPattern":** A pattern for project names when projects are created on the FossID instance.
+ *   Contains variables prefixed by "$" e.g. "$Var1_$Var2". Variables are also passed as options and are prefixed by
  *   [NAMING_CONVENTION_VARIABLE_PREFIX] e.g. namingVariableVar1 = "foo".
- * * **"namingScanPattern":** A pattern for scan names when scans are created on the FossID instance.
+ * * **"options.namingScanPattern":** A pattern for scan names when scans are created on the FossID instance.
  *
  * URL mapping options. These options allow transforming the URLs of specific repositories before they are passed to
  * the FossID service. This may be necessary if FossID uses a different mechanism to clone a repository, e.g. via SSH
@@ -73,7 +74,7 @@ import org.ossreviewtoolkit.utils.common.Options
  *
  * every repository URL would be added credentials. Mappings are applied in the order they are defined.
  */
-internal data class FossIdConfig(
+data class FossIdConfig(
     /** The URL where the FossID service is running. */
     val serverUrl: String,
 
@@ -109,46 +110,58 @@ internal data class FossIdConfig(
     /** Whether matched lines of snippets are to be fetched. */
     val fetchSnippetMatchedLines: Boolean,
 
+    /** A limit on the amount of snippets to fetch. **/
+    val snippetsLimit: Int,
+
+    /** The sensitivity of the scan. */
+    val sensitivity: Int,
+
     /** Stores the map with FossID-specific configuration options. */
     private val options: Map<String, String>
 ) {
-    companion object : Logging {
+    companion object {
         /** Name of the configuration property for the server URL. */
-        private const val SERVER_URL_PROPERTY = "serverUrl"
+        private const val PROP_SERVER_URL = "serverUrl"
 
         /** Name of the configuration property for the username. */
-        private const val USER_PROPERTY = "user"
+        private const val PROP_USER = "user"
 
         /** Name of the configuration property for the API key. */
-        private const val API_KEY_PROPERTY = "apiKey"
+        private const val PROP_API_KEY = "apiKey"
 
         /** Name of the configuration property controlling whether ORT should wait for FossID results. */
-        private const val WAIT_FOR_RESULT_PROPERTY = "waitForResult"
+        private const val PROP_WAIT_FOR_RESULT = "waitForResult"
 
         /** Name of the configuration property defining the naming convention for projects. */
-        private const val NAMING_PROJECT_PATTERN_PROPERTY = "namingProjectPattern"
+        private const val PROP_NAMING_PROJECT_PATTERN = "namingProjectPattern"
 
         /** Name of the configuration property defining the naming convention for scans. */
-        private const val NAMING_SCAN_PATTERN_PROPERTY = "namingScanPattern"
+        private const val PROP_NAMING_SCAN_PATTERN = "namingScanPattern"
 
         /** Name of the configuration property defining whether to keep failed scans. */
-        private const val KEEP_FAILED_SCANS_PROPERTY = "keepFailedScans"
+        private const val PROP_KEEP_FAILED_SCANS = "keepFailedScans"
 
         /** Name of the configuration property controlling whether delta scans are to be created. */
-        private const val DELTA_SCAN_PROPERTY = "deltaScans"
+        private const val PROP_DELTA_SCAN = "deltaScans"
 
         /** Name of the configuration property that limits the number of delta scans. */
-        private const val DELTA_SCAN_LIMIT_PROPERTY = "deltaScanLimit"
+        private const val PROP_DELTA_SCAN_LIMIT = "deltaScanLimit"
 
-        private const val DETECT_LICENSE_DECLARATIONS_PROPERTY = "detectLicenseDeclarations"
+        private const val PROP_DETECT_LICENSE_DECLARATIONS = "detectLicenseDeclarations"
 
-        private const val DETECT_COPYRIGHT_STATEMENTS_PROPERTY = "detectLicenseDeclarations"
+        private const val PROP_DETECT_COPYRIGHT_STATEMENTS = "detectCopyrightStatements"
 
         /** Name of the configuration property defining the timeout in minutes for communication with FossID. */
-        private const val TIMEOUT = "timeout"
+        private const val PROP_TIMEOUT = "timeout"
 
         /** Name of the configuration property controlling whether matched lines of snippets are to be fetched. */
-        private const val FETCH_SNIPPET_MATCHED_LINES = "fetchSnippetMatchedLines"
+        private const val PROP_FETCH_SNIPPET_MATCHED_LINES = "fetchSnippetMatchedLines"
+
+        /** Name of the configuration property defining the limit on the amount of snippets to fetch. */
+        private const val PROP_SNIPPETS_LIMIT = "snippetsLimit"
+
+        /** Name of the configuration property defining the sensitivity of the scan. */
+        private const val PROP_SENSITIVITY = "sensitivity"
 
         /**
          * The scanner options beginning with this prefix will be used to parameterize project and scan names.
@@ -161,31 +174,50 @@ internal data class FossIdConfig(
         @JvmStatic
         private val DEFAULT_TIMEOUT = 60
 
-        fun create(options: Options): FossIdConfig {
+        /**
+         * Default limit on the amount of snippets to fetch.
+         */
+        @JvmStatic
+        private val DEFAULT_SNIPPETS_LIMIT = 500
+
+        /**
+         * Default scan sensitivity.
+         */
+        @JvmStatic
+        private val DEFAULT_SENSITIVITY = 10
+
+        fun create(options: Options, secrets: Options): FossIdConfig {
             require(options.isNotEmpty()) { "No FossID Scanner configuration found." }
 
-            val serverUrl = options[SERVER_URL_PROPERTY]
+            val serverUrl = options[PROP_SERVER_URL]
                 ?: throw IllegalArgumentException("No FossID server URL configuration found.")
-            val user = options[USER_PROPERTY]
+            val user = secrets[PROP_USER]
                 ?: throw IllegalArgumentException("No FossID User configuration found.")
-            val apiKey = options[API_KEY_PROPERTY]
+            val apiKey = secrets[PROP_API_KEY]
                 ?: throw IllegalArgumentException("No FossID API Key configuration found.")
 
-            val waitForResult = options[WAIT_FOR_RESULT_PROPERTY]?.toBoolean() ?: true
+            val waitForResult = options[PROP_WAIT_FOR_RESULT]?.toBoolean() != false
 
-            val keepFailedScans = options[KEEP_FAILED_SCANS_PROPERTY]?.toBoolean() ?: false
-            val deltaScans = options[DELTA_SCAN_PROPERTY]?.toBoolean() ?: false
-            val deltaScanLimit = options[DELTA_SCAN_LIMIT_PROPERTY]?.toInt() ?: Int.MAX_VALUE
+            val keepFailedScans = options[PROP_KEEP_FAILED_SCANS]?.toBoolean() == true
+            val deltaScans = options[PROP_DELTA_SCAN]?.toBoolean() == true
+            val deltaScanLimit = options[PROP_DELTA_SCAN_LIMIT]?.toInt() ?: Int.MAX_VALUE
 
-            val detectLicenseDeclarations = options[DETECT_LICENSE_DECLARATIONS_PROPERTY]?.toBoolean() ?: false
-            val detectCopyrightStatements = options[DETECT_COPYRIGHT_STATEMENTS_PROPERTY]?.toBoolean() ?: false
+            val detectLicenseDeclarations = options[PROP_DETECT_LICENSE_DECLARATIONS]?.toBoolean() == true
+            val detectCopyrightStatements = options[PROP_DETECT_COPYRIGHT_STATEMENTS]?.toBoolean() == true
 
-            val timeout = options[TIMEOUT]?.toInt() ?: DEFAULT_TIMEOUT
+            val timeout = options[PROP_TIMEOUT]?.toInt() ?: DEFAULT_TIMEOUT
 
-            val fetchSnippetMatchedLines = options[FETCH_SNIPPET_MATCHED_LINES]?.toBoolean() ?: false
+            val fetchSnippetMatchedLines = options[PROP_FETCH_SNIPPET_MATCHED_LINES]?.toBoolean() == true
+            val snippetsLimit = options[PROP_SNIPPETS_LIMIT]?.toInt() ?: DEFAULT_SNIPPETS_LIMIT
+
+            val sensitivity = options[PROP_SENSITIVITY]?.toInt() ?: DEFAULT_SENSITIVITY
 
             require(deltaScanLimit > 0) {
                 "deltaScanLimit must be > 0, current value is $deltaScanLimit."
+            }
+
+            require(sensitivity in 0..20) {
+                "Sensitivity must be between 0 and 20, current value is $sensitivity."
             }
 
             logger.info { "waitForResult parameter is set to '$waitForResult'" }
@@ -202,7 +234,9 @@ internal data class FossIdConfig(
                 detectCopyrightStatements = detectCopyrightStatements,
                 timeout = timeout,
                 fetchSnippetMatchedLines = fetchSnippetMatchedLines,
-                options = options
+                options = options,
+                snippetsLimit = snippetsLimit,
+                sensitivity = sensitivity
             )
         }
     }
@@ -211,11 +245,11 @@ internal data class FossIdConfig(
      * Create a [FossIdNamingProvider] helper object based on the configuration stored in this object.
      */
     fun createNamingProvider(): FossIdNamingProvider {
-        val namingProjectPattern = options[NAMING_PROJECT_PATTERN_PROPERTY]?.also {
+        val namingProjectPattern = options[PROP_NAMING_PROJECT_PATTERN]?.also {
             logger.info { "Naming pattern for projects is $it." }
         }
 
-        val namingScanPattern = options[NAMING_SCAN_PATTERN_PROPERTY]?.also {
+        val namingScanPattern = options[PROP_NAMING_SCAN_PATTERN]?.also {
             logger.info { "Naming pattern for scans is $it." }
         }
 

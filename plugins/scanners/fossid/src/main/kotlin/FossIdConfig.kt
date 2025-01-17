@@ -45,12 +45,8 @@ import org.ossreviewtoolkit.utils.common.Options
  *   license declarations.
  * * **"options.detectCopyrightStatements":** When set, the FossID scan is configured to automatically detect copyright
  *   statements.
- *
- * Naming conventions options. If they are not set, default naming conventions are used.
- * * **"options.namingProjectPattern":** A pattern for project names when projects are created on the FossID instance.
- *   Contains variables prefixed by "$" e.g. "$Var1_$Var2". Variables are also passed as options and are prefixed by
- *   [NAMING_CONVENTION_VARIABLE_PREFIX] e.g. namingVariableVar1 = "foo".
- * * **"options.namingScanPattern":** A pattern for scan names when scans are created on the FossID instance.
+ * * **"options.namingScanPattern":** A pattern for scan names when scans are created on the FossID instance. If not
+ *   set, a default pattern is used.
  *
  * URL mapping options. These options allow transforming the URLs of specific repositories before they are passed to
  * the FossID service. This may be necessary if FossID uses a different mechanism to clone a repository, e.g. via SSH
@@ -84,6 +80,12 @@ data class FossIdConfig(
     /** The API key to access the FossID server. */
     val apiKey: String,
 
+    /** The name of the FossID project. If `null`, the name will be determined from the repository URL. */
+    val projectName: String?,
+
+    /** The pattern for scan names when scans are created on the FossID instance. If null, a default pattern is used. */
+    val namingScanPattern: String?,
+
     /** Flag whether the scanner should wait for the completion of FossID scans. */
     val waitForResult: Boolean,
 
@@ -116,8 +118,8 @@ data class FossIdConfig(
     /** The sensitivity of the scan. */
     val sensitivity: Int,
 
-    /** Stores the map with FossID-specific configuration options. */
-    private val options: Map<String, String>
+    /** A comma-separated list of URL mappings. */
+    val urlMappings: String?
 ) {
     companion object {
         /** Name of the configuration property for the server URL. */
@@ -129,11 +131,11 @@ data class FossIdConfig(
         /** Name of the configuration property for the API key. */
         private const val PROP_API_KEY = "apiKey"
 
+        /** Name of the configuration property to set the project name. */
+        private const val PROP_PROJECT_NAME = "projectName"
+
         /** Name of the configuration property controlling whether ORT should wait for FossID results. */
         private const val PROP_WAIT_FOR_RESULT = "waitForResult"
-
-        /** Name of the configuration property defining the naming convention for projects. */
-        private const val PROP_NAMING_PROJECT_PATTERN = "namingProjectPattern"
 
         /** Name of the configuration property defining the naming convention for scans. */
         private const val PROP_NAMING_SCAN_PATTERN = "namingScanPattern"
@@ -163,10 +165,8 @@ data class FossIdConfig(
         /** Name of the configuration property defining the sensitivity of the scan. */
         private const val PROP_SENSITIVITY = "sensitivity"
 
-        /**
-         * The scanner options beginning with this prefix will be used to parameterize project and scan names.
-         */
-        private const val NAMING_CONVENTION_VARIABLE_PREFIX = "namingVariable"
+        /** Name of the configuration property defining the URL mappings. */
+        private const val PROP_URL_MAPPINGS = "urlMappings"
 
         /**
          * Default timeout in minutes for communication with FossID.
@@ -196,6 +196,9 @@ data class FossIdConfig(
             val apiKey = secrets[PROP_API_KEY]
                 ?: throw IllegalArgumentException("No FossID API Key configuration found.")
 
+            val projectName = options[PROP_PROJECT_NAME]
+            val namingScanPattern = options[PROP_NAMING_SCAN_PATTERN]
+
             val waitForResult = options[PROP_WAIT_FOR_RESULT]?.toBooleanStrict() ?: true
 
             val keepFailedScans = options[PROP_KEEP_FAILED_SCANS]?.toBooleanStrict() ?: false
@@ -212,6 +215,8 @@ data class FossIdConfig(
 
             val sensitivity = options[PROP_SENSITIVITY]?.toInt() ?: DEFAULT_SENSITIVITY
 
+            val urlMappings = options[PROP_URL_MAPPINGS]
+
             require(deltaScanLimit > 0) {
                 "deltaScanLimit must be > 0, current value is $deltaScanLimit."
             }
@@ -226,6 +231,8 @@ data class FossIdConfig(
                 serverUrl = serverUrl,
                 user = user,
                 apiKey = apiKey,
+                projectName = projectName,
+                namingScanPattern = namingScanPattern,
                 waitForResult = waitForResult,
                 keepFailedScans = keepFailedScans,
                 deltaScans = deltaScans,
@@ -234,9 +241,9 @@ data class FossIdConfig(
                 detectCopyrightStatements = detectCopyrightStatements,
                 timeout = timeout,
                 fetchSnippetMatchedLines = fetchSnippetMatchedLines,
-                options = options,
                 snippetsLimit = snippetsLimit,
-                sensitivity = sensitivity
+                sensitivity = sensitivity,
+                urlMappings = urlMappings
             )
         }
     }
@@ -244,24 +251,10 @@ data class FossIdConfig(
     /**
      * Create a [FossIdNamingProvider] helper object based on the configuration stored in this object.
      */
-    fun createNamingProvider(): FossIdNamingProvider {
-        val namingProjectPattern = options[PROP_NAMING_PROJECT_PATTERN]?.also {
-            logger.info { "Naming pattern for projects is $it." }
-        }
-
-        val namingScanPattern = options[PROP_NAMING_SCAN_PATTERN]?.also {
-            logger.info { "Naming pattern for scans is $it." }
-        }
-
-        val namingConventionVariables = options
-            .filterKeys { it.startsWith(NAMING_CONVENTION_VARIABLE_PREFIX) }
-            .mapKeys { it.key.substringAfter(NAMING_CONVENTION_VARIABLE_PREFIX) }
-
-        return FossIdNamingProvider(namingProjectPattern, namingScanPattern, namingConventionVariables)
-    }
+    fun createNamingProvider() = FossIdNamingProvider(namingScanPattern, projectName)
 
     /**
      * Create a [FossIdUrlProvider] helper object based on the configuration stored in this object.
      */
-    fun createUrlProvider() = FossIdUrlProvider.create(options)
+    fun createUrlProvider() = FossIdUrlProvider.create(urlMappings?.split(',').orEmpty())
 }

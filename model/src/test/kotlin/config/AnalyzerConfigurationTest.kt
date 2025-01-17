@@ -19,7 +19,6 @@
 
 package org.ossreviewtoolkit.model.config
 
-import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.WordSpec
 import io.kotest.matchers.collections.containExactly
 import io.kotest.matchers.maps.containExactly as containExactlyEntries
@@ -30,19 +29,6 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNot
 
 class AnalyzerConfigurationTest : WordSpec({
-    "AnalyzerConfiguration()" should {
-        "throw an exception on duplicate package manager configuration" {
-            shouldThrow<IllegalArgumentException> {
-                AnalyzerConfiguration(
-                    packageManagers = mapOf(
-                        "Gradle" to PackageManagerConfiguration(),
-                        "gradle" to PackageManagerConfiguration()
-                    )
-                )
-            }
-        }
-    }
-
     "getPackageManagerConfiguration()" should {
         "be case-insensitive" {
             val config = AnalyzerConfiguration(
@@ -133,8 +119,20 @@ class AnalyzerConfigurationTest : WordSpec({
     }
 
     "withPackageManagerOption()" should {
-        "override an existing entry" {
-            val original = AnalyzerConfiguration(
+        "add a non-existing option" {
+            val config = AnalyzerConfiguration()
+
+            config.withPackageManagerOption("Gradle", "gradleVersion", "8.0.2") shouldBe AnalyzerConfiguration(
+                packageManagers = mapOf(
+                    "Gradle" to PackageManagerConfiguration(
+                        options = mapOf("gradleVersion" to "8.0.2")
+                    )
+                )
+            )
+        }
+
+        "override an existing option value" {
+            val config = AnalyzerConfiguration(
                 packageManagers = mapOf(
                     "GradleInspector" to PackageManagerConfiguration(
                         mustRunAfter = listOf("Npm"),
@@ -146,7 +144,7 @@ class AnalyzerConfigurationTest : WordSpec({
                 )
             )
 
-            val patched = AnalyzerConfiguration(
+            config.withPackageManagerOption("GradleInspector", "gradleVersion", "8.0.2") shouldBe AnalyzerConfiguration(
                 packageManagers = mapOf(
                     "GradleInspector" to PackageManagerConfiguration(
                         mustRunAfter = listOf("Npm"),
@@ -157,22 +155,27 @@ class AnalyzerConfigurationTest : WordSpec({
                     )
                 )
             )
-
-            original.withPackageManagerOption("GradleInspector", "gradleVersion", "8.0.2") shouldBe patched
         }
 
-        "add a non-existing entry" {
-            val original = AnalyzerConfiguration()
-
-            val patched = AnalyzerConfiguration(
+        "merge options for the same package manager with different casing" {
+            val config = AnalyzerConfiguration(
                 packageManagers = mapOf(
-                    "Gradle" to PackageManagerConfiguration(
-                        options = mapOf("gradleVersion" to "8.0.2")
+                    "Sbt" to PackageManagerConfiguration(
+                        options = mapOf("javaVersion" to "17")
                     )
                 )
             )
 
-            original.withPackageManagerOption("Gradle", "gradleVersion", "8.0.2") shouldBe patched
+            config.withPackageManagerOption("SBT", "sbtMode", "true") shouldBe AnalyzerConfiguration(
+                packageManagers = mapOf(
+                    "SBT" to PackageManagerConfiguration(
+                        options = mapOf(
+                            "javaVersion" to "17",
+                            "sbtMode" to "true"
+                        )
+                    )
+                )
+            )
         }
     }
 })

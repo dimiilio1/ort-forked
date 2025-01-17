@@ -43,6 +43,8 @@ class FossIdConfigTest : WordSpec({
         "read all properties from the scanner configuration" {
             val options = mapOf(
                 "serverUrl" to SERVER_URL,
+                "projectName" to PROJECT,
+                "namingScanPattern" to "#repositoryName_#deltaTag",
                 "waitForResult" to "false",
                 "keepFailedScans" to "true",
                 "deltaScans" to "true",
@@ -51,7 +53,8 @@ class FossIdConfigTest : WordSpec({
                 "detectCopyrightStatements" to "true",
                 "timeout" to "300",
                 "fetchSnippetMatchedLines" to "true",
-                "snippetsLimit" to "1000"
+                "snippetsLimit" to "1000",
+                "urlMappings" to "https://example.org(?<repoPath>.*) -> ssh://example.org\${repoPath}"
             )
 
             val secrets = mapOf(
@@ -65,6 +68,8 @@ class FossIdConfigTest : WordSpec({
                 serverUrl = SERVER_URL,
                 user = USER,
                 apiKey = API_KEY,
+                projectName = PROJECT,
+                namingScanPattern = "#repositoryName_#deltaTag",
                 waitForResult = false,
                 keepFailedScans = true,
                 deltaScans = true,
@@ -73,9 +78,9 @@ class FossIdConfigTest : WordSpec({
                 detectCopyrightStatements = true,
                 timeout = 300,
                 fetchSnippetMatchedLines = true,
-                options = options,
                 snippetsLimit = 1000,
-                sensitivity = 10
+                sensitivity = 10,
+                urlMappings = "https://example.org(?<repoPath>.*) -> ssh://example.org\${repoPath}"
             )
         }
 
@@ -93,6 +98,8 @@ class FossIdConfigTest : WordSpec({
                 serverUrl = SERVER_URL,
                 user = USER,
                 apiKey = API_KEY,
+                projectName = null,
+                namingScanPattern = null,
                 waitForResult = true,
                 keepFailedScans = false,
                 deltaScans = false,
@@ -101,9 +108,9 @@ class FossIdConfigTest : WordSpec({
                 detectCopyrightStatements = false,
                 timeout = 60,
                 fetchSnippetMatchedLines = false,
-                options = options,
                 snippetsLimit = 500,
-                sensitivity = 10
+                sensitivity = 10,
+                urlMappings = null
             )
         }
 
@@ -160,33 +167,10 @@ class FossIdConfigTest : WordSpec({
     }
 
     "createNamingProvider" should {
-        "create a naming provider with a correct project naming convention" {
-            val options = mapOf(
-                "serverUrl" to SERVER_URL,
-                "namingProjectPattern" to "#repositoryName_\$Org_\$Unit",
-                "namingVariableOrg" to "TestOrganization",
-                "namingVariableUnit" to "TestUnit"
-            )
-
-            val secrets = mapOf(
-                "user" to USER,
-                "apiKey" to API_KEY
-            )
-
-            val fossIdConfig = FossIdConfig.create(options, secrets)
-            val namingProvider = fossIdConfig.createNamingProvider()
-
-            val projectName = namingProvider.createProjectCode("TestProject")
-
-            projectName shouldBe "TestProject_TestOrganization_TestUnit"
-        }
-
         "create a naming provider with a correct scan naming convention" {
             val options = mapOf(
                 "serverUrl" to SERVER_URL,
-                "namingScanPattern" to "#repositoryName_\$Org_\$Unit_#deltaTag",
-                "namingVariableOrg" to "TestOrganization",
-                "namingVariableUnit" to "TestUnit"
+                "namingScanPattern" to "#repositoryName_#deltaTag"
             )
 
             val secrets = mapOf(
@@ -199,7 +183,7 @@ class FossIdConfigTest : WordSpec({
 
             val scanCode = namingProvider.createScanCode("TestProject", FossId.DeltaTag.DELTA)
 
-            scanCode shouldBe "TestProject_TestOrganization_TestUnit_delta"
+            scanCode shouldBe "TestProject_delta"
         }
     }
 
@@ -208,7 +192,7 @@ class FossIdConfigTest : WordSpec({
             val url = "https://changeit.example.org/foo"
             val options = mapOf(
                 "serverUrl" to SERVER_URL,
-                "urlMappingChangeHost" to "$url -> $SERVER_URL"
+                "urlMappings" to "$url -> $SERVER_URL"
             )
 
             val secrets = mapOf(

@@ -25,8 +25,6 @@ import java.util.LinkedList
 import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.analyzer.AbstractPackageManagerFactory
-import org.ossreviewtoolkit.analyzer.PackageManager
-import org.ossreviewtoolkit.analyzer.PackageManagerResult
 import org.ossreviewtoolkit.model.Issue
 import org.ossreviewtoolkit.model.Project
 import org.ossreviewtoolkit.model.ProjectAnalyzerResult
@@ -36,10 +34,9 @@ import org.ossreviewtoolkit.model.config.PackageManagerConfiguration
 import org.ossreviewtoolkit.model.config.RepositoryConfiguration
 import org.ossreviewtoolkit.model.utils.DependencyGraphBuilder
 import org.ossreviewtoolkit.plugins.packagemanagers.node.NodePackageManager
-import org.ossreviewtoolkit.plugins.packagemanagers.node.NpmDetection
+import org.ossreviewtoolkit.plugins.packagemanagers.node.NodePackageManagerType
 import org.ossreviewtoolkit.plugins.packagemanagers.node.PackageJson
 import org.ossreviewtoolkit.plugins.packagemanagers.node.parsePackageJson
-import org.ossreviewtoolkit.plugins.packagemanagers.node.parseProject
 import org.ossreviewtoolkit.utils.common.CommandLineTool
 import org.ossreviewtoolkit.utils.common.Os
 import org.ossreviewtoolkit.utils.common.ProcessCapture
@@ -70,14 +67,14 @@ class Npm(
     analysisRoot: File,
     analyzerConfig: AnalyzerConfiguration,
     repoConfig: RepositoryConfiguration
-) : PackageManager(name, "NPM", analysisRoot, analyzerConfig, repoConfig) {
+) : NodePackageManager(name, NodePackageManagerType.NPM, analysisRoot, analyzerConfig, repoConfig) {
     companion object {
         /** Name of the configuration option to toggle legacy peer dependency support. */
         const val OPTION_LEGACY_PEER_DEPS = "legacyPeerDeps"
     }
 
     class Factory : AbstractPackageManagerFactory<Npm>("NPM") {
-        override val globsForDefinitionFiles = listOf(NodePackageManager.DEFINITION_FILE)
+        override val globsForDefinitionFiles = listOf(NodePackageManagerType.DEFINITION_FILE)
 
         override fun create(
             analysisRoot: File,
@@ -89,7 +86,8 @@ class Npm(
     private val legacyPeerDeps = options[OPTION_LEGACY_PEER_DEPS].toBoolean()
     private val npmViewCache = mutableMapOf<String, PackageJson>()
     private val handler = NpmDependencyHandler(projectType, this::getRemotePackageDetails)
-    private val graphBuilder by lazy { DependencyGraphBuilder(handler) }
+
+    override val graphBuilder by lazy { DependencyGraphBuilder(handler) }
 
     override fun resolveDependencies(definitionFile: File, labels: Map<String, String>): List<ProjectAnalyzerResult> =
         stashDirectories(definitionFile.resolveSibling("node_modules")).use {
@@ -102,7 +100,7 @@ class Npm(
 
         if (issues.any { it.severity == Severity.ERROR }) {
             val project = runCatching {
-                parseProject(definitionFile, analysisRoot, managerName)
+                parseProject(definitionFile, analysisRoot)
             }.getOrElse {
                 logger.error { "Failed to parse project information: ${it.collectMessages()}" }
                 Project.EMPTY
@@ -111,7 +109,7 @@ class Npm(
             return listOf(ProjectAnalyzerResult(project, emptySet(), issues))
         }
 
-        val project = parseProject(definitionFile, analysisRoot, managerName)
+        val project = parseProject(definitionFile, analysisRoot)
         val projectModuleInfo = listModules(workingDir, issues).undoDeduplication()
 
         val scopeNames = Scope.entries
@@ -131,19 +129,11 @@ class Npm(
         ).let { listOf(it) }
     }
 
-    private fun hasLockfile(projectDir: File) = NodePackageManager.NPM.hasLockfile(projectDir)
-
-    override fun mapDefinitionFiles(definitionFiles: List<File>) =
-        NpmDetection(definitionFiles).filterApplicable(NodePackageManager.NPM)
-
     override fun beforeResolution(definitionFiles: List<File>) {
         // We do not actually depend on any features specific to an NPM version, but we still want to stick to a
         // fixed minor version to be sure to get consistent results.
         NpmCommand.checkVersion()
     }
-
-    override fun createPackageManagerResult(projectResults: Map<File, List<ProjectAnalyzerResult>>) =
-        PackageManagerResult(projectResults, graphBuilder.build(), graphBuilder.packages())
 
     private fun listModules(workingDir: File, issues: MutableList<Issue>): ModuleInfo {
         val listProcess = NpmCommand.run(workingDir, "list", "--depth", "Infinity", "--json", "--long")
@@ -167,7 +157,7 @@ class Npm(
     }
 
     private fun installDependencies(workingDir: File): List<Issue> {
-        requireLockfile(workingDir) { hasLockfile(workingDir) }
+        requireLockfile(workingDir) { managerType.hasLockfile(workingDir) }
 
         val options = listOfNotNull(
             "--ignore-scripts",
@@ -175,7 +165,7 @@ class Npm(
             "--legacy-peer-deps".takeIf { legacyPeerDeps }
         )
 
-        val subcommand = if (hasLockfile(workingDir)) "ci" else "install"
+        val subcommand = if (managerType.hasLockfile(workingDir)) "ci" else "install"
 
         val process = NpmCommand.run(workingDir, subcommand, *options.toTypedArray())
 

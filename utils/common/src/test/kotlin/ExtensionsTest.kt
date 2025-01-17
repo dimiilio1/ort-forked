@@ -32,6 +32,7 @@ import io.kotest.matchers.file.aDirectory
 import io.kotest.matchers.file.aFile
 import io.kotest.matchers.file.exist
 import io.kotest.matchers.maps.containExactly
+import io.kotest.matchers.maps.haveKey
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
@@ -44,6 +45,7 @@ import java.net.URI
 import java.net.URLDecoder
 import java.time.DayOfWeek
 import java.util.Locale
+import java.util.SortedMap
 
 class ExtensionsTest : WordSpec({
     "ByteArray.toHexString()" should {
@@ -253,65 +255,25 @@ class ExtensionsTest : WordSpec({
 
             map.zip(emptyMap(), operation) should containExactly("1" to 1)
         }
-    }
 
-    "Map.zipWithDefault()" should {
-        val operation = { left: Int, right: Int -> left + right }
+        "work for a sorted map with case-insensitive keys" {
+            val map = sortedMapOf(String.CASE_INSENSITIVE_ORDER, "foo" to "bar")
+            val other = mapOf("Foo" to "cafe")
 
-        "correctly merge maps" {
-            val map = mapOf(
-                "1" to 1,
-                "2" to 2,
-                "3" to 3
-            )
-            val other = mapOf(
-                "3" to 3,
-                "4" to 4
-            )
+            map.zip(other) { a, b ->
+                a shouldBe "bar"
+                b shouldBe "cafe"
 
-            map.zipWithDefault(other, 1, operation) shouldBe mapOf(
-                "1" to 2,
-                "2" to 3,
-                "3" to 6,
-                "4" to 5
-            )
-        }
-
-        "not fail if this map is empty" {
-            val other = mapOf("1" to 1)
-
-            emptyMap<String, Int>().zipWithDefault(other, 1, operation) should containExactly("1" to 2)
-        }
-
-        "not fail if other map is empty" {
-            val map = mapOf("1" to 1)
-
-            map.zipWithDefault(emptyMap(), 1, operation) should containExactly("1" to 2)
+                "resolved"
+            }.apply {
+                this should beInstanceOf<SortedMap<String, String>>()
+                this should containExactly("Foo" to "resolved")
+                this should haveKey("foo")
+            }
         }
     }
 
-    "Map.zipWithCollections()" should {
-        "correctly merge maps with list values" {
-            val map = mapOf(
-                "1" to listOf(1),
-                "2" to listOf(2),
-                "3" to listOf(3)
-            )
-            val other = mapOf(
-                "3" to listOf(3),
-                "4" to listOf(4)
-            )
-
-            val result = map.zipWithCollections(other)
-            result.values.forAll { it should beInstanceOf<List<Int>>() }
-            result shouldBe mapOf(
-                "1" to listOf(1),
-                "2" to listOf(2),
-                "3" to listOf(3, 3),
-                "4" to listOf(4)
-            )
-        }
-
+    "Map.zipWithSets()" should {
         "correctly merge maps with set values" {
             val map = mapOf(
                 "1" to setOf(1),
@@ -323,7 +285,7 @@ class ExtensionsTest : WordSpec({
                 "4" to setOf(4)
             )
 
-            val result = map.zipWithCollections(other)
+            val result = map.zipWithSets(other)
             result.values.forAll { it should beInstanceOf<Set<Int>>() }
             result shouldBe mapOf(
                 "1" to setOf(1),

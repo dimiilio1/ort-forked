@@ -21,6 +21,8 @@ package org.ossreviewtoolkit.model.config
 
 import com.fasterxml.jackson.annotation.JsonInclude
 
+import org.ossreviewtoolkit.utils.common.zip
+
 @JsonInclude(JsonInclude.Include.NON_NULL)
 data class AnalyzerConfiguration(
     /**
@@ -58,15 +60,9 @@ data class AnalyzerConfiguration(
     /**
      * A copy of [packageManagers] with case-insensitive keys.
      */
-    private val packageManagersCaseInsensitive: Map<String, PackageManagerConfiguration>? =
-        packageManagers?.toSortedMap(String.CASE_INSENSITIVE_ORDER)
-
-    init {
-        val duplicatePackageManagers =
-            packageManagers?.keys.orEmpty() - packageManagersCaseInsensitive?.keys?.toSet().orEmpty()
-
-        require(duplicatePackageManagers.isEmpty()) {
-            "The following package managers have duplicate configuration: ${duplicatePackageManagers.joinToString()}."
+    private val packageManagersCaseInsensitive = packageManagers?.let {
+        sortedMapOf<String, PackageManagerConfiguration>(String.CASE_INSENSITIVE_ORDER).zip(it) { a, b ->
+            a.merge(b)
         }
     }
 
@@ -77,23 +73,23 @@ data class AnalyzerConfiguration(
     fun getPackageManagerConfiguration(packageManager: String) = packageManagersCaseInsensitive?.get(packageManager)
 
     /**
-     * Merge this [AnalyzerConfiguration] with [other]. Values of [other] take precedence.
+     * Merge this [AnalyzerConfiguration] with [override]. Values of [override] take precedence.
      */
-    fun merge(other: RepositoryAnalyzerConfiguration): AnalyzerConfiguration {
+    fun merge(override: RepositoryAnalyzerConfiguration): AnalyzerConfiguration {
         val mergedPackageManagers = when {
-            packageManagers == null -> other.packageManagers
-            other.packageManagers == null -> packageManagers
+            packageManagers == null -> override.packageManagers
+            override.packageManagers == null -> packageManagers
             else -> {
                 val keys = sortedSetOf(String.CASE_INSENSITIVE_ORDER).apply {
                     addAll(packageManagers.keys)
-                    addAll(other.packageManagers.keys)
+                    addAll(override.packageManagers.keys)
                 }
 
                 val result = sortedMapOf<String, PackageManagerConfiguration>(String.CASE_INSENSITIVE_ORDER)
 
                 keys.forEach { key ->
                     val configSelf = getPackageManagerConfiguration(key)
-                    val configOther = other.getPackageManagerConfiguration(key)
+                    val configOther = override.getPackageManagerConfiguration(key)
 
                     result[key] = when {
                         configSelf == null -> configOther
@@ -107,11 +103,11 @@ data class AnalyzerConfiguration(
         }
 
         return AnalyzerConfiguration(
-            allowDynamicVersions = other.allowDynamicVersions ?: allowDynamicVersions,
-            enabledPackageManagers = other.enabledPackageManagers ?: enabledPackageManagers,
-            disabledPackageManagers = other.disabledPackageManagers ?: disabledPackageManagers,
+            allowDynamicVersions = override.allowDynamicVersions ?: allowDynamicVersions,
+            enabledPackageManagers = override.enabledPackageManagers ?: enabledPackageManagers,
+            disabledPackageManagers = override.disabledPackageManagers ?: disabledPackageManagers,
             packageManagers = mergedPackageManagers,
-            skipExcluded = other.skipExcluded ?: skipExcluded
+            skipExcluded = override.skipExcluded ?: skipExcluded
         )
     }
 
@@ -120,13 +116,7 @@ data class AnalyzerConfiguration(
      * and [value] pair, overriding any existing entry.
      */
     fun withPackageManagerOption(name: String, key: String, value: String): AnalyzerConfiguration {
-        val managers = packageManagers.orEmpty().toMutableMap()
-        val configuration = managers[name] ?: PackageManagerConfiguration()
-        val options = configuration.options.orEmpty().toMutableMap()
-
-        options[key] = value
-        managers[name] = configuration.copy(options = options)
-
-        return copy(packageManagers = managers)
+        val override = mapOf(name to PackageManagerConfiguration(options = mapOf(key to value)))
+        return copy(packageManagers = packageManagersCaseInsensitive.orEmpty().zip(override) { a, b -> a.merge(b) })
     }
 }

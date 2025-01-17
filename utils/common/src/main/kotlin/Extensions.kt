@@ -32,6 +32,7 @@ import java.nio.file.LinkOption
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.EnumSet
 import java.util.Locale
+import java.util.SortedMap
 
 import kotlin.io.path.deleteRecursively
 
@@ -233,56 +234,40 @@ fun JsonNode.isNotEmpty(): Boolean = !isEmpty
 fun JsonNode?.textValueOrEmpty(): String = this?.textValue().orEmpty()
 
 /**
- * Merge two maps by iterating over the combined key set of both maps and applying [operation] to the entries for the
- * same key. Arguments passed to [operation] can be null if there is no entry for a key in the respective map.
+ * Merge two maps by iterating over the combined key set of both maps and calling [operation] with any conflicting
+ * values for the same key. In case of a [SortedMap] the iteration order is maintained.
  */
-inline fun <K, V, W> Map<K, V>.zip(other: Map<K, V>, operation: (V?, V?) -> W): Map<K, W> =
-    (keys + other.keys).associateWith { key ->
-        operation(this[key], other[key])
+inline fun <K, V> Map<K, V>.zip(other: Map<K, V>, operation: (V, V) -> V): Map<K, V> {
+    val combinedKeys = if (this is SortedMap) {
+        // Create a copy of the view of other keys to add keys to. It is important that "other.keys" comes first so that
+        // its key names are exactly maintained for the lookup in "other" as part of "assocateWith" to work.
+        other.keys.toSortedSet(comparator()).apply { addAll(keys) }
+    } else {
+        keys + other.keys
     }
 
-/**
- * Merge two maps by iterating over the combined key set of both maps and applying [operation] to the entries for the
- * same key. If there is no entry for a key in one of the maps, [default] is used as the value for that map.
- */
-inline fun <K, V, W> Map<K, V>.zipWithDefault(other: Map<K, V>, default: V, operation: (V, V) -> W): Map<K, W> =
-    (keys + other.keys).associateWith { key ->
-        operation(this[key] ?: default, other[key] ?: default)
-    }
+    val target = if (this is SortedMap) sortedMapOf(comparator()) else mutableMapOf<K, V>()
+    return combinedKeys.associateWithTo(target) { key ->
+        val a = this[key]
+        val b = other[key]
 
-/**
- * Merge two maps which have collections as values by creating the combined key set of both maps and merging the
- * collections. If there is no entry for a key in one of the maps, the value from the other map is used.
- */
-fun <K, V : Collection<T>, T> Map<K, V>.zipWithCollections(other: Map<K, V>): Map<K, V> =
-    zip(other) { a, b ->
         when {
-            // When iterating over the combined key set, not both values can be null.
-            a == null -> checkNotNull(b)
-            b == null -> a
-            else -> {
-                @Suppress("UNCHECKED_CAST")
-                (a + b) as V
-            }
+            a != null && b != null -> operation(a, b)
+            a != null -> a
+            b != null -> b
+            else -> error("Either map must have a value for the key '$key'.")
         }
     }
+}
 
 /**
  * Merge two maps which have sets as values by creating the combined key set of both maps and merging the sets. If there
  * is no entry for a key in one of the maps, the value from the other map is used.
  */
-@JvmName("zipWithSets")
-fun <K, V : Set<T>, T> Map<K, V>.zipWithCollections(other: Map<K, V>): Map<K, V> =
+fun <K, V : Set<T>, T> Map<K, V>.zipWithSets(other: Map<K, V>): Map<K, V> =
     zip(other) { a, b ->
-        when {
-            // When iterating over the combined key set, not both values can be null.
-            a == null -> checkNotNull(b)
-            b == null -> a
-            else -> {
-                @Suppress("UNCHECKED_CAST")
-                (a + b) as V
-            }
-        }
+        @Suppress("UNCHECKED_CAST")
+        (a + b) as V
     }
 
 /**

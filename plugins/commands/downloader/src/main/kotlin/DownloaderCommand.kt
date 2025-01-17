@@ -73,6 +73,7 @@ import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.PackageType
 import org.ossreviewtoolkit.model.RemoteArtifact
+import org.ossreviewtoolkit.model.SourceCodeOrigin
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
 import org.ossreviewtoolkit.model.licenses.LicenseCategorization
@@ -146,8 +147,8 @@ class DownloaderCommand(descriptor: PluginDescriptor = DownloaderCommandFactory.
 
     private val vcsPath by option(
         "--vcs-path",
-        help = "The VCS path if '--project-url' points to a VCS. Ignored if '--ort-file' is also specified. " +
-            "(default: the empty root path)"
+        help = "The VCS path to limit the checkout to if '--project-url' points to a VCS. Ignored if '--ort-file' is " +
+            "also specified. (default: no limitation, i.e. the root path is checked out)"
     ).default("").inputGroup()
 
     private val licenseClassificationsFile by option(
@@ -241,8 +242,11 @@ class DownloaderCommand(descriptor: PluginDescriptor = DownloaderCommandFactory.
         echo("The $verb took $duration.")
 
         if (failureMessages.isNotEmpty()) {
-            echo(Theme.Default.danger("The following failure(s) occurred:"))
-            failureMessages.joinToString("\n--\n").forEach(::echo)
+            echo(Theme.Default.danger("The following failure(s) occurred:"), trailingNewline = false)
+
+            val separator = Theme.Default.warning("\n--\n")
+            val message = failureMessages.joinToString(separator, separator) { Theme.Default.danger(it) }
+            echo(message)
 
             throw ProgramResult(1)
         }
@@ -439,8 +443,9 @@ class DownloaderCommand(descriptor: PluginDescriptor = DownloaderCommandFactory.
     }
 
     private fun downloadFromProjectUrl(projectUrl: String, failureMessages: MutableList<String>) {
-        val archiveType = ArchiveType.getType(projectUrl)
-        val projectNameFromUrl = projectUrl.substringAfterLast('/')
+        val baseUrl = projectUrl.substringBefore('?')
+        val archiveType = ArchiveType.getType(baseUrl)
+        val projectNameFromUrl = baseUrl.substringAfterLast('/')
 
         val projectName = projectNameOption ?: archiveType.extensions.fold(projectNameFromUrl) { name, ext ->
             name.removeSuffix(ext)
@@ -451,7 +456,12 @@ class DownloaderCommand(descriptor: PluginDescriptor = DownloaderCommandFactory.
         runCatching {
             val dummyPackage = if (archiveType != ArchiveType.NONE) {
                 echo("Downloading $archiveType artifact from $projectUrl...")
-                Package.EMPTY.copy(id = dummyId, sourceArtifact = RemoteArtifact.EMPTY.copy(url = projectUrl))
+
+                Package.EMPTY.copy(
+                    id = dummyId,
+                    sourceArtifact = RemoteArtifact.EMPTY.copy(url = projectUrl),
+                    sourceCodeOrigins = listOf(SourceCodeOrigin.ARTIFACT)
+                )
             } else {
                 val vcs = VersionControlSystem.forUrl(projectUrl)
                 val vcsType = vcsTypeOption?.let { VcsType.forName(it) } ?: vcs?.type ?: VcsType.UNKNOWN
@@ -465,7 +475,13 @@ class DownloaderCommand(descriptor: PluginDescriptor = DownloaderCommandFactory.
                 )
 
                 echo("Downloading from $vcsType VCS at $projectUrl...")
-                Package.EMPTY.copy(id = dummyId, vcs = vcsInfo, vcsProcessed = vcsInfo.normalize())
+
+                Package.EMPTY.copy(
+                    id = dummyId,
+                    vcs = vcsInfo,
+                    vcsProcessed = vcsInfo.normalize(),
+                    sourceCodeOrigins = listOf(SourceCodeOrigin.VCS)
+                )
             }
 
             // Always allow moving revisions when directly downloading a single project only. This is for

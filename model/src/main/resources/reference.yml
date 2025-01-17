@@ -254,11 +254,8 @@ ort:
         options:
           serverUrl: 'https://fossid.example.com/instance/'
 
-          namingProjectPattern: '$Var1_$Var2'
-          namingScanPattern: '$Var1_#projectBaseCode_$Var3'
-          namingVariableVar1: myOrg
-          namingVariableVar2: myTeam
-          namingVariableVar3: myUnit
+          projectName: 'My Project'
+          namingScanPattern: '#projectName_#repositoryName_#currentTimestamp_#deltaTag_#branch'
 
           waitForResult: false
 
@@ -271,7 +268,7 @@ ort:
 
           timeout: 60
 
-          urlMappingExample: "https://my-repo.example.org(?<repoPath>.*) -> ssh://my-mapped-repo.example.org${repoPath}"
+          urlMappings: "https://my-repo.example.org(?<repoPath>.*) -> ssh://my-mapped-repo.example.org${repoPath}"
 
           sensitivity: 10
 

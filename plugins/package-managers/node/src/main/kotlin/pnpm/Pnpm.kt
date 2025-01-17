@@ -24,17 +24,14 @@ import java.io.File
 import org.apache.logging.log4j.kotlin.logger
 
 import org.ossreviewtoolkit.analyzer.AbstractPackageManagerFactory
-import org.ossreviewtoolkit.analyzer.PackageManager
-import org.ossreviewtoolkit.analyzer.PackageManagerResult
 import org.ossreviewtoolkit.model.ProjectAnalyzerResult
 import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
 import org.ossreviewtoolkit.model.config.RepositoryConfiguration
 import org.ossreviewtoolkit.model.utils.DependencyGraphBuilder
 import org.ossreviewtoolkit.plugins.packagemanagers.node.NodePackageManager
-import org.ossreviewtoolkit.plugins.packagemanagers.node.NpmDetection
+import org.ossreviewtoolkit.plugins.packagemanagers.node.NodePackageManagerType
 import org.ossreviewtoolkit.plugins.packagemanagers.node.PackageJson
 import org.ossreviewtoolkit.plugins.packagemanagers.node.parsePackageJson
-import org.ossreviewtoolkit.plugins.packagemanagers.node.parseProject
 import org.ossreviewtoolkit.utils.common.CommandLineTool
 import org.ossreviewtoolkit.utils.common.Os
 import org.ossreviewtoolkit.utils.common.stashDirectories
@@ -56,9 +53,9 @@ class Pnpm(
     analysisRoot: File,
     analyzerConfig: AnalyzerConfiguration,
     repoConfig: RepositoryConfiguration
-) : PackageManager(name, "PNPM", analysisRoot, analyzerConfig, repoConfig) {
+) : NodePackageManager(name, NodePackageManagerType.PNPM, analysisRoot, analyzerConfig, repoConfig) {
     class Factory : AbstractPackageManagerFactory<Pnpm>("PNPM") {
-        override val globsForDefinitionFiles = listOf(NodePackageManager.DEFINITION_FILE, "pnpm-lock.yaml")
+        override val globsForDefinitionFiles = listOf(NodePackageManagerType.DEFINITION_FILE, "pnpm-lock.yaml")
 
         override fun create(
             analysisRoot: File,
@@ -67,9 +64,10 @@ class Pnpm(
         ) = Pnpm(type, analysisRoot, analyzerConfig, repoConfig)
     }
 
-    private val handler = PnpmDependencyHandler(projectType, this::getRemotePackageDetails)
-    private val graphBuilder by lazy { DependencyGraphBuilder(handler) }
     private val packageDetailsCache = mutableMapOf<String, PackageJson>()
+    private val handler = PnpmDependencyHandler(projectType, this::getRemotePackageDetails)
+
+    override val graphBuilder by lazy { DependencyGraphBuilder(handler) }
 
     override fun resolveDependencies(definitionFile: File, labels: Map<String, String>): List<ProjectAnalyzerResult> =
         stashDirectories(definitionFile.resolveSibling("node_modules")).use {
@@ -87,8 +85,8 @@ class Pnpm(
         val moduleInfosForScope = scopes.associateWith { scope -> listModules(workingDir, scope) }
 
         return workspaceModuleDirs.map { projectDir ->
-            val packageJsonFile = projectDir.resolve(NodePackageManager.DEFINITION_FILE)
-            val project = parseProject(packageJsonFile, analysisRoot, managerName)
+            val packageJsonFile = projectDir.resolve(NodePackageManagerType.DEFINITION_FILE)
+            val project = parseProject(packageJsonFile, analysisRoot)
 
             val scopeNames = scopes.mapTo(mutableSetOf()) { scope ->
                 val scopeName = scope.descriptor
@@ -125,12 +123,6 @@ class Pnpm(
 
         return parsePnpmList(json)
     }
-
-    override fun createPackageManagerResult(projectResults: Map<File, List<ProjectAnalyzerResult>>) =
-        PackageManagerResult(projectResults, graphBuilder.build(), graphBuilder.packages())
-
-    override fun mapDefinitionFiles(definitionFiles: List<File>) =
-        NpmDetection(definitionFiles).filterApplicable(NodePackageManager.PNPM)
 
     private fun installDependencies(workingDir: File) =
         PnpmCommand.run(

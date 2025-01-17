@@ -25,25 +25,22 @@ import java.time.format.DateTimeFormatter
 import org.apache.logging.log4j.kotlin.logger
 
 /**
- * This class provides names for projects and scans when the FossID scanner creates them, following a given pattern.
- * If one or both patterns is null, a default naming convention is used.
+ * This class provides names for scans when the FossID scanner creates them, based on the provided [namingScanPattern].
+ * If the pattern is null, a default pattern is used.
  *
- * [namingScanPattern] and [namingProjectPattern] are patterns describing the name using variables, e.g. "$var1_$var2".
- * Variable values are given in the map [namingConventionVariables].
+ * The pattern can include built-in variables which are prefixed in the pattern with `#`, e.g., `#projectName_#branch`.
  *
- * There are also built-in variables. Built-in variables are prefixed in the pattern with "#" e.g. "$var1_#builtin".
- * Available built-in variables:
+ * The following built-in variables are available:
+ * * **projectName**: The project name, if configured in the scanner options.
  * * **repositoryName**: The name of the repository (i.e., the part of the URL before .git).
  * * **currentTimestamp**: The current time.
- * * **deltaTag** (scan code only): If delta scans are enabled, this qualifies the scan as an *origin* scan or a *delta*
- * scan.
+ * * **deltaTag**: If delta scans are enabled, this qualifies the scan as an `origin` scan or a `delta` scan.
  * * **branch**: The branch name (revision) to scan. FossID only allows alphanumeric characters and '-' in names, all
  *   other characters are replaced with underscores. Might be shortened to fit the scan code length limit.
  */
 class FossIdNamingProvider(
-    private val namingProjectPattern: String?,
     private val namingScanPattern: String?,
-    private val namingConventionVariables: Map<String, String>
+    private val projectName: String?
 ) {
     companion object {
         val ALLOWED_CHARACTERS_REGEX = Regex("[^\\w-]")
@@ -54,14 +51,6 @@ class FossIdNamingProvider(
         const val MAX_SCAN_CODE_LEN = 254
     }
 
-    fun createProjectCode(repositoryName: String): String =
-        namingProjectPattern?.let {
-            val builtins = mapOf(
-                "#repositoryName" to repositoryName
-            )
-            replaceNamingConventionVariables(namingProjectPattern, builtins, namingConventionVariables)
-        } ?: repositoryName
-
     fun createScanCode(repositoryName: String, deltaTag: FossId.DeltaTag? = null, branch: String = ""): String {
         val pattern = namingScanPattern ?: buildString {
             append("#repositoryName_#currentTimestamp")
@@ -70,13 +59,14 @@ class FossIdNamingProvider(
         }
 
         val builtins = mutableMapOf(
+            "#projectName" to projectName.orEmpty(),
             "#repositoryName" to repositoryName,
             "#deltaTag" to deltaTag?.name?.lowercase().orEmpty()
         )
 
         builtins += "#branch" to normalizeBranchName(branch, pattern, builtins)
 
-        return replaceNamingConventionVariables(pattern, builtins, namingConventionVariables)
+        return replaceNamingConventionVariables(pattern, builtins)
     }
 
     /**
@@ -91,8 +81,7 @@ class FossIdNamingProvider(
         val noBranchScanCode =
             replaceNamingConventionVariables(
                 scanCodeNamingPattern.replace("#branch", ""),
-                scanCodeVariables,
-                namingConventionVariables
+                scanCodeVariables
             )
 
         require(noBranchScanCode.length < MAX_SCAN_CODE_LEN) {
@@ -111,14 +100,12 @@ class FossIdNamingProvider(
      */
     private fun replaceNamingConventionVariables(
         namingConventionPattern: String,
-        builtins: Map<String, String>,
-        namingConventionVariables: Map<String, String>
+        builtins: Map<String, String>
     ): String {
         logger.info { "Parameterizing the name with pattern '$namingConventionPattern'." }
         val currentTimestamp = FORMATTER.format(LocalDateTime.now())
 
-        val allVariables =
-            namingConventionVariables.mapKeys { "\$${it.key}" } + builtins + ("#currentTimestamp" to currentTimestamp)
+        val allVariables = builtins + ("#currentTimestamp" to currentTimestamp)
 
         return allVariables.entries.fold(namingConventionPattern) { acc, entry ->
             acc.replace(entry.key, entry.value)
